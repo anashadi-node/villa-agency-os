@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Villa Agency OS — Customer Demo Mock</title>
+<style>
+:root{
+  --ink:#17232b; --muted:#667580; --line:#d9e1e5; --soft:#f5f7f8; --paper:#ffffff;
+  --navy:#123146; --blue:#1f648f; --blue2:#2a7dad; --gold:#9a6515; --green:#23694a; --red:#a13e3a;
+  --blue-soft:#e8f3f9; --gold-soft:#fff4dc; --green-soft:#e9f6ee; --red-soft:#fff0ee;
+  --shadow:0 18px 50px rgba(18,49,70,.12); --radius:14px;
+}
+*{box-sizing:border-box} body{margin:0;background:#eef3f5;color:var(--ink);font:14px/1.48 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+button,input,select{font:inherit}.demo-shell{min-height:100vh;display:grid;grid-template-columns:270px 1fr}.sidebar{background:var(--navy);color:#eaf5fa;padding:22px 18px;position:sticky;top:0;height:100vh;box-shadow:8px 0 30px rgba(18,49,70,.16)}
+.brand{display:flex;gap:12px;align-items:center;margin-bottom:26px}.mark{width:43px;height:43px;border-radius:12px;background:linear-gradient(145deg,#f7df9f,#9a6515);display:grid;place-items:center;color:#123146;font-weight:900;letter-spacing:-.04em}.brand h1{font-size:17px;margin:0;line-height:1.1}.brand span{font-size:12px;color:#b7ceda}.nav{display:grid;gap:7px}.nav button{border:0;background:transparent;color:#cfe3ec;text-align:left;padding:11px 12px;border-radius:11px;cursor:pointer;font-weight:750;display:flex;align-items:center;gap:10px}.nav button:hover,.nav button.active{background:rgba(255,255,255,.11);color:#fff}.dot{width:9px;height:9px;border-radius:50%;background:#6fa8c7}.nav button.active .dot{background:#f3c66d}.side-note{position:absolute;left:18px;right:18px;bottom:20px;border:1px solid rgba(255,255,255,.14);border-radius:14px;padding:14px;background:rgba(255,255,255,.07);font-size:12px;color:#cfe3ec}.side-note b{color:#fff}.main{padding:22px 26px 40px;min-width:0}.topbar{display:flex;justify-content:space-between;align-items:center;gap:18px;margin-bottom:18px}.title h2{font-size:28px;letter-spacing:-.045em;margin:0}.title p{margin:4px 0 0;color:var(--muted)}.actions{display:flex;gap:10px;align-items:center}.pill{border:1px solid var(--line);background:#fff;border-radius:999px;padding:9px 12px;font-weight:750;color:#36505e}.primary{border:0;border-radius:999px;padding:10px 15px;background:var(--blue);color:#fff;font-weight:850;box-shadow:0 12px 24px rgba(31,100,143,.23);cursor:pointer}.primary:hover{background:#185678}.grid{display:grid;gap:16px}.cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}.cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.cols-2{grid-template-columns:1.25fr .75fr}.card{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:17px}.metric strong{font-size:28px;letter-spacing:-.04em;display:block}.metric span{color:var(--muted);font-size:12px}.metric small{display:inline-block;margin-top:8px;padding:4px 8px;border-radius:999px;background:var(--green-soft);color:var(--green);font-weight:850}.section-title{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.section-title h3{margin:0;font-size:16px}.tag{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 8px;font-size:12px;font-weight:850}.green{background:var(--green-soft);color:var(--green)}.gold{background:var(--gold-soft);color:var(--gold)}.red{background:var(--red-soft);color:var(--red)}.blue{background:var(--blue-soft);color:var(--blue)}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;border-bottom:1px solid var(--line);padding:11px 7px;vertical-align:top}th{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#71818a}td{font-size:13px}.unit{display:flex;gap:11px;align-items:center}.thumb{width:48px;height:38px;border-radius:9px;background:linear-gradient(135deg,#c7d7df,#f6e0aa);border:1px solid #c9d6dc}.timeline{display:grid;gap:10px}.step{display:grid;grid-template-columns:26px 1fr;gap:11px;align-items:start}.num{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--blue-soft);color:var(--blue);font-weight:900;font-size:12px}.step.done .num{background:var(--green);color:white}.step.warn .num{background:var(--gold);color:white}.step h4{margin:2px 0 2px;font-size:13px}.step p{margin:0;color:var(--muted);font-size:12px}.kanban{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.lane{background:#f8fafb;border:1px solid var(--line);border-radius:14px;padding:12px}.lane h4{margin:0 0 10px}.task{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px}.task b{display:block}.task span{color:var(--muted);font-size:12px}.screen{display:none}.screen.active{display:block}.proof{display:grid;grid-template-columns:1fr 1fr;gap:12px}.proof .box{border:1px solid var(--line);border-radius:13px;padding:13px;background:#fbfcfd}.box b{display:block;margin-bottom:6px}.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#102838;color:#d5edf7;border-radius:12px;padding:14px;white-space:pre-wrap;font-size:12px}.flowbar{height:10px;background:#e4ebee;border-radius:999px;overflow:hidden}.flowbar i{display:block;height:100%;width:72%;background:linear-gradient(90deg,var(--blue),var(--green))}.notice{border-left:4px solid var(--gold);background:var(--gold-soft);padding:12px;border-radius:10px;color:#4f3910}.modal{position:fixed;inset:0;background:rgba(11,28,38,.42);display:none;place-items:center;padding:20px}.modal.show{display:grid}.modal-card{width:min(860px,96vw);background:#fff;border-radius:20px;box-shadow:0 30px 100px rgba(0,0,0,.30);padding:24px}.modal-head{display:flex;justify-content:space-between;align-items:center}.x{border:0;background:#edf3f6;border-radius:50%;width:34px;height:34px;cursor:pointer}.demo-progress{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:18px}.demo-progress div{height:9px;border-radius:999px;background:#dfe7eb}.demo-progress div.on{background:var(--green)}
+@media(max-width:980px){.demo-shell{grid-template-columns:1fr}.sidebar{position:relative;height:auto}.side-note{position:static;margin-top:18px}.cols-4,.cols-3,.cols-2,.kanban,.proof{grid-template-columns:1fr}.topbar{align-items:flex-start;flex-direction:column}}
+</style>
+</head>
+<body>
+<div class="demo-shell">
+  <aside class="sidebar">
+    <div class="brand"><div class="mark">VA</div><div><h1>Villa Agency OS</h1><span>Mock customer demo</span></div></div>
+    <div class="nav" id="nav">
+      <button class="active" data-screen="command"><i class="dot"></i> Command Center</button>
+      <button data-screen="pipeline"><i class="dot"></i> Inquiry → Booking</button>
+      <button data-screen="inventory"><i class="dot"></i> Anti Double Booking</button>
+      <button data-screen="finance"><i class="dot"></i> Finance & Reconcile</button>
+      <button data-screen="messages"><i class="dot"></i> Safe Message Approval</button>
+      <button data-screen="owner"><i class="dot"></i> Owner Report</button>
+    </div>
+    <div class="side-note"><b>Demo aman:</b><br>semua nama, villa, invoice, dan kasus di layar ini adalah contoh. Tidak memuat data konsumen nyata.</div>
+  </aside>
+  <main class="main">
+    <div class="topbar">
+      <div class="title"><h2 id="screenTitle">Command Center</h2><p id="screenSub">Satu layar untuk reservation, finance, operations, owner approval, dan audit.</p></div>
+      <div class="actions"><span class="pill">Bali + Yogyakarta</span><button class="primary" id="runDemo">Jalankan alur demo 90 detik</button></div>
+    </div>
+
+    <section class="screen active" id="command">
+      <div class="grid cols-4">
+        <div class="card metric"><span>Double booking</span><strong>0</strong><small>blocked by design</small></div>
+        <div class="card metric"><span>Open inquiries</span><strong>3</strong><small>all have next action</small></div>
+        <div class="card metric"><span>Pending approvals</span><strong>1</strong><small>human decision needed</small></div>
+        <div class="card metric"><span>Reconciliation</span><strong>99%+</strong><small>pilot target</small></div>
+      </div>
+      <div class="grid cols-2" style="margin-top:16px">
+        <div class="card">
+          <div class="section-title"><h3>Hari ini: antrean paling mahal kalau telat</h3><span class="tag blue">Auto-prioritized</span></div>
+          <table><thead><tr><th>Queue</th><th>Item</th><th>SLA</th><th>Status</th></tr></thead><tbody>
+            <tr><td>Reservation</td><td>Rahma minta Ubud 3 malam</td><td>32m</td><td><span class="tag green">Quote grounded</span></td></tr>
+            <tr><td>Finance</td><td>Webhook pi_demo_01 perlu cocok invoice</td><td>48h</td><td><span class="tag gold">Review</span></td></tr>
+            <tr><td>Owner</td><td>Approval kirim offer Villa Pantai</td><td>2h</td><td><span class="tag gold">Waiting</span></td></tr>
+            <tr><td>Ops</td><td>Siapkan check-in Canggu</td><td>Besok</td><td><span class="tag blue">Assigned</span></td></tr>
+          </tbody></table>
+        </div>
+        <div class="card">
+          <div class="section-title"><h3>Readiness proof</h3><span class="tag green">Verified</span></div>
+          <div class="timeline">
+            <div class="step done"><div class="num">1</div><div><h4>2.282 tests + 3.549 subtests</h4><p>Fitur inti reservation, finance, ops, audit sudah punya bukti otomatis.</p></div></div>
+            <div class="step done"><div class="num">2</div><div><h4>Secret & unsafe scan bersih</h4><p>Repo menolak `.env`, card data, switch live payment, dan shuffle berbahaya.</p></div></div>
+            <div class="step warn"><div class="num">3</div><div><h4>Go-live bisnis masih perlu keputusan</h4><p>Provider pembayaran, WhatsApp, SLA, harga, legal/pajak harus dipilih owner.</p></div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen" id="pipeline">
+      <div class="grid cols-2">
+        <div class="card"><div class="section-title"><h3>Inquiry pipeline</h3><span class="tag green">No spreadsheet</span></div>
+          <div class="kanban">
+            <div class="lane"><h4>Masuk</h4><div class="task"><b>Rahma — Ubud</b><span>3 malam · 4 tamu · budget cocok</span></div><div class="task"><b>Marco — Canggu</b><span>villa seluruhnya · butuh pool</span></div></div>
+            <div class="lane"><h4>Ditawarkan</h4><div class="task"><b>Villa Pantai</b><span>Quote Rp 8.970.000 · owner approve</span></div></div>
+            <div class="lane"><h4>Menang</h4><div class="task"><b>Booking Canggu</b><span>invoice issued · check-in ops created</span></div></div>
+          </div>
+        </div>
+        <div class="card"><div class="section-title"><h3>Alur yang ditunjukkan ke pembeli</h3><span class="tag blue">5 menit</span></div>
+          <div class="timeline">
+            <div class="step done"><div class="num">1</div><div><h4>Tamu bertanya</h4><p>Pesan masuk menjadi case, bukan chat lepas.</p></div></div>
+            <div class="step done"><div class="num">2</div><div><h4>Matching villa</h4><p>Sistem mencocokkan tanggal, kapasitas, policy, rate.</p></div></div>
+            <div class="step done"><div class="num">3</div><div><h4>Hold slot</h4><p>Slot aktif memblokir booking lain; slot kedaluwarsa tidak memblokir.</p></div></div>
+            <div class="step warn"><div class="num">4</div><div><h4>Approval manusia</h4><p>Pesan uang/tanggal keluar hanya setelah disetujui.</p></div></div>
+            <div class="step done"><div class="num">5</div><div><h4>Booking + invoice</h4><p>Finance dan ops dibuat otomatis dari booking sah.</p></div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen" id="inventory">
+      <div class="card"><div class="section-title"><h3>Inventory & anti double booking</h3><span class="tag green">0 overlap allowed</span></div>
+        <table><thead><tr><th>Unit</th><th>Lokasi</th><th>Tanggal</th><th>State</th><th>Proteksi</th></tr></thead><tbody>
+          <tr><td><div class="unit"><div class="thumb"></div><b>Villa Pantai</b></div></td><td>Canggu</td><td>12–15 Oct</td><td><span class="tag green">CONFIRMED</span></td><td>DB unique index + state machine</td></tr>
+          <tr><td><div class="unit"><div class="thumb"></div><b>Villa Sawah</b></div></td><td>Ubud</td><td>14–17 Oct</td><td><span class="tag gold">HOLD_ACTIVE</span></td><td>blocks competing quote</td></tr>
+          <tr><td><div class="unit"><div class="thumb"></div><b>Kamar Prawiro 1</b></div></td><td>Yogyakarta</td><td>20–22 Oct</td><td><span class="tag blue">SELLABLE</span></td><td>available evidence attached</td></tr>
+        </tbody></table>
+      </div>
+      <div class="proof" style="margin-top:16px"><div class="box"><b>Yang pembeli lihat</b>Staf tidak bisa “mengakali” slot aktif dengan edit manual. Jika ada konflik, sistem meminta relokasi/approval, bukan menjual dua kali.</div><div class="box"><b>Yang teknis membuktikan</b>State machine + partial unique index SQLite + range exclusion PostgreSQL. Semua diuji otomatis.</div></div>
+    </section>
+
+    <section class="screen" id="finance">
+      <div class="grid cols-3"><div class="card metric"><span>Invoice issued</span><strong>2</strong><small>demo dataset</small></div><div class="card metric"><span>Unmatched payment</span><strong>1</strong><small>needs finance</small></div><div class="card metric"><span>Card data stored</span><strong>0</strong><small>hard gate</small></div></div>
+      <div class="card" style="margin-top:16px"><div class="section-title"><h3>Reconciliation queue</h3><span class="tag gold">Do not trust screenshots</span></div><table><thead><tr><th>Event</th><th>Invoice</th><th>Amount</th><th>Evidence</th><th>Action</th></tr></thead><tbody><tr><td>pi_demo_01</td><td>INV-2026-DEMO-001</td><td>Rp 8.970.000</td><td>signature verified</td><td><span class="tag green">Match</span></td></tr><tr><td>bank_unknown_01</td><td>—</td><td>Rp 500.000</td><td>bank ref missing</td><td><span class="tag gold">Investigate</span></td></tr></tbody></table></div>
+    </section>
+
+    <section class="screen" id="messages">
+      <div class="grid cols-2"><div class="card"><div class="section-title"><h3>Draft offer ke tamu</h3><span class="tag green">GROUNDED</span></div><p>Halo Rahma, unit Villa Sawah masih tersedia untuk 2026-10-14 sampai 2026-10-17 (3 malam). Tarif Rp 1.500.000 per malam, total Rp 4.950.000.</p><div class="notice">Setiap angka/tanggal di atas harus punya binding ke record database. Kalau tidak, status menjadi UNGROUNDED dan tidak bisa dikirim.</div></div><div class="card"><div class="section-title"><h3>Human approval</h3><span class="tag gold">Waiting owner</span></div><div class="timeline"><div class="step done"><div class="num">1</div><div><h4>Agent membuat draft</h4><p>Body hashed; tidak boleh berubah diam-diam.</p></div></div><div class="step warn"><div class="num">2</div><div><h4>Owner approve</h4><p>Pembuat draft tidak boleh menyetujui sendiri.</p></div></div><div class="step"><div class="num">3</div><div><h4>Agent kirim manual</h4><p>Sistem hanya mencatat bukti external_ref; tidak spam otomatis.</p></div></div></div></div></div>
+    </section>
+
+    <section class="screen" id="owner">
+      <div class="grid cols-2"><div class="card"><div class="section-title"><h3>Owner report snapshot</h3><span class="tag blue">Read-only</span></div><table><tbody><tr><td>Villa Pantai</td><td>1 booking confirmed</td><td>Rp 8.970.000</td></tr><tr><td>Villa Sawah</td><td>1 hold active</td><td>Rp 4.950.000 potential</td></tr><tr><td>Kamar Prawiro 1</td><td>sellable</td><td>ready</td></tr></tbody></table></div><div class="card"><div class="section-title"><h3>Audit receipt</h3><span class="tag green">Tamper evident</span></div><div class="code">make check: PASS
+secret scan: 0 findings
+unsafe scan: 0 findings
+schema parity: OK
+audit anchor: publish + verify</div></div></div>
+    </section>
+  </main>
+</div>
+<div class="modal" id="modal"><div class="modal-card"><div class="modal-head"><div><h2 style="margin:0">Alur demo 90 detik</h2><p style="margin:4px 0;color:var(--muted)">Gunakan ini saat meeting: klik layar berikutnya sambil menjelaskan 5 bukti utama.</p></div><button class="x" id="close">×</button></div><div class="demo-progress"><div class="on"></div><div class="on"></div><div class="on"></div><div></div><div></div></div><ol><li>Buka Command Center: semua antrean kerja dalam satu layar.</li><li>Tunjukkan Inquiry → Booking: chat tamu menjadi case, matching, hold, invoice.</li><li>Tunjukkan Anti Double Booking: status aktif memblokir slot.</li><li>Tunjukkan Finance: uang dicocokkan dari bukti provider, bukan screenshot.</li><li>Tunjukkan Safe Message: AI/draft tidak bisa mengarang angka tanpa sumber.</li></ol><button class="primary" onclick="go('pipeline')">Mulai dari pipeline</button></div></div>
+<script>
+const titles={command:['Command Center','Satu layar untuk reservation, finance, operations, owner approval, dan audit.'],pipeline:['Inquiry → Booking','Alur dari pesan tamu sampai booking sah dan invoice.'],inventory:['Anti Double Booking','Slot aktif tidak bisa dijual dua kali; bukti ada di state + database.'],finance:['Finance & Reconcile','Pembayaran dicocokkan dari provider/bank; kartu tidak pernah disimpan.'],messages:['Safe Message Approval','Draft pesan tamu grounded, gated, dan perlu approval manusia.'],owner:['Owner Report','Laporan owner read-only dengan audit receipt.']};
+function go(id){document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('active',s.id===id));document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.screen===id));document.getElementById('screenTitle').textContent=titles[id][0];document.getElementById('screenSub').textContent=titles[id][1];document.getElementById('modal').classList.remove('show');localStorage.setItem('villaDemoScreen',id)}
+document.getElementById('nav').addEventListener('click',e=>{const b=e.target.closest('button[data-screen]');if(b)go(b.dataset.screen)});
+document.getElementById('runDemo').onclick=()=>document.getElementById('modal').classList.add('show');document.getElementById('close').onclick=()=>document.getElementById('modal').classList.remove('show');
+go(localStorage.getItem('villaDemoScreen')||'command');
+</script>
+</body>
+</html>
