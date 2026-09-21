@@ -502,6 +502,10 @@ class ContractPack:
     def from_row(cls, row: Mapping[str, Any]) -> "ContractPack":
         """Build from a ``properties`` row (plus optional ``items``)."""
         raw_items = row.get("items") or ()
+        if not hasattr(raw_items, "__iter__") or isinstance(raw_items, (str, bytes)):
+            # A malformed container (e.g. a count column) must deny, not raise:
+            # an unusable item list is an empty pack, and an empty pack fails closed.
+            raw_items = ()
         items = tuple(
             entry if isinstance(entry, ContractPackItem) else ContractPackItem.from_row(entry)
             for entry in raw_items

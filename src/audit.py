@@ -215,15 +215,21 @@ _DIGEST_FIELDS = ("prev_hash", "hash")
 def _normalise_key(key: Any) -> str:
     """Lower-case, punctuation-collapsed form of a payload key.
 
-    ``guest.email``, ``Guest-Email`` and ``guest_email`` must classify identically;
-    a key that slips through classification is a silent PII leak.
+    ``guest.email``, ``Guest-Email``, ``guestName`` and ``guest_email`` must classify
+    identically; a key that slips through classification is a silent PII leak.
     """
     if not isinstance(key, str):
         raise AuditEventInvalid(
             f"audit payload keys must be strings, got {type(key).__name__}",
             key=repr(key),
         )
-    return re.sub(r"[^a-z0-9]+", "_", key.strip().lower()).strip("_")
+    # Split camelCase/PascalCase and acronym boundaries *before* collapsing
+    # punctuation: otherwise ``guestName`` normalises to ``guestname``, which matches
+    # neither the forbidden-field registry nor the pseudonym registry — and a guest
+    # name has no value-level pattern to catch it, so it would be stored in the clear.
+    text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", key.strip())
+    text = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", "_", text)
+    return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
 
 
 def contains_direct_identifiers(text: str) -> bool:
@@ -380,7 +386,11 @@ def compute_event_hash(prev_hash: str, body: Mapping[str, Any]) -> str:
     unit separator after every part), so no body value can be shifted into the
     previous hash by concatenation.
     """
-    if not isinstance(prev_hash, str) or len(prev_hash) != 64:
+    if (
+        not isinstance(prev_hash, str)
+        or len(prev_hash) != 64
+        or any(char not in "0123456789abcdefABCDEF" for char in prev_hash)
+    ):
         raise AuditEventInvalid(
             "prev_hash must be a 64-character hex digest",
             prev_hash=repr(prev_hash),

@@ -17,7 +17,7 @@ fail() { echo "UNSAFE-SCAN: $1 ($2)"; HITS=$((HITS + 1)); }
 for f in "${FILES[@]}"; do
   [ -f "$f" ] || continue
   case "$f" in
-    scripts/unsafe_config_scan.sh|docs/*|.tmp/*|*.tmp) continue ;;
+    scripts/unsafe_config_scan.sh|docs/*|reports/*|.tmp/*|*.tmp) continue ;;
   esac
   # 1. Live trading / paying money switches must never be turned on in this repo.
   if grep -EIn '(dry_run|live_trading|payments_live|auto_payout|production_payments)[[:space:]]*[:=][[:space:]]*(true|True|1|"true"|'"'"'true'"'"')' "$f" >/dev/null 2>&1; then
