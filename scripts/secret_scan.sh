@@ -30,7 +30,10 @@ HITS=0
 for f in "${FILES[@]}"; do
   [ -f "$f" ] || continue
   case "$f" in
-    .env.template|*.example|docs/*.md|scripts/secret_scan.sh) continue ;;
+    # Docs are scanned too: a real credential pasted into a design note is exactly
+    # the leak this gate exists for. Example tokens are handled by the
+    # REDACTED/PLACEHOLDER whitelist below instead of by skipping whole trees.
+    .env.template|*.example|scripts/secret_scan.sh) continue ;;
   esac
   for p in "${PATTERNS[@]}"; do
     if grep -EIn --binary-files=without-match "$p" "$f" 2>/dev/null | grep -v -E 'REDACTED|PLACEHOLDER|your[_-]|<[a-z_]+>|xxx' >/dev/null; then
