@@ -873,6 +873,10 @@ CREATE TABLE ops_tasks (
 
 CREATE INDEX ix_ops_tasks_open ON ops_tasks (status, due_at);
 
+-- Kewajiban notifikasi diwakili oleh TENGGAT (notice_due_at), bukan oleh timestamp
+-- pengiriman: memaksa notified_at terisi saat insert berarti database memaksa tim
+-- mencatat kebohongan (atau menyembunyikan kewajiban). Status "belum dikirim" harus
+-- bisa disimpan supaya SLA 72 jam-nya bisa ditagih dan terlihat di dashboard.
 CREATE TABLE incidents (
     incident_id    TEXT NOT NULL,
     severity       TEXT NOT NULL CHECK (severity IN ('SEV1','SEV2','SEV3','SEV4')),
@@ -884,6 +888,7 @@ CREATE TABLE incidents (
     affected_refs  TEXT NOT NULL DEFAULT '[]',
     personal_data_involved BIGINT NOT NULL DEFAULT 0 CHECK (personal_data_involved IN (0,1)),
     regulatory_notification_required BIGINT NOT NULL DEFAULT 0 CHECK (regulatory_notification_required IN (0,1)),
+    notice_due_at  TEXT,
     notified_at    TEXT,
     status         TEXT NOT NULL CHECK (status IN ('OPEN','MITIGATING','RESOLVED','POSTMORTEM_DONE')),
     summary        TEXT,
@@ -892,7 +897,10 @@ CREATE TABLE incidents (
     created_at     TEXT NOT NULL,
     CONSTRAINT pk_incidents PRIMARY KEY (incident_id),
     CONSTRAINT ck_incidents_regulatory CHECK (regulatory_notification_required = 0 OR severity IN ('SEV1','SEV2')),
-    CONSTRAINT ck_incidents_notified CHECK (regulatory_notification_required = 0 OR notified_at IS NOT NULL),
+    CONSTRAINT ck_incidents_notice_deadline CHECK (
+        regulatory_notification_required = 0
+        OR (notice_due_at IS NOT NULL AND notice_due_at > detected_at)
+    ),
     CONSTRAINT ck_incidents_resolved CHECK (status NOT IN ('RESOLVED','POSTMORTEM_DONE') OR (resolved_at IS NOT NULL AND summary IS NOT NULL AND length(summary) >= 10)),
     CONSTRAINT ck_incidents_postmortem CHECK (status <> 'POSTMORTEM_DONE' OR (postmortem_ref IS NOT NULL AND length(postmortem_ref) >= 3))
 );

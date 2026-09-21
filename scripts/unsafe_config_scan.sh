@@ -17,7 +17,9 @@ fail() { echo "UNSAFE-SCAN: $1 ($2)"; HITS=$((HITS + 1)); }
 for f in "${FILES[@]}"; do
   [ -f "$f" ] || continue
   case "$f" in
-    scripts/unsafe_config_scan.sh|docs/*|reports/*|.tmp/*|*.tmp) continue ;;
+    # The gate's own test file must contain the violation patterns on purpose;
+    # scanning it would make the gate fail on its fixtures forever.
+    scripts/unsafe_config_scan.sh|tests/test_unsafe_config_scan.py|docs/*|reports/*|.tmp/*|*.tmp) continue ;;
   esac
   # 1. Live trading / paying money switches must never be turned on in this repo.
   #    Quoted keys (JSON/dict form) count too: {'dry_run': true} is the same switch.

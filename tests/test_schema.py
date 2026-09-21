@@ -822,21 +822,44 @@ class TestPhase3FailClosedGuards(unittest.TestCase):
         )
 
     # -- incidents -------------------------------------------------------
-    def test_regulatory_notification_is_bound_to_severity_and_a_time(self):
+    def test_regulatory_notification_is_bound_to_severity_and_a_deadline(self):
+        """The obligation is a *deadline*, not a claim that the notice was sent.
+
+        Recording an incident that owes a regulator notice must be possible while
+        the notice is still unsent: that is the state the 72-hour SLA is charged
+        against, and forcing ``notified_at`` at insert time would make the team
+        either lie or hide the obligation.
+        """
+
         base = dict(
             incident_id="inc_sev3_reg", severity="SEV3", title="Probe SEV3 regulated",
             detected_at=self.NOW, detected_by="hermes", source="monitor",
             playbook="PLAYBOOK-01", status="OPEN", created_at=self.NOW,
-            regulatory_notification_required=1, notified_at=self.NOW,
+            regulatory_notification_required=1, notice_due_at="2026-09-24T08:00:00+00:00",
         )
+        # SEV3 may not carry a notification duty at all.
         self._rejects("incidents", **base)
+        # SEV1 with a future deadline and the notice still unsent: accepted.
         self._insert(
             "incidents", **{**base, "incident_id": "inc_sev1_reg", "severity": "SEV1"}
         )
+        stored = self.conn.execute(
+            "SELECT notified_at, notice_due_at FROM incidents WHERE incident_id = ?",
+            ("inc_sev1_reg",),
+        ).fetchone()
+        self.assertIsNone(stored[0])
+        self.assertEqual(stored[1], "2026-09-24T08:00:00+00:00")
+        # A duty without a deadline is refused: the SLA would have nothing to bite.
         self._rejects(
             "incidents",
-            **{**base, "incident_id": "inc_sev1_notold", "severity": "SEV1",
-               "notified_at": None},
+            **{**base, "incident_id": "inc_sev1_nodue", "severity": "SEV1",
+               "notice_due_at": None},
+        )
+        # A deadline in the past (or at detection) is refused too.
+        self._rejects(
+            "incidents",
+            **{**base, "incident_id": "inc_sev1_pastdue", "severity": "SEV1",
+               "notice_due_at": self.NOW},
         )
 
     def test_an_incident_closes_with_a_summary_and_a_postmortem(self):
