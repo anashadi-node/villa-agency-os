@@ -640,6 +640,244 @@ CREATE TABLE sla_breaches (
 CREATE INDEX ix_sla_breaches_open ON sla_breaches (status, due_at);
 
 -- --------------------------------------------------------------------------
+-- ---------------------------------------------------------------------------
+-- Phase 3 — billing, pembayaran (hosted page), rekonsiliasi, dokumen, ops, insiden
+--
+-- Prinsip: uang selalu integer minor unit; setiap mutasi uang punya jejak
+-- (ledger append-only dengan rantai hash); webhook yang tanda tangannya tidak
+-- terverifikasi tidak boleh pernah "applied"; setiap kegagalan rekonsiliasi
+-- punya pemilik dan tenggat, bukan hilang di log.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE invoices (
+    invoice_id     TEXT NOT NULL,
+    invoice_number TEXT,
+    booking_id     TEXT NOT NULL,
+    policy_fingerprint TEXT NOT NULL CHECK (length(policy_fingerprint) = 64),
+    currency       TEXT NOT NULL CHECK (length(currency) = 3),
+    subtotal_minor INTEGER NOT NULL CHECK (subtotal_minor >= 0),
+    tax_minor      INTEGER NOT NULL CHECK (tax_minor >= 0),
+    service_minor  INTEGER NOT NULL CHECK (service_minor >= 0),
+    total_minor    INTEGER NOT NULL CHECK (total_minor >= 0),
+    amount_paid_minor INTEGER NOT NULL DEFAULT 0 CHECK (amount_paid_minor >= 0),
+    status         TEXT NOT NULL CHECK (status IN ('ISSUED','VOID')),
+    payment_status TEXT NOT NULL CHECK (payment_status IN ('UNPAID','PARTIAL','PAID','OVERPAID','REFUNDED')),
+    issued_at      TEXT NOT NULL,
+    due_at         TEXT NOT NULL,
+    voided_at      TEXT,
+    void_reason    TEXT,
+    created_at     TEXT NOT NULL,
+    CONSTRAINT pk_invoices PRIMARY KEY (invoice_id),
+    CONSTRAINT fk_invoices_booking FOREIGN KEY (booking_id) REFERENCES bookings (booking_id),
+    CONSTRAINT uq_invoices_number UNIQUE (invoice_number),
+    CONSTRAINT ck_invoices_total CHECK (total_minor = subtotal_minor + tax_minor + service_minor),
+    CONSTRAINT ck_invoices_due CHECK (due_at > issued_at),
+    CONSTRAINT ck_invoices_number CHECK (status <> 'ISSUED' OR (invoice_number IS NOT NULL AND length(invoice_number) >= 8)),
+    CONSTRAINT ck_invoices_void CHECK (status <> 'VOID' OR (voided_at IS NOT NULL AND void_reason IS NOT NULL AND length(void_reason) >= 3)),
+    CONSTRAINT ck_invoices_void_lock CHECK (status <> 'VOID' OR amount_paid_minor = 0)
+);
+
+CREATE TABLE invoice_lines (
+    line_id        TEXT NOT NULL,
+    invoice_id     TEXT NOT NULL,
+    kind           TEXT NOT NULL CHECK (kind IN ('NIGHTLY','SURCHARGE','CLEANING','DISCOUNT','TAX','SERVICE','OTHER')),
+    description    TEXT NOT NULL CHECK (length(description) >= 3),
+    quantity       INTEGER NOT NULL CHECK (quantity >= 0),
+    unit_amount_minor INTEGER NOT NULL,
+    amount_minor   INTEGER NOT NULL,
+    rate_card_id   TEXT,
+    nights         INTEGER CHECK (nights IS NULL OR nights >= 0),
+    created_at     TEXT NOT NULL,
+    CONSTRAINT pk_invoice_lines PRIMARY KEY (line_id),
+    CONSTRAINT fk_invoice_lines_invoice FOREIGN KEY (invoice_id) REFERENCES invoices (invoice_id),
+    CONSTRAINT fk_invoice_lines_rate_card FOREIGN KEY (rate_card_id) REFERENCES rate_cards (rate_card_id),
+    CONSTRAINT ck_invoice_lines_amount CHECK (amount_minor = quantity * unit_amount_minor),
+    CONSTRAINT ck_invoice_lines_discount CHECK (kind <> 'DISCOUNT' OR amount_minor <= 0)
+);
+CREATE INDEX ix_invoice_lines_invoice ON invoice_lines (invoice_id);
+
+CREATE TABLE payments (
+    payment_id     TEXT NOT NULL,
+    invoice_id     TEXT NOT NULL,
+    provider       TEXT NOT NULL CHECK (length(provider) >= 3),
+    provider_intent_id TEXT NOT NULL CHECK (length(provider_intent_id) >= 6),
+    method         TEXT NOT NULL CHECK (method IN ('HOSTED_PAGE','BANK_TRANSFER','CASH','OTHER')),
+    currency       TEXT NOT NULL CHECK (length(currency) = 3),
+    amount_minor   INTEGER NOT NULL CHECK (amount_minor > 0),
+    status         TEXT NOT NULL CHECK (status IN ('PENDING','SUCCEEDED','FAILED','EXPIRED','REFUNDED')),
+    created_at     TEXT NOT NULL,
+    expires_at     TEXT,
+    settled_at     TEXT,
+    provider_status TEXT,
+    CONSTRAINT pk_payments PRIMARY KEY (payment_id),
+    CONSTRAINT fk_payments_invoice FOREIGN KEY (invoice_id) REFERENCES invoices (invoice_id),
+    CONSTRAINT uq_payments_intent UNIQUE (provider, provider_intent_id),
+    CONSTRAINT ck_payments_settled CHECK (status <> 'SUCCEEDED' OR settled_at IS NOT NULL),
+    CONSTRAINT ck_payments_expiry CHECK (expires_at IS NULL OR expires_at > created_at)
+);
+CREATE INDEX ix_payments_invoice ON payments (invoice_id, status);
+
+CREATE TABLE payment_events (
+    event_id       TEXT NOT NULL,
+    provider       TEXT NOT NULL CHECK (length(provider) >= 3),
+    provider_event_id TEXT NOT NULL CHECK (length(provider_event_id) >= 6),
+    payment_id     TEXT,
+    event_type     TEXT NOT NULL CHECK (length(event_type) >= 3),
+    signature_verified INTEGER NOT NULL CHECK (signature_verified IN (0,1)),
+    applied        INTEGER NOT NULL CHECK (applied IN (0,1)),
+    rejection_reason TEXT,
+    amount_minor   INTEGER,
+    currency       TEXT,
+    payload_sha256 TEXT NOT NULL CHECK (length(payload_sha256) = 64),
+    payload_redacted TEXT,
+    received_at    TEXT NOT NULL,
+    created_at     TEXT NOT NULL,
+    CONSTRAINT pk_payment_events PRIMARY KEY (event_id),
+    CONSTRAINT fk_payment_events_payment FOREIGN KEY (payment_id) REFERENCES payments (payment_id),
+    CONSTRAINT uq_payment_events_provider UNIQUE (provider, provider_event_id),
+    CONSTRAINT ck_payment_events_signature CHECK (applied = 0 OR signature_verified = 1),
+    CONSTRAINT ck_payment_events_reject CHECK (applied = 1 OR (rejection_reason IS NOT NULL AND length(rejection_reason) >= 3)),
+    CONSTRAINT ck_payment_events_currency CHECK ((amount_minor IS NULL) = (currency IS NULL))
+);
+CREATE INDEX ix_payment_events_payment ON payment_events (payment_id, event_type);
+
+CREATE TABLE ledger_entries (
+    entry_id       TEXT NOT NULL,
+    seq            INTEGER NOT NULL CHECK (seq >= 1),
+    account        TEXT NOT NULL CHECK (account IN ('CASH_IN','TAX_PAYABLE','SERVICE_FEE','GUEST_DEPOSIT','REFUND_OUT','OWNER_PAYABLE','PSP_FEE')),
+    direction      TEXT NOT NULL CHECK (direction IN ('DEBIT','CREDIT')),
+    amount_minor   INTEGER NOT NULL CHECK (amount_minor > 0),
+    currency       TEXT NOT NULL CHECK (length(currency) = 3),
+    booking_id     TEXT,
+    invoice_id     TEXT,
+    payment_id     TEXT,
+    occurred_at    TEXT NOT NULL,
+    memo           TEXT NOT NULL CHECK (length(memo) >= 3),
+    entry_hash     TEXT NOT NULL CHECK (length(entry_hash) = 64),
+    prev_hash      TEXT NOT NULL CHECK (length(prev_hash) = 64),
+    created_at     TEXT NOT NULL,
+    CONSTRAINT pk_ledger_entries PRIMARY KEY (entry_id),
+    CONSTRAINT fk_ledger_entries_booking FOREIGN KEY (booking_id) REFERENCES bookings (booking_id),
+    CONSTRAINT fk_ledger_entries_invoice FOREIGN KEY (invoice_id) REFERENCES invoices (invoice_id),
+    CONSTRAINT fk_ledger_entries_payment FOREIGN KEY (payment_id) REFERENCES payments (payment_id),
+    CONSTRAINT uq_ledger_entries_seq UNIQUE (seq)
+);
+CREATE INDEX ix_ledger_entries_ref ON ledger_entries (invoice_id, account);
+
+CREATE TABLE reconciliation_cases (
+    recon_id       TEXT NOT NULL,
+    kind           TEXT NOT NULL CHECK (kind IN ('UNMATCHED_PAYMENT','AMOUNT_MISMATCH','DUPLICATE_EVENT','REFUND_WITHOUT_PAYMENT','MISSING_SETTLEMENT','UNVERIFIED_WEBHOOK')),
+    payment_event_id TEXT,
+    payment_id     TEXT,
+    invoice_id     TEXT,
+    detected_at    TEXT NOT NULL,
+    due_at         TEXT NOT NULL,
+    status         TEXT NOT NULL CHECK (status IN ('OPEN','RESOLVED','WAIVED')),
+    owner_actor    TEXT,
+    resolution_note TEXT,
+    resolved_at    TEXT,
+    details        TEXT NOT NULL DEFAULT '{}',
+    created_at     TEXT NOT NULL,
+    CONSTRAINT pk_reconciliation_cases PRIMARY KEY (recon_id),
+    CONSTRAINT fk_recon_event FOREIGN KEY (payment_event_id) REFERENCES payment_events (event_id),
+    CONSTRAINT fk_recon_payment FOREIGN KEY (payment_id) REFERENCES payments (payment_id),
+    CONSTRAINT fk_recon_invoice FOREIGN KEY (invoice_id) REFERENCES invoices (invoice_id),
+    CONSTRAINT ck_recon_due CHECK (due_at > detected_at),
+    CONSTRAINT ck_recon_resolved CHECK (status = 'OPEN' OR (resolved_at IS NOT NULL AND resolution_note IS NOT NULL AND length(resolution_note) >= 3))
+);
+CREATE INDEX ix_recon_open ON reconciliation_cases (status, due_at);
+
+CREATE TABLE documents (
+    document_id    TEXT NOT NULL,
+    document_key   TEXT NOT NULL CHECK (length(document_key) >= 6),
+    kind           TEXT NOT NULL CHECK (kind IN ('CONFIRMATION','RECEIPT','INVOICE','CONTRACT','NOTICE','REPORT')),
+    version        INTEGER NOT NULL CHECK (version >= 1),
+    format         TEXT NOT NULL CHECK (format IN ('HTML','TEXT','MARKDOWN')),
+    booking_id     TEXT,
+    invoice_id     TEXT,
+    case_id        TEXT,
+    content_class  TEXT NOT NULL CHECK (content_class IN ('P0','P1','P2','P3','P4')),
+    redaction_profile TEXT NOT NULL CHECK (length(redaction_profile) >= 3),
+    storage_ref    TEXT,
+    body_sha256    TEXT NOT NULL CHECK (length(body_sha256) = 64),
+    status         TEXT NOT NULL CHECK (status IN ('GENERATED','SUPERSEDED','VOID')),
+    generated_by   TEXT NOT NULL,
+    generated_at   TEXT NOT NULL,
+    created_at     TEXT NOT NULL,
+    CONSTRAINT pk_documents PRIMARY KEY (document_id),
+    CONSTRAINT fk_documents_booking FOREIGN KEY (booking_id) REFERENCES bookings (booking_id),
+    CONSTRAINT fk_documents_invoice FOREIGN KEY (invoice_id) REFERENCES invoices (invoice_id),
+    CONSTRAINT fk_documents_case FOREIGN KEY (case_id) REFERENCES cases (case_id),
+    CONSTRAINT uq_documents_version UNIQUE (document_key, version),
+    CONSTRAINT ck_documents_storage CHECK (status <> 'GENERATED' OR (storage_ref IS NOT NULL AND length(storage_ref) >= 3))
+);
+CREATE INDEX ix_documents_key ON documents (document_key, version);
+
+CREATE TABLE ops_tasks (
+    task_id        TEXT NOT NULL,
+    kind           TEXT NOT NULL CHECK (kind IN ('CHECKIN_PREP','CHECKOUT_INSPECTION','CLEANING','MAINTENANCE','GUEST_FOLLOWUP','PAYMENT_CHASE','DOCUMENT_CHASE','VERIFICATION')),
+    booking_id     TEXT,
+    unit_id        TEXT,
+    case_id        TEXT,
+    due_at         TEXT NOT NULL,
+    priority       TEXT NOT NULL CHECK (priority IN ('LOW','NORMAL','HIGH','URGENT')),
+    assignee       TEXT,
+    status         TEXT NOT NULL CHECK (status IN ('OPEN','IN_PROGRESS','BLOCKED','DONE','CANCELLED')),
+    checklist      TEXT NOT NULL DEFAULT '[]',
+    idempotency_key TEXT NOT NULL CHECK (length(idempotency_key) >= 8),
+    created_at     TEXT NOT NULL,
+    updated_at     TEXT NOT NULL,
+    completed_at   TEXT,
+    blocked_reason TEXT,
+    CONSTRAINT pk_ops_tasks PRIMARY KEY (task_id),
+    CONSTRAINT fk_ops_tasks_booking FOREIGN KEY (booking_id) REFERENCES bookings (booking_id),
+    CONSTRAINT fk_ops_tasks_unit FOREIGN KEY (unit_id) REFERENCES units (unit_id),
+    CONSTRAINT fk_ops_tasks_case FOREIGN KEY (case_id) REFERENCES cases (case_id),
+    CONSTRAINT uq_ops_tasks_idempotency UNIQUE (idempotency_key),
+    CONSTRAINT ck_ops_tasks_done CHECK (status NOT IN ('DONE','CANCELLED') OR completed_at IS NOT NULL),
+    CONSTRAINT ck_ops_tasks_blocked CHECK (status <> 'BLOCKED' OR (blocked_reason IS NOT NULL AND length(blocked_reason) >= 3))
+);
+CREATE INDEX ix_ops_tasks_open ON ops_tasks (status, due_at);
+
+CREATE TABLE incidents (
+    incident_id    TEXT NOT NULL,
+    severity       TEXT NOT NULL CHECK (severity IN ('SEV1','SEV2','SEV3','SEV4')),
+    title          TEXT NOT NULL CHECK (length(title) >= 8),
+    detected_at    TEXT NOT NULL,
+    detected_by    TEXT NOT NULL,
+    source         TEXT NOT NULL CHECK (length(source) >= 3),
+    playbook       TEXT NOT NULL CHECK (length(playbook) >= 3),
+    affected_refs  TEXT NOT NULL DEFAULT '[]',
+    personal_data_involved INTEGER NOT NULL DEFAULT 0 CHECK (personal_data_involved IN (0,1)),
+    regulatory_notification_required INTEGER NOT NULL DEFAULT 0 CHECK (regulatory_notification_required IN (0,1)),
+    notified_at    TEXT,
+    status         TEXT NOT NULL CHECK (status IN ('OPEN','MITIGATING','RESOLVED','POSTMORTEM_DONE')),
+    summary        TEXT,
+    resolved_at    TEXT,
+    postmortem_ref TEXT,
+    created_at     TEXT NOT NULL,
+    CONSTRAINT pk_incidents PRIMARY KEY (incident_id),
+    CONSTRAINT ck_incidents_regulatory CHECK (regulatory_notification_required = 0 OR severity IN ('SEV1','SEV2')),
+    CONSTRAINT ck_incidents_notified CHECK (regulatory_notification_required = 0 OR notified_at IS NOT NULL),
+    CONSTRAINT ck_incidents_resolved CHECK (status NOT IN ('RESOLVED','POSTMORTEM_DONE') OR (resolved_at IS NOT NULL AND summary IS NOT NULL AND length(summary) >= 10)),
+    CONSTRAINT ck_incidents_postmortem CHECK (status <> 'POSTMORTEM_DONE' OR (postmortem_ref IS NOT NULL AND length(postmortem_ref) >= 3))
+);
+CREATE INDEX ix_incidents_open ON incidents (status, severity);
+
+CREATE TABLE incident_steps (
+    step_id        TEXT NOT NULL,
+    incident_id    TEXT NOT NULL,
+    seq            INTEGER NOT NULL CHECK (seq >= 1),
+    action         TEXT NOT NULL CHECK (length(action) >= 3),
+    actor          TEXT NOT NULL,
+    outcome        TEXT NOT NULL CHECK (length(outcome) >= 3),
+    evidence_refs  TEXT NOT NULL DEFAULT '[]',
+    occurred_at    TEXT NOT NULL,
+    CONSTRAINT pk_incident_steps PRIMARY KEY (step_id),
+    CONSTRAINT fk_incident_steps_incident FOREIGN KEY (incident_id) REFERENCES incidents (incident_id),
+    CONSTRAINT uq_incident_steps_seq UNIQUE (incident_id, seq)
+);
+
 -- Immutability guards: the database itself refuses to rewrite history.
 -- --------------------------------------------------------------------------
 CREATE TRIGGER trg_audit_events_no_update
@@ -763,5 +1001,41 @@ BEGIN
     SELECT RAISE(ABORT, 'approval_decisions is append-only (DELETE rejected)');
 END;
 
+CREATE TRIGGER trg_payment_events_no_update
+BEFORE UPDATE ON payment_events
+BEGIN
+    SELECT RAISE(ABORT, 'payment_events: riwayat append-only tidak boleh diubah (no UPDATE)');
+END;
+
+CREATE TRIGGER trg_payment_events_no_delete
+BEFORE DELETE ON payment_events
+BEGIN
+    SELECT RAISE(ABORT, 'payment_events: riwayat append-only tidak boleh dihapus (no DELETE)');
+END;
+
+CREATE TRIGGER trg_ledger_entries_no_update
+BEFORE UPDATE ON ledger_entries
+BEGIN
+    SELECT RAISE(ABORT, 'ledger_entries: riwayat append-only tidak boleh diubah (no UPDATE)');
+END;
+
+CREATE TRIGGER trg_ledger_entries_no_delete
+BEFORE DELETE ON ledger_entries
+BEGIN
+    SELECT RAISE(ABORT, 'ledger_entries: riwayat append-only tidak boleh dihapus (no DELETE)');
+END;
+
+CREATE TRIGGER trg_incident_steps_no_update
+BEFORE UPDATE ON incident_steps
+BEGIN
+    SELECT RAISE(ABORT, 'incident_steps: riwayat append-only tidak boleh diubah (no UPDATE)');
+END;
+
+CREATE TRIGGER trg_incident_steps_no_delete
+BEFORE DELETE ON incident_steps
+BEGIN
+    SELECT RAISE(ABORT, 'incident_steps: riwayat append-only tidak boleh dihapus (no DELETE)');
+END;
+
 INSERT INTO schema_meta (schema_version, applied_at, description)
-VALUES ('001_initial', '2026-09-21T00:00:00+00:00', 'Villa Agency OS initial schema: inventory, policy, rates, evidence, quotes, holds, bookings, audit, cases, intake, matching, approvals, drafts, SLA');
+VALUES ('001_initial', '2026-09-21T00:00:00+00:00', 'Villa Agency OS initial schema: inventory, policy, rates, evidence, quotes, holds, bookings, audit, cases, intake, matching, approvals, drafts, SLA, billing, payments, reconciliation, documents, ops, incidents');
