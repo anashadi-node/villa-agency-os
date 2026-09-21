@@ -1,6 +1,6 @@
 # Laporan Akhir Phase 1 — villa-agency-os
 
-Versi: 1.1 · Tanggal: 2026-09-21 · Commit kode: `e83225a` + penerapan ADR-0002 (lihat §8) · Eksekutor: Hermes Anantara v3
+Versi: 1.1 · Tanggal: 2026-09-21 · Commit kode: `dc6c27e` (ADR-0002 Opsi A) di atas `e83225a` · Eksekutor: Hermes Anantara v3
 (Ekosistem Copy Cloning Super Dev Builders)
 
 Repo: `/home/anashadi/villa-agency-os` — sistem operasi reservasi & agency untuk
@@ -138,6 +138,8 @@ hapus lima test di atas — tidak ada data lama yang menjadi tidak valid. Rincia
 ## 8. Jejak commit
 
 ```
+dc6c27e  feat(schema,kernel): ADR-0002 Opsi A — pembatalan ditinjau & sengketa menahan slot (5 test, termasuk PostgreSQL hidup)
+41a7b1a  docs(reports): tutup gate Phase 1 — laporan akhir, angka terverifikasi, 6 defect baru
 e83225a  test(audit,gates): 276 test baru + 3 perbaikan modul; verifikasi mandiri atas hasil delegasi
 9ae52e1  test(schema): buktikan 001+002 di PostgreSQL 16 nyata; laporan gate keamanan & mutu
 1ccdcce  fix(guardrails): scan docs for secrets, mata-rantai false positive, artefak .tmp

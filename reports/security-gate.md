@@ -1,6 +1,6 @@
 # Laporan Gate Keamanan & Privasi — villa-agency-os
 
-Versi: 1.1 · Tanggal: 2026-09-21 · Commit kode: `e83225a` · Reviewer: Hermes Anantara v3
+Versi: 1.2 · Tanggal: 2026-09-21 · Commit kode: `dc6c27e` (R-1 ditutup oleh ADR-0002 Opsi A) · Reviewer: Hermes Anantara v3
 
 Lingkup: seluruh repo `/home/anashadi/villa-agency-os` (37 file ter-track). Kode milik
 pengguna; tidak ada target pihak ketiga yang diaudit, tidak ada eksploit yang dikembangkan.

@@ -1,6 +1,6 @@
 # Laporan Gate Mutu Rilis — villa-agency-os Phase 1
 
-Versi: 1.2 · Tanggal: 2026-09-21 · Commit kode: `e83225a` + penerapan ADR-0002 (lihat §8) · Reviewer: Hermes Anantara v3
+Versi: 1.2 · Tanggal: 2026-09-21 · Commit kode: `dc6c27e` (ADR-0002 Opsi A) di atas `e83225a` · Reviewer: Hermes Anantara v3
 
 Keputusan: **PASS untuk Phase 1 (Reservation Kernel)** — termasuk `audit.py` dan `gates.py`,
 yang pada versi 1.0 laporan ini belum dinilai karena belum punya test. Test untuk keduanya
