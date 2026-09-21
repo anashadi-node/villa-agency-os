@@ -17,7 +17,7 @@ import sqlite3
 import unittest
 from datetime import date, datetime, timedelta, timezone
 
-from primitives import FrozenClock, IdFactory, canonical_json, fingerprint, sha256_hex, to_iso
+from primitives import FrozenClock, IdFactory, canonical_json, fingerprint, sha256_hex
 from schema_loader import connect_sqlite
 
 from intake import (
@@ -856,7 +856,8 @@ class DerivedViewTests(IntakeBase):
 
     # 36 ------------------------------------------------------------- #
     def test_pending_lists_only_proposed_fields_in_field_specs_order(self):
-        by_name = self.mixed_review()
+        # The call is for its effect: it stores the proposal and its field rows.
+        self.mixed_review()
         pending = self.svc.pending(self.case_id)
         names = [row.field_name for row in pending]
         self.assertEqual(

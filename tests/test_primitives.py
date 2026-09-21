@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import decimal
 import unittest
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 
 import primitives as P
 

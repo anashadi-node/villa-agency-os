@@ -36,12 +36,11 @@ from __future__ import annotations
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
 
 from primitives import (
-    UTC,
     DomainError,
     IdFactory,
     Money,

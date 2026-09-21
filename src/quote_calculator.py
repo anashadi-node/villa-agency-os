@@ -26,15 +26,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import timedelta
-from decimal import Decimal
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from policy_engine import PolicyRules, PolicyVersion, parse_pct
 from primitives import (
     DomainError,
     Money,
     canonical_json,
-    decimal_of,
     nights_between,
     parse_iso_date,
     require_ref,

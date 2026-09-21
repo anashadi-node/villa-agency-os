@@ -14,7 +14,6 @@ asserted together with the database state it is required to leave behind.
 
 from __future__ import annotations
 
-import hashlib
 import sqlite3
 import unittest
 from datetime import datetime, timedelta, timezone

@@ -23,7 +23,7 @@ from schema_loader import connect_sqlite, load_statements  # noqa: E402
 @pytest.fixture()
 def clock() -> FrozenClock:
     """Deterministic clock: 2026-09-21T08:00:00Z."""
-    return FrozenClock.from_iso("2026-09-21T08:00:00Z")
+    return FrozenClock.at("2026-09-21T08:00:00Z")
 
 
 @pytest.fixture()

@@ -27,7 +27,6 @@ from decimal import Decimal
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from primitives import (
-    UTC,
     DomainError,
     Money,
     canonical_json,
@@ -38,7 +37,6 @@ from primitives import (
     require_text,
     sha256_hex,
     to_iso,
-    to_iso_date,
 )
 
 __all__ = [

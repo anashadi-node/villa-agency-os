@@ -22,7 +22,7 @@ import re
 import sqlite3
 import types
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path

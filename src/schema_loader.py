@@ -28,7 +28,7 @@ import re
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Mapping, Optional
+from typing import Any, Iterator, Mapping, Optional
 
 SCHEMA_DIR = Path(__file__).resolve().parent / "schema"
 SCHEMA_VERSION = "001_initial"

@@ -29,7 +29,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from gates import (
+from gates import (  # noqa: F401 -- names re-used by the checks below
     CLASSIFICATIONS,
     CODE_OK,
     CONTRACT_PACK_STATUSES,
@@ -46,7 +46,6 @@ from gates import (
     LOGGING_DESTINATIONS,
     P2_AUTH_ROLES,
     P3_AUTH_ROLES,
-    POLICY_TABLE,
     PROPERTY_STATUSES,
     PURPOSE_LEVELS,
     PURPOSES,
@@ -144,7 +143,7 @@ def _doc_confirm_levels() -> tuple[str, ...]:
 def _doc_p3_roles() -> tuple[str, ...]:
     """The roles the classification doc names as P3 export authorities."""
     text = _read(CLASSIFICATION_DOC).lower()
-    found = tuple(role for role in ("admin", "finance", "manager") if f"{role}" in text and f"p3" in text)
+    found = tuple(role for role in ("admin", "finance", "manager") if role in text and "p3" in text)
     return found
 
 
@@ -430,7 +429,7 @@ class TestSchemaDerivedPolicy(GateTestCase):
             match = re.match(r"\s*(\w+)\s+(\w+)\s+(.*)$", line)
             if match is None:
                 continue
-            column, declared_type, rest = match.group(1), match.group(2), match.group(3)
+            column, declared_type = match.group(1), match.group(2)
             if column.endswith("_minor"):
                 money.append((column, declared_type))
             elif column == "currency":
