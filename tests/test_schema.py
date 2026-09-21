@@ -272,7 +272,21 @@ class TestPostgresOnlyHardening(unittest.TestCase):
 
 @unittest.skipUnless(os.environ.get("VILLA_PG_DSN"), "set VILLA_PG_DSN to run the live PostgreSQL parity test")
 class TestLivePostgres(unittest.TestCase):
-    """Apply both PostgreSQL files to a real server and compare the catalogue."""
+    """Apply both PostgreSQL files to a real server and compare the catalogue.
+
+    ``VILLA_PG_DSN`` must point to a **disposable** database: ``setUpClass`` drops
+    and recreates ``public`` so every run starts from an empty server, which is the
+    only way to prove the DDL applies from scratch. Never point this at a database
+    that holds real data.
+    """
+
+    @classmethod
+    def _apply(cls, path: Path) -> None:
+        """Execute a schema file statement by statement on the live server."""
+        statements = [s for s in SL.split_statements(path.read_text(encoding="utf-8")) if s.strip()]
+        with cls.conn.cursor() as cur:
+            for statement in statements:
+                cur.execute(statement)
 
     @classmethod
     def setUpClass(cls):
@@ -281,21 +295,17 @@ class TestLivePostgres(unittest.TestCase):
         cls.dsn = os.environ["VILLA_PG_DSN"]
         cls.conn = psycopg2.connect(cls.dsn)
         cls.conn.autocommit = True
+        with cls.conn.cursor() as cur:
+            cur.execute("DROP SCHEMA IF EXISTS public CASCADE")
+            cur.execute("CREATE SCHEMA public")
+        cls._apply(PG_ONLY_002.parent / "001_initial.pg.sql")
+        cls._apply(PG_ONLY_002)
 
     @classmethod
     def tearDownClass(cls):
         cls.conn.close()
 
-    def _apply(self, path: Path) -> None:
-        sql = path.read_text(encoding="utf-8")
-        statements = [s for s in SL.split_statements(sql) if s.strip()]
-        with self.conn.cursor() as cur:
-            for statement in statements:
-                cur.execute(statement)
-
     def test_both_files_apply_and_match_the_sqlite_model(self):
-        self._apply(PG_ONLY_002.parent / "001_initial.pg.sql")
-        self._apply(PG_ONLY_002)
         model = SL.parse_schema_model("sqlite")
         with self.conn.cursor() as cur:
             for table in model.tables:
@@ -318,11 +328,6 @@ class TestLivePostgres(unittest.TestCase):
         import psycopg2
 
         seed = [
-            "DELETE FROM holds",
-            "DELETE FROM availability_evidence",
-            "DELETE FROM policy_versions WHERE policy_version_id = 'policy_probe'",
-            "DELETE FROM units WHERE unit_id = 'unit_pg_probe'",
-            "DELETE FROM properties WHERE property_id = 'prop_pg_probe'",
             "INSERT INTO properties (property_id, name, property_type, region, province,"
             " timezone, status, contract_pack_status, contract_pack_evaluated_at,"
             " created_at, updated_at) VALUES ('prop_pg_probe', 'Probe', 'villa', 'Probe',"
@@ -367,28 +372,31 @@ class TestLivePostgres(unittest.TestCase):
             " '2026-09-22T00:00:00+00:00', NULL, NULL, 0)"
         )
 
+        # The probe runs inside ONE transaction that is rolled back. Several of
+        # these tables are append-only on purpose (``villa_reject_mutation`` refuses
+        # UPDATE/DELETE), so cleanup must never rely on deleting rows: a live
+        # server would — correctly — reject the tidy-up and leak the probe data.
         with self.conn.cursor() as cur:
-            for statement in seed:
-                cur.execute(statement)
-            cur.execute(policy_insert, ("0" * 64,))
-            cur.execute(first_hold)
-            with self.assertRaises(psycopg2.errors.ExclusionViolation):
-                cur.execute(overlapping_hold)
-            # A back-to-back stay must still be allowed: [start, end) is half-open.
-            cur.execute(
-                "INSERT INTO holds (hold_id, unit_id, property_id, check_in, check_out, nights,"
-                " status, guest_ref, quote_ref, policy_version_id, evidence_id,"
-                " idempotency_key, created_at, expires_at, closed_at, close_reason,"
-                " extended_count) VALUES ('hold_pg_3', 'unit_pg_probe', 'prop_pg_probe',"
-                " '2026-10-03', '2026-10-05', 2, 'ACTIVE', 'guest_probe3', NULL,"
-                " 'policy_probe', 'evid_pg_probe', 'idem_pg_0003',"
-                " '2026-09-21T00:00:00+00:00', '2026-09-22T00:00:00+00:00', NULL, NULL, 0)"
-            )
-            cur.execute("DELETE FROM holds")
-            cur.execute("DELETE FROM policy_versions WHERE policy_version_id = 'policy_probe'")
-            cur.execute("DELETE FROM availability_evidence")
-            cur.execute("DELETE FROM units WHERE unit_id = 'unit_pg_probe'")
-            cur.execute("DELETE FROM properties WHERE property_id = 'prop_pg_probe'")
+            cur.execute("BEGIN")
+            try:
+                for statement in seed:
+                    cur.execute(statement)
+                cur.execute(policy_insert, ("0" * 64,))
+                cur.execute(first_hold)
+                # A back-to-back stay must still be allowed: [start, end) is half-open.
+                cur.execute(
+                    "INSERT INTO holds (hold_id, unit_id, property_id, check_in, check_out,"
+                    " nights, status, guest_ref, quote_ref, policy_version_id, evidence_id,"
+                    " idempotency_key, created_at, expires_at, closed_at, close_reason,"
+                    " extended_count) VALUES ('hold_pg_3', 'unit_pg_probe', 'prop_pg_probe',"
+                    " '2026-10-03', '2026-10-05', 2, 'ACTIVE', 'guest_probe3', NULL,"
+                    " 'policy_probe', 'evid_pg_probe', 'idem_pg_0003',"
+                    " '2026-09-21T00:00:00+00:00', '2026-09-22T00:00:00+00:00', NULL, NULL, 0)"
+                )
+                with self.assertRaises(psycopg2.errors.ExclusionViolation):
+                    cur.execute(overlapping_hold)
+            finally:
+                cur.execute("ROLLBACK")
 
 
 if __name__ == "__main__":  # pragma: no cover
