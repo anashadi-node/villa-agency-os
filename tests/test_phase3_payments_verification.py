@@ -1006,7 +1006,7 @@ class TestReconciliationFailClosed(MoneyProbe):
 
     def test_a_payload_with_card_data_opens_an_unverified_case_and_stores_no_card(self) -> None:
         intent = self.raise_intent()
-        raw = self.payload(provider_intent_id=intent.provider_intent_id, card_number=PAN)
+        raw = self.payload(provider_intent_id=intent.provider_intent_id, card_number=PAN)  # unsafe-scan: allow proving cardholder data is refused
         with self.assertRaises(PAY.CardDataForbidden) as raised:
             self.deliver(raw, event_id="evt_pan")
         self.assertEqual(raised.exception.code, PAY.CARD_DATA_FORBIDDEN)

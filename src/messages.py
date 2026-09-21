@@ -193,6 +193,13 @@ GROUNDED = "GROUNDED"
 UNGROUNDED = "UNGROUNDED"
 REVIEW_REQUIRED = "REVIEW_REQUIRED"
 
+DRAFT = "DRAFT"
+PENDING_APPROVAL = "PENDING_APPROVAL"
+APPROVED = "APPROVED"
+SENT = "SENT"
+REJECTED = "REJECTED"
+EXPIRED = "EXPIRED"
+
 #: Kinds of claim :func:`extract_claims` recognises, and the kind a binding must
 #: declare for the claim to be considered backed.
 CLAIM_KINDS: tuple[str, ...] = ("money", "date", "time", "percent", "number", "text")
@@ -229,6 +236,23 @@ CONSTRAINT_GROUNDED_BEFORE_APPROVAL = (
 
 _PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _ANY_BRACE_RE = re.compile(r"[{}]")
+
+_NUMERIC_PLACEHOLDER_KINDS: Mapping[str, str] = {
+    "check_in": "date",
+    "check_out": "date",
+    "nights": "number",
+    "nightly_rate": "money",
+    "total_amount": "money",
+    "accommodation_amount": "money",
+    "cleaning_amount": "money",
+    "tax_amount": "money",
+    "valid_until": "date",
+    "hold_expires_at": "date",
+    "amount_due": "money",
+    "invoice_due": "date",
+    "check_in_time": "time",
+    "resolution_due": "date",
+}
 
 # Ordered: money and dates are consumed before the generic number pattern, so
 # "Rp 1.500.000" is one money claim rather than three numeric fragments.
@@ -424,7 +448,7 @@ class Binding:
     field_name: str = ""
 
     def __post_init__(self) -> None:
-        value = require_text(self.value, "binding.value", max_len=200)
+        value = require_text(self.value, "binding.value", max_len=10000)
         object.__setattr__(self, "value", value)
         kind = str(self.kind or "").strip().lower()
         if kind not in CLAIM_KINDS:
@@ -486,7 +510,7 @@ class GroundingResult:
     status: str
     claims: tuple[Claim, ...]
     matched: tuple[str, ...]
-    unmatched: tuple[str, ...]
+    unmatched: tuple[Claim, ...]
     missing_sources: tuple[str, ...]
     unverified_sources: tuple[str, ...]
     bindings: tuple[Binding, ...]
@@ -500,7 +524,7 @@ class GroundingResult:
             "status": self.status,
             "claims": [c.as_dict() for c in self.claims],
             "matched": list(self.matched),
-            "unmatched": list(self.unmatched),
+            "unmatched": [c.as_dict() for c in self.unmatched],
             "missing_sources": list(self.missing_sources),
             "unverified_sources": list(self.unverified_sources),
             "bindings": [b.as_dict() for b in self.bindings],
@@ -512,7 +536,7 @@ class GroundingResult:
             {
                 "bindings": [b.as_dict() for b in self.bindings],
                 "claims": [c.as_dict() for c in self.claims],
-                "unmatched": list(self.unmatched),
+                "unmatched": [c.as_dict() for c in self.unmatched],
                 "missing_sources": list(self.missing_sources),
                 "unverified_sources": list(self.unverified_sources),
             }
@@ -670,7 +694,7 @@ def _coerce_bindings(bindings: Any) -> dict[str, Binding]:
     return result
 
 
-def render_template(template: str, bindings: Any) -> tuple[str, dict[str, Binding]]:
+def render_template(template: str, bindings: Any) -> tuple[str, tuple[Binding, ...]]:
     """Fill a named-placeholder template. Raises if any placeholder is unbound."""
     text = TEMPLATES.get(template)
     if text is None:
@@ -698,8 +722,16 @@ def render_template(template: str, bindings: Any) -> tuple[str, dict[str, Bindin
             template=template,
         )
     used = {name: supplied[name] for name in names}
+    for name, expected in _NUMERIC_PLACEHOLDER_KINDS.items():
+        if name in used and used[name].kind != expected:
+            raise UnsourcedBinding(
+                f"placeholder {name!r} must be bound as {expected!r}, not {used[name].kind!r}",
+                placeholder=name,
+                expected=expected,
+                got=used[name].kind,
+            )
     body = _PLACEHOLDER_RE.sub(lambda m: used[m.group(1)].value, text)
-    return _norm(body), used
+    return _norm(body), tuple(used[name] for name in names)
 
 
 # ---------------------------------------------------------------------------
@@ -814,12 +846,12 @@ def ground(
     ordered = tuple(supplied[name] for name in supplied)
     claims = extract_claims(text)
 
-    unmatched: list[str] = []
+    unmatched: list[Claim] = []
     matched: list[str] = []
     for claim in claims:
         backing = [b for b in ordered if _claim_is_backed(claim, b)]
         if not backing:
-            unmatched.append(claim.text)
+            unmatched.append(claim)
         else:
             matched.append(claim.text)
 
@@ -1003,7 +1035,7 @@ class MessageService:
                 f"classification gate denied draft {draft.draft_id}: "
                 f"{decision.get('code')}",
                 draft_id=draft.draft_id,
-                code=decision.get("code"),
+                gate_code=decision.get("code"),
                 decision=decision,
             )
         if draft.grounding != GROUNDED:
@@ -1013,6 +1045,16 @@ class MessageService:
                 draft_id=draft.draft_id,
                 grounding=draft.grounding,
             )
+
+    def _message_approval(self, draft: MessageDraft) -> Optional[Approval]:
+        """Return the latest real approval row for a draft, if it still exists."""
+        if draft.approval_id:
+            try:
+                return self._approvals.get(draft.approval_id)
+            except DomainError:
+                return None
+        approvals = self._approvals.for_subject("message_send", draft.draft_id)
+        return approvals[-1] if approvals else None
 
     # -- create -----------------------------------------------------------
     def update_body(
@@ -1085,7 +1127,7 @@ class MessageService:
         except DomainError as exc:
             raise InvalidRecipient(
                 "recipient_ref must be a non-empty reference, not raw contact detail",
-                recipient_ref=recipient_ref,
+                recipient_ref="[DIRECT_IDENTIFIER_REDACTED]",
             ) from exc
         if len(recipient) < 3:
             raise InvalidRecipient(
@@ -1200,8 +1242,10 @@ class MessageService:
                 status=draft.status,
             )
         self._assert_sendable(draft)
-        if draft.status == "PENDING_APPROVAL" and draft.approval_id:
-            return self._approvals.get(draft.approval_id)
+        if draft.status == "PENDING_APPROVAL":
+            approval = self._message_approval(draft)
+            if approval is not None:
+                return approval
 
         now = self._now(at)
         approval = self._approvals.request(
@@ -1228,8 +1272,8 @@ class MessageService:
         )
         with _write(self._conn):
             self._conn.execute(
-                "UPDATE message_drafts SET status = ?, approval_id = ? WHERE draft_id = ?",
-                ("PENDING_APPROVAL", approval.approval_id, draft.draft_id),
+                "UPDATE message_drafts SET status = ? WHERE draft_id = ?",
+                ("PENDING_APPROVAL", draft.draft_id),
             )
             self._audit(
                 action="message.submit",
@@ -1237,7 +1281,7 @@ class MessageService:
                 actor=actor_ref,
                 actor_role=role,
                 reason=reason,
-                after={"status": "PENDING_APPROVAL", "approval_id": approval.approval_id},
+                after={"status": "PENDING_APPROVAL", "approval_subject": draft.draft_id},
             )
         return approval
 
@@ -1255,9 +1299,16 @@ class MessageService:
         row = self._row(draft_id)
         draft = self._assert_intact(row)
         self._assert_sendable(draft)
-        if draft.status != "PENDING_APPROVAL" or not draft.approval_id:
+        if draft.status != "PENDING_APPROVAL":
             raise DraftNotPending(
                 f"draft {draft.draft_id} is {draft.status}: there is no approval request to decide",
+                draft_id=draft.draft_id,
+                status=draft.status,
+            )
+        approval = self._message_approval(draft)
+        if approval is None:
+            raise DraftNotPending(
+                f"draft {draft.draft_id} is PENDING_APPROVAL but no approval request exists",
                 draft_id=draft.draft_id,
                 status=draft.status,
             )
@@ -1269,7 +1320,7 @@ class MessageService:
             )
 
         approval = self._approvals.decide(
-            draft.approval_id,
+            approval.approval_id,
             approver=approver_ref,
             approver_role=role,
             decision="APPROVE",
@@ -1286,9 +1337,9 @@ class MessageService:
         now = self._now(at)
         with _write(self._conn):
             self._conn.execute(
-                "UPDATE message_drafts SET status = ?, approved_by = ?, approved_at = ? "
+                "UPDATE message_drafts SET status = ?, approval_id = ?, approved_by = ?, approved_at = ? "
                 "WHERE draft_id = ?",
-                ("APPROVED", approver_ref, to_iso(now), draft.draft_id),
+                ("APPROVED", approval.approval_id, approver_ref, to_iso(now), draft.draft_id),
             )
             self._audit(
                 action="message.approve",
@@ -1316,14 +1367,21 @@ class MessageService:
         approver_ref, role = self._require_human(approver, approver_role, field_name="approver")
         row = self._row(draft_id)
         draft = self._assert_intact(row)
-        if draft.status != "PENDING_APPROVAL" or not draft.approval_id:
+        if draft.status != "PENDING_APPROVAL":
             raise DraftNotPending(
                 f"draft {draft.draft_id} is {draft.status}: there is no approval request to decide",
                 draft_id=draft.draft_id,
                 status=draft.status,
             )
+        approval = self._message_approval(draft)
+        if approval is None:
+            raise DraftNotPending(
+                f"draft {draft.draft_id} is PENDING_APPROVAL but no approval request exists",
+                draft_id=draft.draft_id,
+                status=draft.status,
+            )
         self._approvals.decide(
-            draft.approval_id,
+            approval.approval_id,
             approver=approver_ref,
             approver_role=role,
             decision="REJECT",
@@ -1362,7 +1420,20 @@ class MessageService:
         No network call, no SMTP, no WhatsApp API — ``external_ref`` is the human's
         own receipt reference (a message id, an email thread, a call log entry).
         """
-        actor_ref, role = self._require_human(actor, actor_role, field_name="actor")
+        try:
+            actor_ref = require_ref(actor, "actor")
+        except DomainError as exc:
+            raise InvalidActor("actor must be a human reference", actor=redact(str(actor))) from exc
+        lowered = actor_ref.lower()
+        if lowered == SYSTEM_ACTOR or any(
+            lowered == marker or lowered.startswith(marker + ":") or lowered.startswith(marker + "-")
+            for marker in MACHINE_ACTOR_MARKERS
+        ):
+            raise InvalidActor(
+                f"actor {actor_ref!r} names a machine: sending is a human act",
+                actor=actor_ref,
+            )
+        role = str(actor_role or "").strip().lower()
         if role not in SENDER_ROLES:
             raise InvalidSenderRole(
                 f"role {role!r} may not record a send; allowed: {SENDER_ROLES}",
@@ -1393,7 +1464,7 @@ class MessageService:
                 draft_id=draft.draft_id,
                 status=draft.status,
             )
-        approval = self._approvals.get(draft.approval_id) if draft.approval_id else None
+        approval = self._message_approval(draft)
         if approval is None or approval.status != "APPROVED":
             raise DraftNotApproved(
                 f"draft {draft.draft_id} carries no APPROVED human approval",
@@ -1481,7 +1552,7 @@ class MessageService:
             mismatches.append("UNMATCHED_CLAIMS")
         if recomputed.missing_sources:
             mismatches.append("MISSING_SOURCES")
-        details["unmatched"] = list(recomputed.unmatched)
+        details["unmatched"] = [c.text for c in recomputed.unmatched]
         details["missing_sources"] = list(recomputed.missing_sources)
         details["claims"] = [c.as_dict() for c in recomputed.claims]
 
@@ -1507,21 +1578,21 @@ class MessageService:
             mismatches.append("GATE_CODE_MISMATCH")
         details["gate_recomputed"] = recomputed_decision.as_dict()
 
-        approval = self._approvals.get(draft.approval_id) if draft.approval_id else None
+        approval = self._message_approval(draft)
         approval_status = None if approval is None else approval.status
 
         if draft.status in ("APPROVED", "SENT"):
             if not draft.approved_by or not draft.approved_at:
                 mismatches.append("APPROVAL_FIELDS_MISSING")
-            if draft.approval_id is None:
-                mismatches.append("APPROVAL_REQUEST_MISSING")
+            if approval is None:
+                mismatches.append("APPROVAL_MISSING")
             elif approval_status != "APPROVED":
                 mismatches.append("APPROVAL_NOT_APPROVED")
             if draft.approved_by and draft.approved_by == draft.created_by:
                 mismatches.append("SELF_APPROVED")
             if draft.grounding != GROUNDED:
                 mismatches.append("UNGROUNDED_SENT")
-        if draft.status == "PENDING_APPROVAL" and not draft.approval_id:
+        if draft.status == "PENDING_APPROVAL" and approval is None:
             mismatches.append("APPROVAL_REQUEST_MISSING")
         if draft.status == "SENT":
             if not draft.sent_by or not draft.sent_at:
