@@ -1,4 +1,4 @@
-# Data Model — 13 Tabel, Kunci, dan Aturan Bukti
+# Data Model — 24 Tabel, Kunci, dan Aturan Bukti
 
 Versi: 1.0 · Tanggal: 2026-09-21 · Sumber: `src/schema/001_initial.sql` (SQLite) ⇄ `src/schema/001_initial.pg.sql` (PostgreSQL, generated)
 
@@ -111,7 +111,66 @@ Index ini adalah jaring terakhir: `reservation_kernel` memeriksa tumpang tindih 
 
 ---
 
-## 6. Audit & infrastruktur
+## 6. Phase 2 — case, intake, matching, persetujuan, draft
+
+Fondasi deterministik untuk pekerjaan agen: **percakapan masuk tidak pernah dipercaya**,
+dan **AI tidak punya jalur tulis ke status/uang**. Dua belas tabel di bawah ini
+ditegakkan DDL-nya di `tests/test_schema.py` (`TestPhase2FailClosedGuards`) dan di
+PostgreSQL hidup (`TestLivePostgres`).
+
+### `cases`
+Satu permintaan tamu = satu case. PK `case_id`, UNIQUE `idempotency_key`, FK opsional
+ke `bookings` (terisi setelah hold dikonversi). `status` ∈ `NEW|TRIAGED|MATCHING|
+AWAITING_EVIDENCE|QUOTED|HOLD_PENDING|BOOKED|ESCALATED|CLOSED_WON|CLOSED_LOST|
+CLOSED_DUPLICATE`; `channel` ∈ `website|email|whatsapp_business|dashboard|phone`
+(lowercase — kolom kosakata, bukan status). Jendela SLA dijaga DB: `created_at <
+first_response_due_at <= quote_due_at`. Status `CLOSED_*` wajib punya `closed_at`
+**dan** `close_reason` ≥ 3 karakter.
+
+### `case_messages` (append-only)
+Isi pesan tamu disimpan **ter-minimasi**: `body_sha256` selalu dihitung dari teks
+mentah, `body_redacted` wajib `NULL` untuk `P3`/`P4` (tidak pernah disimpan) dan wajib
+terisi untuk `P2`. `untrusted` default 1: isi pesan adalah data, bukan perintah.
+
+### `case_events` (append-only)
+Timeline case: `seq` unik per case, `command_id` unik per case — satu command = satu
+baris, sehingga retry tidak menggandakan riwayat.
+
+### `intake_proposals` + `intake_fields`
+Usulan terstruktur dari ekstraksi (metode `rule` lebih dulu, `llm_shadow` hanya
+bayangan). Setiap field wajib punya `source_message_id` (provenance) dan
+`source_span_start/end`; `field_value = NULL` berarti **UNKNOWN**, bukan tebakan.
+Field hanya menjadi fakta setelah direview manusia: `status ≠ PROPOSED` wajib punya
+`reviewed_by` + `reviewed_at`; `REJECTED` wajib punya `rejection_reason`. Nilai hasil
+ekstraksi immutable — hanya kolom review yang boleh berubah.
+
+### `match_runs` + `match_candidates` (append-only)
+Satu run pencocokan menyimpan snapshot fakta + hash-nya, lalu satu baris per unit yang
+diperiksa. `rank` unik per run, `score_centi` **integer** (tanpa float di jalur skor),
+`reasons`/`deny_reasons` berisi kode + bobot + `evidence_refs` yang menunjuk id nyata.
+Kandidat `eligible = 0` **wajib** punya alasan penolakan — dijaga CHECK, bukan konvensi.
+
+### `approval_requests` + `approval_decisions`
+Antrean persetujuan manusia. `refund`/`payout`/`bank_change` wajib `required_approvals
+>= 2`; UNIQUE `(approval_id, approver)` membuat satu orang tidak bisa menjadi dua
+approver. Status diturunkan dari baris keputusan (append-only), bukan dari kolom yang
+bisa diakali; `payload_sha256` + `request_hash` + `signature_hash` mendeteksi
+penyuntingan permintaan setelah diajukan. `money_minor`+`currency` wajib sepasang.
+
+### `message_drafts`
+Draft balasan yang dibangun dari fakta ber-ID. `grounding` ∈ `GROUNDED|UNGROUNDED|
+REVIEW_REQUIRED`; CHECK memastikan draft `UNGROUNDED` **tidak bisa** berstatus
+`APPROVED`/`SENT`. `SENT` wajib punya `sent_by` (manusia) + `sent_at` + `external_ref`,
+dan `APPROVED`/`SENT` wajib punya approver.
+
+### `sla_breaches`
+Satu baris per pelanggaran (`subject_type`+`subject_id`+`kind` unik, jadi deteksi
+berulang tidak menggandakan). Pelanggaran yang ditutup wajib punya `resolved_at` +
+`resolution_note`; `detected_at >= due_at` dijaga DB.
+
+---
+
+## 7. Audit & infrastruktur
 
 ### `audit_events`
 `audit_event_id` (PK), UNIQUE `seq`, `seq >= 1`, `action`/`actor`/`actor_role`/`entity_type`/`entity_id` wajib ≥ 1 karakter, `hash` & `prev_hash` 64 hex. Rantai hash: setiap baris menunjuk hash baris sebelumnya; baris pertama memakai `GENESIS_HASH`. Trigger menolak `UPDATE`/`DELETE` → tamper terbukti, bukan tersembunyi.
@@ -124,9 +183,9 @@ PK `idempotency_key` (global, lintas operasi), `operation`, `request_hash` (64 h
 
 ---
 
-## 7. Gotcha yang harus diketahui semua kontributor
+## 8. Gotcha yang harus diketahui semua kontributor
 
-1. **Casing enum berbeda antara DB dan kode.** DDL menyimpan nilai **lowercase** (`'confirmed'`, `'available'`, `'sellable'`, `'active'`, `'bali'`), sementara modul Python memakai konstanta **UPPERCASE** (`CONFIRMED`, `AVAILABLE`, `SELLABLE`, `ACTIVE`, `Bali`). Setiap jembatan DB ⇄ kode harus menormalkan; pernah menjadi sumber bug nyata di kernel.
+1. **Casing enum: status UPPERCASE, kosakata lowercase (diverifikasi ulang 2026-09-21 lewat audit 96 literal `CHECK ... IN (...)`).** Kolom *status/keadaan* menyimpan nilai **UPPERCASE** di DDL **dan** di modul Python (`'CONFIRMED'`, `'SELLABLE'`, `'ACTIVE'`, `'AVAILABLE'`, `'PENDING'`) — jadi tidak ada normalisasi casing yang perlu dilakukan untuk status. Hanya kolom *kosakata* yang lowercase: `property_type`, `unit_type`, `unit_scope`, `source_type`, `channel`, `method`, `value_type`, `subject_type`, `region`/`province`. Klaim lama dokumen ini ("DDL menyimpan status lowercase") **salah** dan sudah dikoreksi — mempercayainya pernah mengarahkan perbaikan ke arah yang keliru.
 2. **`availability_evidence.result = 'unknown'` bukan `available`.** Jangan menulis default yang menguntungkan penjualan.
 3. **Persentase itu teks.** Membaca `deposit_pct` langsung sebagai float akan mengembalikan string; gunakan primitives/`policy_engine`.
 4. **`policy_fingerprint` wajib disalin** ke `quotes`/`bookings`; referensi hidup ke policy tidak cukup (policy bisa berganti versi).
