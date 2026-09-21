@@ -110,7 +110,12 @@ class TestSqliteSchemaApplies(unittest.TestCase):
         by_table: dict[str, set[str]] = {}
         for trigger in model.triggers.values():
             by_table.setdefault(trigger.table, set()).update(trigger.events)
-        for table in ("audit_events", "booking_state_events", "policy_versions", "rate_cards"):
+        append_only = (
+            "audit_events", "booking_state_events", "policy_versions", "rate_cards",
+            "case_messages", "case_events", "intake_proposals", "match_runs",
+            "match_candidates", "approval_decisions",
+        )
+        for table in append_only:
             with self.subTest(table=table):
                 self.assertEqual(by_table.get(table), {"UPDATE", "DELETE"})
 
@@ -483,6 +488,389 @@ class TestLivePostgres(unittest.TestCase):
             finally:
                 cur.execute("ROLLBACK")
 
+    def test_phase2_append_only_triggers_exist_and_reject_an_update(self):
+        """The same six guards exist on the real server and really fire there.
+
+        The SQLite run proves the DDL; this proves the *generated* PostgreSQL twin
+        carries the guards too — a silent conversion bug would otherwise only show
+        up in production.
+        """
+        import psycopg2
+
+        logs = (
+            "case_messages", "case_events", "intake_proposals",
+            "match_runs", "match_candidates", "approval_decisions",
+        )
+        with self.conn.cursor() as cur:
+            for table in logs:
+                with self.subTest(table=table):
+                    cur.execute(
+                        "SELECT tg.tgname FROM pg_trigger tg"
+                        " JOIN pg_class c ON c.oid = tg.tgrelid"
+                        " WHERE c.relname = %s AND NOT tg.tgisinternal ORDER BY tg.tgname",
+                        (table,),
+                    )
+                    names = [row[0] for row in cur.fetchall()]
+                    self.assertEqual(
+                        names, ["trg_%s_no_delete" % table, "trg_%s_no_update" % table]
+                    )
+            cur.execute("BEGIN")
+            try:
+                cur.execute(
+                    "INSERT INTO cases (case_id, channel, guest_ref, status, priority, sla_policy,"
+                    " first_response_due_at, quote_due_at, idempotency_key, created_at, updated_at)"
+                    " VALUES ('case_pg_guard', 'website', 'guest_pg', 'NEW', 'NORMAL', 'web_v1',"
+                    " '2026-09-21T06:00:00+00:00', '2026-09-21T12:00:00+00:00', 'idem_pg_guard',"
+                    " '2026-09-21T04:00:00+00:00', '2026-09-21T04:00:00+00:00')"
+                )
+                cur.execute(
+                    "INSERT INTO case_events (case_event_id, case_id, seq, kind, actor, actor_role,"
+                    " command_id, occurred_at) VALUES ('ce_pg_guard', 'case_pg_guard', 1, 'CREATED',"
+                    " 'agent_1', 'agent', 'cmd_pg_guard_1', '2026-09-21T04:00:00+00:00')"
+                )
+                # One failed statement aborts the whole transaction, so each probe needs
+                # its own savepoint: otherwise the second probe fails for the wrong reason.
+                cur.execute("SAVEPOINT before_update")
+                with self.assertRaises(psycopg2.Error) as caught:
+                    cur.execute("UPDATE case_events SET reason = 'ditulis ulang'")
+                self.assertIn("append-only", str(caught.exception))
+                cur.execute("ROLLBACK TO SAVEPOINT before_update")
+                cur.execute("SAVEPOINT before_delete")
+                with self.assertRaises(psycopg2.Error) as caught:
+                    cur.execute("DELETE FROM case_events")
+                self.assertIn("append-only", str(caught.exception))
+                cur.execute("ROLLBACK TO SAVEPOINT before_delete")
+            finally:
+                cur.execute("ROLLBACK")
+
+
+class TestPhase2FailClosedGuards(unittest.TestCase):
+    """Phase 2 rows: every guard the database can enforce must really reject.
+
+    These are the invariants that keep the AI layer from becoming a source of
+    truth. They are asserted against the real DDL, not against a helper: if the
+    constraint is dropped or weakened, the test fails.
+    """
+
+    NOW = "2026-09-21T04:00:00+00:00"
+    FUTURE = "2026-09-21T06:00:00+00:00"
+    HASH = "a" * 64
+
+    def setUp(self):
+        self.conn = SL.connect_sqlite(":memory:")
+        self.addCleanup(self.conn.close)
+        self._seed()
+
+    # -- helpers ---------------------------------------------------------
+    def _insert(self, table: str, **cols):
+        keys = ", ".join(cols)
+        marks = ", ".join("?" for _ in cols)
+        cur = self.conn.execute(
+            f"INSERT INTO {table} ({keys}) VALUES ({marks})", tuple(cols.values())
+        )
+        return cur
+
+    def _rejects(self, table: str, **cols):
+        with self.assertRaises(sqlite3.IntegrityError):
+            self._insert(table, **cols)
+
+    def _seed(self):
+        self._insert(
+            "properties",
+            property_id="prop_p2", name="Probe Villa", property_type="villa",
+            region="Ubud", province="Bali", timezone="Asia/Makassar", status="SELLABLE",
+            contract_pack_status="VERIFIED", created_at=self.NOW, updated_at=self.NOW,
+        )
+        self._insert(
+            "units",
+            unit_id="unit_p2", property_id="prop_p2", name="Probe Unit",
+            unit_type="entire_villa", bedrooms=2, bathrooms=2, base_capacity=2,
+            max_guests=4, status="ACTIVE", created_at=self.NOW, updated_at=self.NOW,
+        )
+        self._insert(
+            "cases",
+            case_id="case_p2", channel="website", guest_ref="guest_p2", status="NEW",
+            priority="NORMAL", sla_policy="web_v1", first_response_due_at=self.FUTURE,
+            quote_due_at="2026-09-21T12:00:00+00:00", idempotency_key="idem_case_p2_x",
+            created_at=self.NOW, updated_at=self.NOW,
+        )
+        self._insert(
+            "case_messages",
+            case_message_id="msg_p2", case_id="case_p2", direction="INBOUND",
+            channel="website", sender_ref="guest_p2", received_at=self.NOW,
+            content_class="P2", body_redacted="Halo, saya mau tanya villa 2 kamar.",
+            body_sha256=self.HASH, created_at=self.NOW,
+        )
+        self._insert(
+            "intake_proposals",
+            proposal_id="prop_p2_prop", case_id="case_p2", source_message_id="msg_p2",
+            extractor="rule/1", method="rule", produced_at=self.NOW, status="PROPOSED",
+            payload="{}", fingerprint=self.HASH, created_at=self.NOW,
+        )
+
+    # -- PII / classification -------------------------------------------
+    def test_inbound_p3_and_p4_content_is_never_stored(self):
+        for tier in ("P3", "P4"):
+            with self.subTest(tier=tier):
+                self._rejects(
+                    "case_messages", case_message_id=f"msg_{tier}", case_id="case_p2",
+                    direction="INBOUND", channel="email", sender_ref="guest_p2",
+                    received_at=self.NOW, content_class=tier, body_redacted="no. KTP 1234",
+                    body_sha256=self.HASH, created_at=self.NOW,
+                )
+                self._insert(
+                    "case_messages", case_message_id=f"msg_{tier}_ok", case_id="case_p2",
+                    direction="INBOUND", channel="email", sender_ref="guest_p2",
+                    received_at=self.NOW, content_class=tier, body_redacted=None,
+                    body_sha256=self.HASH, created_at=self.NOW,
+                )
+
+    def test_p2_content_must_arrive_already_redacted(self):
+        self._rejects(
+            "case_messages", case_message_id="msg_p2_raw", case_id="case_p2",
+            direction="INBOUND", channel="email", sender_ref="guest_p2",
+            received_at=self.NOW, content_class="P2", body_redacted=None,
+            body_sha256=self.HASH, created_at=self.NOW,
+        )
+
+    # -- case lifecycle --------------------------------------------------
+    def test_a_closed_case_needs_a_timestamp_and_a_reason(self):
+        self._rejects(
+            "cases", case_id="case_closed_bad", channel="website", guest_ref="guest_p2",
+            status="CLOSED_WON", priority="NORMAL", sla_policy="web_v1",
+            first_response_due_at=self.FUTURE, quote_due_at="2026-09-21T12:00:00+00:00",
+            idempotency_key="idem_closed_bad", created_at=self.NOW, updated_at=self.NOW,
+        )
+
+    def test_case_sla_window_must_be_ordered(self):
+        self._rejects(
+            "cases", case_id="case_sla_bad", channel="whatsapp_business", guest_ref="guest_p2",
+            status="NEW", priority="HIGH", sla_policy="wa_v1",
+            first_response_due_at="2026-09-21T03:00:00+00:00", quote_due_at="2026-09-21T12:00:00+00:00",
+            idempotency_key="idem_sla_bad", created_at=self.NOW, updated_at=self.NOW,
+        )
+
+    def test_a_case_cannot_be_created_twice_from_the_same_command(self):
+        self._rejects(
+            "cases", case_id="case_p2_dup", channel="website", guest_ref="guest_p2",
+            status="NEW", priority="NORMAL", sla_policy="web_v1",
+            first_response_due_at=self.FUTURE, quote_due_at="2026-09-21T12:00:00+00:00",
+            idempotency_key="idem_case_p2_x", created_at=self.NOW, updated_at=self.NOW,
+        )
+
+    # -- intake review ---------------------------------------------------
+    def test_a_reviewed_intake_field_must_name_its_reviewer(self):
+        self._rejects(
+            "intake_fields", intake_field_id="fld_bad", proposal_id="prop_p2_prop",
+            case_id="case_p2", field_name="check_in", field_value="2026-10-01",
+            value_type="date", confidence=90, source_message_id="msg_p2",
+            status="ACCEPTED", value_sha256=self.HASH, created_at=self.NOW,
+        )
+        self._insert(
+            "intake_fields", intake_field_id="fld_ok", proposal_id="prop_p2_prop",
+            case_id="case_p2", field_name="check_in", field_value="2026-10-01",
+            value_type="date", confidence=90, source_message_id="msg_p2",
+            status="PROPOSED", value_sha256=self.HASH, created_at=self.NOW,
+        )
+
+    def test_a_rejected_intake_field_must_carry_a_reason(self):
+        self._rejects(
+            "intake_fields", intake_field_id="fld_rej", proposal_id="prop_p2_prop",
+            case_id="case_p2", field_name="check_out", field_value=None,
+            value_type="date", confidence=10, source_message_id="msg_p2",
+            status="REJECTED", value_sha256=self.HASH, created_at=self.NOW,
+            reviewed_by="agent_1", reviewed_at=self.NOW,
+        )
+
+    def test_one_field_per_proposal_only(self):
+        self._insert(
+            "intake_fields", intake_field_id="fld_a", proposal_id="prop_p2_prop",
+            case_id="case_p2", field_name="pax", field_value="4", value_type="integer",
+            confidence=80, source_message_id="msg_p2", status="PROPOSED",
+            value_sha256=self.HASH, created_at=self.NOW,
+        )
+        self._rejects(
+            "intake_fields", intake_field_id="fld_b", proposal_id="prop_p2_prop",
+            case_id="case_p2", field_name="pax", field_value="6", value_type="integer",
+            confidence=80, source_message_id="msg_p2", status="PROPOSED",
+            value_sha256=self.HASH, created_at=self.NOW,
+        )
+
+    # -- matching --------------------------------------------------------
+    def test_an_ineligible_candidate_must_say_why(self):
+        self._insert(
+            "match_runs", match_run_id="run_p2", case_id="case_p2", engine_version="m1",
+            intake_snapshot="{}", intake_hash=self.HASH, criteria="{}",
+            considered_count=1, eligible_count=0, created_by="agent_1", created_at=self.NOW,
+        )
+        self._rejects(
+            "match_candidates", candidate_id="cand_bad", match_run_id="run_p2",
+            unit_id="unit_p2", rank=1, eligible=0, score_centi=0, reasons="[]",
+            created_at=self.NOW,
+        )
+        self._insert(
+            "match_candidates", candidate_id="cand_ok", match_run_id="run_p2",
+            unit_id="unit_p2", rank=1, eligible=0, score_centi=0, reasons="[]",
+            deny_reasons='[{"code":"MIN_STAY"}]', created_at=self.NOW,
+        )
+
+    def test_matching_cannot_claim_more_eligible_than_considered(self):
+        self._rejects(
+            "match_runs", match_run_id="run_bad", case_id="case_p2", engine_version="m1",
+            intake_snapshot="{}", intake_hash=self.HASH, criteria="{}",
+            considered_count=1, eligible_count=2, created_by="agent_1", created_at=self.NOW,
+        )
+
+    # -- approvals -------------------------------------------------------
+    def _approval(self, approval_id: str, **over):
+        cols = dict(
+            approval_id=approval_id, subject_type="refund", subject_id="bk_1",
+            action="refund_deposit", risk_level="HIGH", requested_by="agent_1",
+            requested_role="agent", requested_at=self.NOW,
+            reason="Tamu membatalkan 20 hari sebelum check-in.", payload="{}",
+            payload_sha256=self.HASH, money_minor=500000, currency="IDR",
+            required_role="manager", required_approvals=2, status="PENDING",
+            expires_at=self.FUTURE, idempotency_key=f"idem_{approval_id}",
+            created_at=self.NOW,
+        )
+        cols.update(over)
+        return cols
+
+    def test_money_moving_approvals_need_two_approvers(self):
+        self._rejects("approval_requests", **self._approval("app_bad", required_approvals=1))
+        self._insert("approval_requests", **self._approval("app_ok"))
+
+    def test_a_non_money_approval_may_need_one_approver(self):
+        self._insert(
+            "approval_requests",
+            **self._approval(
+                "app_discount", subject_type="discount", money_minor=None, currency=None,
+                required_approvals=1, risk_level="LOW",
+            ),
+        )
+
+    def test_money_amount_and_currency_travel_together(self):
+        self._rejects("approval_requests", **self._approval("app_pair", currency=None))
+
+    def test_the_same_person_cannot_approve_twice(self):
+        self._insert("approval_requests", **self._approval("app_dual"))
+        for index in (1, 2):
+            self._insert(
+                "approval_decisions", decision_id=f"dec_{index}", approval_id="app_dual",
+                approver="manager_1", approver_role="manager", decision="APPROVE",
+                note="Setuju, sesuai policy pembatalan.", decided_at=self.NOW,
+                request_hash=self.HASH, signature_hash=self.HASH,
+            ) if index == 1 else None
+        self._rejects(
+            "approval_decisions", decision_id="dec_dup", approval_id="app_dual",
+            approver="manager_1", approver_role="manager", decision="REJECT",
+            note="Berubah pikiran.", decided_at=self.NOW,
+            request_hash=self.HASH, signature_hash=self.HASH,
+        )
+
+    # -- message drafts --------------------------------------------------
+    def _draft(self, draft_id: str, **over):
+        cols = dict(
+            draft_id=draft_id, case_id="case_p2", channel="website", template="quote_v1",
+            locale="id-ID", recipient_ref="guest_p2", body_text="Harga total Rp1.500.000.",
+            body_sha256=self.HASH, grounding="GROUNDED", gate_decision="{}", status="DRAFT",
+            created_by="copilot_v1", created_at=self.NOW,
+        )
+        cols.update(over)
+        return cols
+
+    def test_an_ungrounded_draft_can_never_be_approved_or_sent(self):
+        self._rejects(
+            "message_drafts", **self._draft(
+                "dr_bad", grounding="UNGROUNDED", status="APPROVED",
+                approved_by="agent_1", approved_at=self.NOW,
+            )
+        )
+
+    def test_an_approved_draft_records_who_approved_it(self):
+        self._rejects("message_drafts", **self._draft("dr_bad2", status="APPROVED"))
+
+    def test_a_sent_draft_records_the_human_and_the_channel_receipt(self):
+        self._rejects(
+            "message_drafts", **self._draft(
+                "dr_bad3", status="SENT", approved_by="agent_1", approved_at=self.NOW,
+                sent_by="agent_1", sent_at=self.NOW,
+            )
+        )
+
+    # -- append-only logs ------------------------------------------------
+    def test_phase2_logs_reject_update_and_delete(self):
+        """All six Phase-2 history tables refuse to be rewritten, in both directions."""
+        self._insert(
+            "case_events", case_event_id="ce_1", case_id="case_p2", seq=1, kind="CREATED",
+            actor="agent_1", actor_role="agent", command_id="cmd_create_case_1",
+            occurred_at=self.NOW,
+        )
+        self._insert(
+            "match_runs", match_run_id="run_p2", case_id="case_p2", engine_version="m1",
+            intake_snapshot="{}", intake_hash=self.HASH, criteria="{}",
+            considered_count=0, eligible_count=0, created_by="agent_1", created_at=self.NOW,
+        )
+        self._insert(
+            "match_candidates", candidate_id="cand_p2", match_run_id="run_p2",
+            unit_id="unit_p2", rank=1, eligible=1, score_centi=100, reasons="[]",
+            created_at=self.NOW,
+        )
+        self._insert("approval_requests", **self._approval("app_p2"))
+        self._insert(
+            "approval_decisions", decision_id="dec_p2", approval_id="app_p2",
+            approver="manager_1", approver_role="manager", decision="APPROVE",
+            note="Setuju, sesuai policy pembatalan.", decided_at=self.NOW,
+            request_hash=self.HASH, signature_hash=self.HASH,
+        )
+        probes = (
+            ("case_messages", "case_message_id", "msg_p2", "created_at", self.FUTURE),
+            ("case_events", "case_event_id", "ce_1", "reason", "ditulis ulang"),
+            ("intake_proposals", "proposal_id", "prop_p2_prop", "payload", '{"x":1}'),
+            ("match_runs", "match_run_id", "run_p2", "criteria", '{"x":1}'),
+            ("match_candidates", "candidate_id", "cand_p2", "reasons", '[{"code":"X"}]'),
+            ("approval_decisions", "decision_id", "dec_p2", "note", "diubah belakangan"),
+        )
+        for table, key, value, column, replacement in probes:
+            with self.subTest(table=table):
+                with self.assertRaises(sqlite3.IntegrityError) as caught:
+                    self.conn.execute(
+                        f"UPDATE {table} SET {column} = ? WHERE {key} = ?", (replacement, value)
+                    )
+                self.assertIn("append-only", str(caught.exception))
+                with self.assertRaises(sqlite3.IntegrityError) as caught:
+                    self.conn.execute(f"DELETE FROM {table} WHERE {key} = ?", (value,))
+                self.assertIn("append-only", str(caught.exception))
+
+    def test_sla_breach_must_be_resolved_with_a_note_or_left_open(self):
+        self._rejects(
+            "sla_breaches", breach_id="br_bad", subject_type="case", subject_id="case_p2",
+            case_id="case_p2", kind="QUOTE", due_at="2026-09-21T03:00:00+00:00",
+            detected_at="2026-09-21T04:00:00+00:00", breach_minutes=60, status="RESOLVED",
+            created_at=self.NOW,
+        )
+
+    def test_a_breach_cannot_be_recorded_before_it_is_due(self):
+        self._rejects(
+            "sla_breaches", breach_id="br_early", subject_type="case", subject_id="case_p2",
+            case_id="case_p2", kind="QUOTE", due_at="2026-09-21T05:00:00+00:00",
+            detected_at="2026-09-21T04:00:00+00:00", breach_minutes=0, status="OPEN",
+            created_at=self.NOW,
+        )
+
+    def test_the_same_breach_is_recorded_once(self):
+        self._insert(
+            "sla_breaches", breach_id="br_once", subject_type="case", subject_id="case_p2",
+            case_id="case_p2", kind="FIRST_RESPONSE", due_at="2026-09-21T03:00:00+00:00",
+            detected_at="2026-09-21T04:00:00+00:00", breach_minutes=60, status="OPEN",
+            created_at=self.NOW,
+        )
+        self._rejects(
+            "sla_breaches", breach_id="br_twice", subject_type="case", subject_id="case_p2",
+            case_id="case_p2", kind="FIRST_RESPONSE", due_at="2026-09-21T03:00:00+00:00",
+            detected_at="2026-09-21T04:00:00+00:00", breach_minutes=90, status="OPEN",
+            created_at=self.NOW,
+        )
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

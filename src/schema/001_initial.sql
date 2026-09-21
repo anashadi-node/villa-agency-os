@@ -362,6 +362,284 @@ CREATE TABLE idempotency_keys (
 );
 
 -- --------------------------------------------------------------------------
+-- Phase 2 — case management, structured intake, explainable matching,
+-- approval queue, message drafts, SLA tracking.
+--
+-- Rules that the shape of these tables enforces (fail-closed by construction):
+--   * an inbound message body is NEVER the raw text: only a redacted body plus a
+--     sha256 of the original. P3/P4 content is not stored at all.
+--   * an extracted intake value only becomes usable after a human review row is
+--     recorded; the value itself stays immutable once written.
+--   * a candidate can only be ineligible with an explicit deny reason.
+--   * a draft that is not GROUNDED can never reach APPROVED/SENT.
+--   * money-moving approvals (refund/payout/bank_change) need 2 approvers.
+-- --------------------------------------------------------------------------
+CREATE TABLE cases (
+    case_id        TEXT    NOT NULL,
+    channel        TEXT    NOT NULL CHECK (channel IN ('website','email','whatsapp_business','dashboard','phone')),
+    channel_ref    TEXT,
+    guest_ref      TEXT    NOT NULL CHECK (length(guest_ref) >= 3),
+    status         TEXT    NOT NULL CHECK (status IN (
+                       'NEW','TRIAGED','MATCHING','AWAITING_EVIDENCE','QUOTED','HOLD_PENDING',
+                       'BOOKED','ESCALATED','CLOSED_WON','CLOSED_LOST','CLOSED_DUPLICATE')),
+    priority       TEXT    NOT NULL CHECK (priority IN ('LOW','NORMAL','HIGH','URGENT')),
+    owner_actor    TEXT,
+    booking_id     TEXT,
+    sla_policy     TEXT    NOT NULL CHECK (length(sla_policy) >= 3),
+    first_response_due_at TEXT NOT NULL,
+    quote_due_at   TEXT    NOT NULL,
+    first_responded_at    TEXT,
+    quoted_at      TEXT,
+    idempotency_key TEXT   NOT NULL CHECK (length(idempotency_key) >= 8),
+    created_at     TEXT    NOT NULL,
+    updated_at     TEXT    NOT NULL,
+    closed_at      TEXT,
+    close_reason   TEXT,
+    CONSTRAINT pk_cases PRIMARY KEY (case_id),
+    CONSTRAINT fk_cases_booking FOREIGN KEY (booking_id) REFERENCES bookings (booking_id),
+    CONSTRAINT uq_cases_idempotency UNIQUE (idempotency_key),
+    CONSTRAINT ck_cases_sla_window CHECK (created_at < first_response_due_at AND first_response_due_at <= quote_due_at),
+    CONSTRAINT ck_cases_closed CHECK (status NOT LIKE 'CLOSED_%' OR closed_at IS NOT NULL),
+    CONSTRAINT ck_cases_close_reason CHECK (status NOT LIKE 'CLOSED_%' OR (close_reason IS NOT NULL AND length(close_reason) >= 3))
+);
+CREATE INDEX ix_cases_status ON cases (status, first_response_due_at);
+CREATE INDEX ix_cases_owner ON cases (owner_actor, status);
+
+CREATE TABLE case_messages (
+    case_message_id TEXT  NOT NULL,
+    case_id        TEXT    NOT NULL,
+    direction      TEXT    NOT NULL CHECK (direction IN ('INBOUND','OUTBOUND')),
+    channel        TEXT    NOT NULL CHECK (channel IN ('website','email','whatsapp_business','dashboard','phone')),
+    external_ref   TEXT,
+    sender_ref     TEXT    NOT NULL CHECK (length(sender_ref) >= 3),
+    received_at    TEXT    NOT NULL,
+    content_class  TEXT    NOT NULL CHECK (content_class IN ('P0','P1','P2','P3','P4')),
+    body_redacted  TEXT,
+    body_sha256    TEXT    NOT NULL CHECK (length(body_sha256) = 64),
+    attachment_count INTEGER NOT NULL DEFAULT 0 CHECK (attachment_count >= 0),
+    untrusted      INTEGER NOT NULL DEFAULT 1 CHECK (untrusted IN (0,1)),
+    created_at     TEXT    NOT NULL,
+    CONSTRAINT pk_case_messages PRIMARY KEY (case_message_id),
+    CONSTRAINT fk_case_messages_case FOREIGN KEY (case_id) REFERENCES cases (case_id),
+    CONSTRAINT ck_case_messages_p3p4_not_stored CHECK (content_class NOT IN ('P3','P4') OR body_redacted IS NULL),
+    CONSTRAINT ck_case_messages_p2_redacted CHECK (content_class <> 'P2' OR body_redacted IS NOT NULL)
+);
+CREATE INDEX ix_case_messages_case ON case_messages (case_id, received_at);
+
+CREATE TABLE intake_proposals (
+    proposal_id    TEXT    NOT NULL,
+    case_id        TEXT    NOT NULL,
+    source_message_id TEXT NOT NULL,
+    extractor      TEXT    NOT NULL CHECK (length(extractor) >= 3),
+    method         TEXT    NOT NULL CHECK (method IN ('rule','llm_shadow','manual')),
+    produced_at    TEXT    NOT NULL,
+    status         TEXT    NOT NULL CHECK (status IN ('PROPOSED','ACCEPTED','REJECTED','PARTIAL','SUPERSEDED')),
+    payload        TEXT    NOT NULL,
+    fingerprint    TEXT    NOT NULL CHECK (length(fingerprint) = 64),
+    created_at     TEXT    NOT NULL,
+    CONSTRAINT pk_intake_proposals PRIMARY KEY (proposal_id),
+    CONSTRAINT fk_intake_proposals_case FOREIGN KEY (case_id) REFERENCES cases (case_id),
+    CONSTRAINT fk_intake_proposals_message FOREIGN KEY (source_message_id) REFERENCES case_messages (case_message_id)
+);
+CREATE INDEX ix_intake_proposals_case ON intake_proposals (case_id, produced_at);
+
+CREATE TABLE intake_fields (
+    intake_field_id TEXT  NOT NULL,
+    proposal_id    TEXT   NOT NULL,
+    case_id        TEXT   NOT NULL,
+    field_name     TEXT   NOT NULL CHECK (length(field_name) BETWEEN 2 AND 64),
+    field_value    TEXT,
+    value_type     TEXT   NOT NULL CHECK (value_type IN ('date','integer','text','money','boolean','enum')),
+    confidence     INTEGER NOT NULL CHECK (confidence BETWEEN 0 AND 100),
+    source_message_id TEXT NOT NULL,
+    source_span_start INTEGER,
+    source_span_end   INTEGER,
+    status         TEXT   NOT NULL CHECK (status IN ('PROPOSED','ACCEPTED','REJECTED')),
+    value_sha256   TEXT   NOT NULL CHECK (length(value_sha256) = 64),
+    created_at     TEXT   NOT NULL,
+    reviewed_by    TEXT,
+    reviewed_at    TEXT,
+    rejection_reason TEXT,
+    CONSTRAINT pk_intake_fields PRIMARY KEY (intake_field_id),
+    CONSTRAINT fk_intake_fields_proposal FOREIGN KEY (proposal_id) REFERENCES intake_proposals (proposal_id),
+    CONSTRAINT fk_intake_fields_case FOREIGN KEY (case_id) REFERENCES cases (case_id),
+    CONSTRAINT fk_intake_fields_message FOREIGN KEY (source_message_id) REFERENCES case_messages (case_message_id),
+    CONSTRAINT uq_intake_field_once UNIQUE (proposal_id, field_name),
+    CONSTRAINT ck_intake_field_span CHECK (source_span_start IS NULL OR source_span_end IS NULL OR source_span_start <= source_span_end),
+    CONSTRAINT ck_intake_field_reviewed CHECK (status = 'PROPOSED' OR (reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL)),
+    CONSTRAINT ck_intake_field_rejection CHECK (status <> 'REJECTED' OR (rejection_reason IS NOT NULL AND length(rejection_reason) >= 3))
+);
+CREATE INDEX ix_intake_fields_case ON intake_fields (case_id, field_name, status);
+
+CREATE TABLE match_runs (
+    match_run_id   TEXT    NOT NULL,
+    case_id        TEXT    NOT NULL,
+    engine_version TEXT    NOT NULL CHECK (length(engine_version) >= 1),
+    intake_snapshot TEXT   NOT NULL,
+    intake_hash    TEXT    NOT NULL CHECK (length(intake_hash) = 64),
+    criteria       TEXT    NOT NULL,
+    considered_count INTEGER NOT NULL CHECK (considered_count >= 0),
+    eligible_count INTEGER NOT NULL CHECK (eligible_count >= 0),
+    created_by     TEXT    NOT NULL CHECK (length(created_by) >= 1),
+    created_at     TEXT    NOT NULL,
+    CONSTRAINT pk_match_runs PRIMARY KEY (match_run_id),
+    CONSTRAINT fk_match_runs_case FOREIGN KEY (case_id) REFERENCES cases (case_id),
+    CONSTRAINT ck_match_runs_counts CHECK (eligible_count <= considered_count)
+);
+CREATE INDEX ix_match_runs_case ON match_runs (case_id, created_at);
+
+CREATE TABLE match_candidates (
+    candidate_id   TEXT    NOT NULL,
+    match_run_id   TEXT    NOT NULL,
+    unit_id        TEXT    NOT NULL,
+    rank           INTEGER NOT NULL CHECK (rank >= 1),
+    eligible       INTEGER NOT NULL CHECK (eligible IN (0,1)),
+    score_centi    INTEGER NOT NULL,
+    reasons        TEXT    NOT NULL,
+    deny_reasons   TEXT    NOT NULL DEFAULT '[]',
+    evidence_refs  TEXT    NOT NULL DEFAULT '[]',
+    created_at     TEXT    NOT NULL,
+    CONSTRAINT pk_match_candidates PRIMARY KEY (candidate_id),
+    CONSTRAINT fk_match_candidates_run FOREIGN KEY (match_run_id) REFERENCES match_runs (match_run_id),
+    CONSTRAINT fk_match_candidates_unit FOREIGN KEY (unit_id) REFERENCES units (unit_id),
+    CONSTRAINT uq_match_candidate_rank UNIQUE (match_run_id, rank),
+    CONSTRAINT uq_match_candidate_unit UNIQUE (match_run_id, unit_id),
+    CONSTRAINT ck_match_candidate_deny CHECK (eligible = 1 OR deny_reasons <> '[]')
+);
+CREATE INDEX ix_match_candidates_run ON match_candidates (match_run_id, rank);
+
+CREATE TABLE approval_requests (
+    approval_id    TEXT    NOT NULL,
+    subject_type   TEXT    NOT NULL CHECK (subject_type IN (
+                       'booking','case','quote','hold','refund','payout','policy_exception',
+                       'relocation','bank_change','discount','message_send','cancellation')),
+    subject_id     TEXT    NOT NULL,
+    action         TEXT    NOT NULL CHECK (length(action) >= 3),
+    risk_level     TEXT    NOT NULL CHECK (risk_level IN ('LOW','MEDIUM','HIGH')),
+    requested_by   TEXT    NOT NULL CHECK (length(requested_by) >= 1),
+    requested_role TEXT    NOT NULL CHECK (length(requested_role) >= 1),
+    requested_at   TEXT    NOT NULL,
+    reason         TEXT    NOT NULL CHECK (length(reason) >= 10),
+    evidence_refs  TEXT    NOT NULL DEFAULT '[]',
+    payload        TEXT    NOT NULL,
+    payload_sha256 TEXT    NOT NULL CHECK (length(payload_sha256) = 64),
+    money_minor    INTEGER CHECK (money_minor IS NULL OR money_minor >= 0),
+    currency       TEXT    CHECK (currency IS NULL OR length(currency) = 3),
+    required_role  TEXT    NOT NULL CHECK (length(required_role) >= 1),
+    required_approvals INTEGER NOT NULL CHECK (required_approvals BETWEEN 1 AND 3),
+    status         TEXT    NOT NULL CHECK (status IN ('PENDING','APPROVED','REJECTED','EXPIRED','WITHDRAWN')),
+    expires_at     TEXT    NOT NULL,
+    idempotency_key TEXT   NOT NULL CHECK (length(idempotency_key) >= 8),
+    created_at     TEXT    NOT NULL,
+    closed_at      TEXT,
+    CONSTRAINT pk_approval_requests PRIMARY KEY (approval_id),
+    CONSTRAINT uq_approval_idempotency UNIQUE (idempotency_key),
+    CONSTRAINT ck_approval_money_pair CHECK ((money_minor IS NULL) = (currency IS NULL)),
+    CONSTRAINT ck_approval_expiry CHECK (requested_at < expires_at),
+    CONSTRAINT ck_approval_closed CHECK (status = 'PENDING' OR closed_at IS NOT NULL),
+    CONSTRAINT ck_approval_dual_for_money CHECK (required_approvals >= 2 OR subject_type NOT IN ('refund','payout','bank_change'))
+);
+CREATE INDEX ix_approval_status ON approval_requests (status, expires_at);
+CREATE INDEX ix_approval_subject ON approval_requests (subject_type, subject_id);
+
+CREATE TABLE approval_decisions (
+    decision_id    TEXT    NOT NULL,
+    approval_id    TEXT    NOT NULL,
+    approver       TEXT    NOT NULL CHECK (length(approver) >= 1),
+    approver_role  TEXT    NOT NULL CHECK (length(approver_role) >= 1),
+    decision       TEXT    NOT NULL CHECK (decision IN ('APPROVE','REJECT')),
+    note           TEXT    NOT NULL CHECK (length(note) >= 3),
+    decided_at     TEXT    NOT NULL,
+    request_hash   TEXT    NOT NULL CHECK (length(request_hash) = 64),
+    signature_hash TEXT    NOT NULL CHECK (length(signature_hash) = 64),
+    CONSTRAINT pk_approval_decisions PRIMARY KEY (decision_id),
+    CONSTRAINT fk_approval_decisions_request FOREIGN KEY (approval_id) REFERENCES approval_requests (approval_id),
+    CONSTRAINT uq_approval_decision_once UNIQUE (approval_id, approver),
+    CONSTRAINT ck_approval_decision_self CHECK (approver <> '')
+);
+CREATE INDEX ix_approval_decisions_approval ON approval_decisions (approval_id, decided_at);
+
+CREATE TABLE message_drafts (
+    draft_id       TEXT    NOT NULL,
+    case_id        TEXT    NOT NULL,
+    booking_id     TEXT,
+    channel        TEXT    NOT NULL CHECK (channel IN ('website','email','whatsapp_business','dashboard','phone')),
+    template       TEXT    NOT NULL CHECK (length(template) >= 3),
+    locale         TEXT    NOT NULL CHECK (length(locale) >= 5),
+    recipient_ref  TEXT    NOT NULL CHECK (length(recipient_ref) >= 3),
+    body_text      TEXT    NOT NULL CHECK (length(body_text) BETWEEN 1 AND 8000),
+    body_sha256    TEXT    NOT NULL CHECK (length(body_sha256) = 64),
+    claim_bindings TEXT    NOT NULL DEFAULT '[]',
+    grounding      TEXT    NOT NULL CHECK (grounding IN ('GROUNDED','UNGROUNDED','REVIEW_REQUIRED')),
+    gate_decision  TEXT    NOT NULL,
+    status         TEXT    NOT NULL CHECK (status IN ('DRAFT','PENDING_APPROVAL','APPROVED','SENT','REJECTED','EXPIRED')),
+    approval_id    TEXT,
+    created_by     TEXT    NOT NULL CHECK (length(created_by) >= 1),
+    created_at     TEXT    NOT NULL,
+    approved_by    TEXT,
+    approved_at    TEXT,
+    sent_by        TEXT,
+    sent_at        TEXT,
+    external_ref   TEXT,
+    CONSTRAINT pk_message_drafts PRIMARY KEY (draft_id),
+    CONSTRAINT fk_drafts_case FOREIGN KEY (case_id) REFERENCES cases (case_id),
+    CONSTRAINT fk_drafts_booking FOREIGN KEY (booking_id) REFERENCES bookings (booking_id),
+    CONSTRAINT fk_drafts_approval FOREIGN KEY (approval_id) REFERENCES approval_requests (approval_id),
+    CONSTRAINT ck_drafts_grounded_before_approval CHECK (grounding = 'GROUNDED' OR status NOT IN ('APPROVED','SENT')),
+    CONSTRAINT ck_drafts_approved_pair CHECK (status NOT IN ('APPROVED','SENT') OR (approved_by IS NOT NULL AND approved_at IS NOT NULL)),
+    CONSTRAINT ck_drafts_sent_pair CHECK (status <> 'SENT' OR (sent_by IS NOT NULL AND sent_at IS NOT NULL AND external_ref IS NOT NULL))
+);
+CREATE INDEX ix_drafts_case ON message_drafts (case_id, created_at);
+CREATE INDEX ix_drafts_status ON message_drafts (status, created_at);
+
+CREATE TABLE case_events (
+    case_event_id  TEXT    NOT NULL,
+    case_id        TEXT    NOT NULL,
+    seq            INTEGER NOT NULL CHECK (seq >= 1),
+    kind           TEXT    NOT NULL CHECK (kind IN (
+                       'CREATED','MESSAGE_IN','MESSAGE_OUT','INTAKE_PROPOSED','INTAKE_REVIEWED','MATCH_RUN',
+                       'QUOTE_LINKED','HOLD_LINKED','BOOKING_LINKED','STATUS_CHANGED','APPROVAL_REQUESTED',
+                       'APPROVAL_DECIDED','DRAFT_CREATED','SLA_BREACH','ESCALATED','NOTE')),
+    from_status    TEXT,
+    to_status      TEXT,
+    actor          TEXT    NOT NULL CHECK (length(actor) >= 1),
+    actor_role     TEXT    NOT NULL CHECK (length(actor_role) >= 1),
+    command_id     TEXT    NOT NULL CHECK (length(command_id) >= 8),
+    reason         TEXT,
+    refs           TEXT    NOT NULL DEFAULT '[]',
+    occurred_at    TEXT    NOT NULL,
+    CONSTRAINT pk_case_events PRIMARY KEY (case_event_id),
+    CONSTRAINT fk_case_events_case FOREIGN KEY (case_id) REFERENCES cases (case_id),
+    CONSTRAINT uq_case_events_seq UNIQUE (case_id, seq),
+    CONSTRAINT uq_case_events_command UNIQUE (case_id, command_id)
+);
+CREATE INDEX ix_case_events_case ON case_events (case_id, seq);
+
+CREATE TABLE sla_breaches (
+    breach_id      TEXT    NOT NULL,
+    subject_type   TEXT    NOT NULL CHECK (subject_type IN ('case','payment','complaint','approval')),
+    subject_id     TEXT    NOT NULL,
+    case_id        TEXT,
+    kind           TEXT    NOT NULL CHECK (kind IN (
+                       'FIRST_RESPONSE','AVAILABILITY_ANSWER','QUOTE','COMPLAINT_FIRST_RESPONSE',
+                       'COMPLAINT_RESOLUTION','UNMATCHED_PAYMENT','APPROVAL_QUEUE')),
+    due_at         TEXT    NOT NULL,
+    detected_at    TEXT    NOT NULL,
+    breach_minutes INTEGER NOT NULL CHECK (breach_minutes >= 0),
+    owner_actor    TEXT,
+    status         TEXT    NOT NULL CHECK (status IN ('OPEN','RESOLVED','WAIVED')),
+    resolution_note TEXT,
+    resolved_at    TEXT,
+    created_at     TEXT    NOT NULL,
+    CONSTRAINT pk_sla_breaches PRIMARY KEY (breach_id),
+    CONSTRAINT fk_sla_breaches_case FOREIGN KEY (case_id) REFERENCES cases (case_id),
+    CONSTRAINT uq_sla_breach_once UNIQUE (subject_type, subject_id, kind),
+    CONSTRAINT ck_sla_breach_detected CHECK (detected_at >= due_at),
+    CONSTRAINT ck_sla_breach_resolution CHECK (status = 'OPEN' OR (resolved_at IS NOT NULL AND resolution_note IS NOT NULL AND length(resolution_note) >= 3))
+);
+CREATE INDEX ix_sla_breaches_open ON sla_breaches (status, due_at);
+
+-- --------------------------------------------------------------------------
 -- Immutability guards: the database itself refuses to rewrite history.
 -- --------------------------------------------------------------------------
 CREATE TRIGGER trg_audit_events_no_update
@@ -412,5 +690,78 @@ BEGIN
     SELECT RAISE(ABORT, 'rate_cards is append-only (DELETE rejected)');
 END;
 
+-- Phase 2 append-only logs: the same guard as booking_state_events/audit_events.
+CREATE TRIGGER trg_case_messages_no_update
+BEFORE UPDATE ON case_messages
+BEGIN
+    SELECT RAISE(ABORT, 'case_messages is append-only (UPDATE rejected)');
+END;
+
+CREATE TRIGGER trg_case_messages_no_delete
+BEFORE DELETE ON case_messages
+BEGIN
+    SELECT RAISE(ABORT, 'case_messages is append-only (DELETE rejected)');
+END;
+
+CREATE TRIGGER trg_case_events_no_update
+BEFORE UPDATE ON case_events
+BEGIN
+    SELECT RAISE(ABORT, 'case_events is append-only (UPDATE rejected)');
+END;
+
+CREATE TRIGGER trg_case_events_no_delete
+BEFORE DELETE ON case_events
+BEGIN
+    SELECT RAISE(ABORT, 'case_events is append-only (DELETE rejected)');
+END;
+
+CREATE TRIGGER trg_intake_proposals_no_update
+BEFORE UPDATE ON intake_proposals
+BEGIN
+    SELECT RAISE(ABORT, 'intake_proposals is append-only (UPDATE rejected)');
+END;
+
+CREATE TRIGGER trg_intake_proposals_no_delete
+BEFORE DELETE ON intake_proposals
+BEGIN
+    SELECT RAISE(ABORT, 'intake_proposals is append-only (DELETE rejected)');
+END;
+
+CREATE TRIGGER trg_match_runs_no_update
+BEFORE UPDATE ON match_runs
+BEGIN
+    SELECT RAISE(ABORT, 'match_runs is append-only (UPDATE rejected)');
+END;
+
+CREATE TRIGGER trg_match_runs_no_delete
+BEFORE DELETE ON match_runs
+BEGIN
+    SELECT RAISE(ABORT, 'match_runs is append-only (DELETE rejected)');
+END;
+
+CREATE TRIGGER trg_match_candidates_no_update
+BEFORE UPDATE ON match_candidates
+BEGIN
+    SELECT RAISE(ABORT, 'match_candidates is append-only (UPDATE rejected)');
+END;
+
+CREATE TRIGGER trg_match_candidates_no_delete
+BEFORE DELETE ON match_candidates
+BEGIN
+    SELECT RAISE(ABORT, 'match_candidates is append-only (DELETE rejected)');
+END;
+
+CREATE TRIGGER trg_approval_decisions_no_update
+BEFORE UPDATE ON approval_decisions
+BEGIN
+    SELECT RAISE(ABORT, 'approval_decisions is append-only (UPDATE rejected)');
+END;
+
+CREATE TRIGGER trg_approval_decisions_no_delete
+BEFORE DELETE ON approval_decisions
+BEGIN
+    SELECT RAISE(ABORT, 'approval_decisions is append-only (DELETE rejected)');
+END;
+
 INSERT INTO schema_meta (schema_version, applied_at, description)
-VALUES ('001_initial', '2026-09-21T00:00:00+00:00', 'Villa Agency OS initial schema: inventory, policy, rates, evidence, quotes, holds, bookings, audit');
+VALUES ('001_initial', '2026-09-21T00:00:00+00:00', 'Villa Agency OS initial schema: inventory, policy, rates, evidence, quotes, holds, bookings, audit, cases, intake, matching, approvals, drafts, SLA');
