@@ -1,0 +1,18 @@
+<section data-page="command_center">
+  <h2>Command Center</h2>
+  {{ empty_banner }}
+  <table data-table="kpi">
+    <thead><tr><th>Indikator</th><th>Nilai</th><th>Catatan</th></tr></thead>
+    <tbody>{{ kpi_rows }}</tbody>
+  </table>
+  {{ kpi_note }}
+
+  <h2>Kasus per status</h2>
+  {{ cases_status_table }}
+
+  <h2>SLA breach terbuka</h2>
+  {{ sla_table }}
+
+  <h2>Peristiwa audit terakhir</h2>
+  {{ audit_table }}
+</section>

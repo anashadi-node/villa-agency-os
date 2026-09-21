@@ -77,6 +77,47 @@ def test_flags_a_quoted_live_money_switch(tmp_path):
     assert "live-money switch enabled" in result.stdout
 
 
+def test_a_keyword_argument_call_is_not_a_live_money_switch(tmp_path):
+    """scheduler.tick(dry_run=True) is a call; flagging it would make the gate noise."""
+
+    (tmp_path / "run_tick.py").write_text(
+        "from scheduler import Scheduler\n"
+        "def run(scheduler):\n"
+        "    return scheduler.tick(dry_run=True)\n",
+        encoding="utf-8",
+    )
+    result = _scan(tmp_path)
+    assert result.returncode == 0, result.stdout
+
+
+def test_a_configuration_assignment_is_still_flagged(tmp_path):
+    (tmp_path / "settings.py").write_text(
+        "class Settings:\n    dry_run = True\n", encoding="utf-8",
+    )
+    result = _scan(tmp_path)
+    assert result.returncode != 0
+    assert "live-money switch enabled" in result.stdout
+
+
+def test_a_marked_probe_line_is_exempt_with_its_reason(tmp_path):
+    """An exemption must be explicit on the line, so it shows up in review."""
+
+    (tmp_path / "probe.py").write_text(
+        "refuse(card_number=PAN)  # unsafe-scan: allow proving the refusal\n",
+        encoding="utf-8",
+    )
+    assert _scan(tmp_path).returncode == 0
+
+
+def test_the_same_line_without_the_marker_is_still_flagged(tmp_path):
+    (tmp_path / "sneaky.py").write_text(
+        "refuse(card_number=PAN)  # looks innocent\n", encoding="utf-8",
+    )
+    result = _scan(tmp_path)
+    assert result.returncode != 0
+    assert "cardholder data field defined" in result.stdout
+
+
 def test_flags_a_committed_env_file(tmp_path):
     (tmp_path / ".env").write_text("VILLA_DB=data/villa.db\n", encoding="utf-8")
     result = _scan(tmp_path)

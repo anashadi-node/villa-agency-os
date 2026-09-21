@@ -1,0 +1,10 @@
+<section data-page="audit" data-chain="{{ chain_status }}" data-chain-code="{{ chain_code }}">
+  <h2>Rantai audit — {{ chain_status }} ({{ chain_code }})</h2>
+  {{ chain_summary }}
+
+  <h2>Peristiwa terakhir</h2>
+  {{ event_table }}
+
+  <h2>SLA breach</h2>
+  {{ breach_table }}
+</section>

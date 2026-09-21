@@ -1,0 +1,13 @@
+<section data-page="case_detail" data-case-id="{{ case_id }}">
+  <h2>Kasus {{ case_id }}</h2>
+  {{ case_header }}
+
+  <h2>Timeline (case_events)</h2>
+  {{ timeline_table }}
+
+  <h2>Pesan (teredaksi sesuai kelas)</h2>
+  {{ message_table }}
+
+  <h2>SLA</h2>
+  {{ breach_table }}
+</section>

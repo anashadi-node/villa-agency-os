@@ -1,0 +1,10 @@
+<section data-page="inventory" data-window="{{ window }}">
+  <h2>Kalender unit — {{ window }}</h2>
+  {{ legend }}
+  <table data-table="calendar">
+    <thead><tr>
+      <th>Unit</th><th>Properti</th><th>Nama</th><th>Status unit</th>{{ day_headers }}
+    </tr></thead>
+    <tbody>{{ inventory_rows }}</tbody>
+  </table>
+</section>

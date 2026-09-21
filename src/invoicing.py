@@ -247,6 +247,12 @@ def _require_key(value: Any) -> str:
 
 def _require_currency(value: Any) -> str:
     """Validate through Money so 'IDR'/'idr' and unknown codes behave as elsewhere."""
+    if not isinstance(value, str):
+        # Money() calls .strip() on the code, so an int currency used to escape as
+        # a raw AttributeError instead of a coded refusal.
+        raise DomainError(
+            f"unsupported currency: {value!r}", code=INVALID_ISSUE_REQUEST, field="currency"
+        )
     try:
         return Money(0, value).currency
     except DomainError as exc:
@@ -345,11 +351,19 @@ class LineSpec:
                 field="description",
             )
         quantity = _as_int(raw.get("quantity"), "quantity")
+        unit_amount = _as_int(raw.get("unit_amount_minor"), "unit_amount_minor")
         if quantity < 0:
             raise DomainError(
                 "quantity must not be negative", code=INVALID_INVOICE_LINE, field="quantity"
             )
-        unit_amount = _as_int(raw.get("unit_amount_minor"), "unit_amount_minor")
+        if quantity == 0 and unit_amount != 0:
+            # A priced line for nothing is a pricing mistake, not an invoice line.
+            # A zero-quantity line whose unit amount is also zero stays allowed: it
+            # carries no money and documents use it as a placeholder.
+            raise DomainError(
+                "a priced line cannot have zero quantity",
+                code=INVALID_INVOICE_LINE, field="quantity",
+            )
         spec = cls(
             kind=kind,
             description=description,
@@ -708,12 +722,12 @@ class Invoice:
         payload = self.as_row()
         payload.update(
             {
-                "subtotal": self.subtotal.as_dict(),
-                "tax": self.tax.as_dict(),
-                "service": self.service.as_dict(),
-                "total": self.total.as_dict(),
-                "amount_paid": self.amount_paid.as_dict(),
-                "outstanding": self.outstanding().as_dict(),
+                "subtotal": self.subtotal.to_dict(),
+                "tax": self.tax.to_dict(),
+                "service": self.service.to_dict(),
+                "total": self.total.to_dict(),
+                "amount_paid": self.amount_paid.to_dict(),
+                "outstanding": self.outstanding().to_dict(),
             }
         )
         return payload
@@ -1137,8 +1151,11 @@ class InvoiceService:
                 " WHERE invoice_id = ?",
                 (amount_paid_minor, payment_status, current.invoice_id),
             )
-            self._sync_booking(current)
+            # Re-read before mirroring: syncing the *pre-update* row writes the
+            # previous amount/payment_status onto the booking, so a fully paid
+            # booking stays UNPAID after its invoice was settled in full.
             updated = self.get(current.invoice_id)
+            self._sync_booking(updated)
             self._audit.append(
                 action=AUDIT_INVOICE_SETTLED,
                 entity_type="invoice",

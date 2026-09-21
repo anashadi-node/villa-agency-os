@@ -125,6 +125,8 @@ __all__ = [
     "ReconciliationClosed",
     "ReconciliationInvoiceMissing",
     "ReconciliationAmountUnknown",
+    "ReconciliationNoteRequired",
+    "InvalidRefund",
     "RefundNotApproved",
     "RefundExceedsPayment",
     # records & helpers
@@ -422,26 +424,6 @@ _CARD_CANDIDATE = re.compile(r"\d(?:[ -]?\d){12,18}")
 _REF_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,79}$")
 
 
-# --------------------------------------------------------------------------- #
-# Compatibility shim
-# --------------------------------------------------------------------------- #
-def _ensure_money_serialiser_alias() -> None:
-    """Alias ``Money.as_dict`` to ``Money.to_dict`` when it is missing.
-
-    The invoice service is the only writer of ``invoices.amount_paid_minor``, so
-    every settlement here goes through
-    :meth:`invoicing.InvoiceService.record_settlement`. That method projects the
-    invoice with ``Invoice.as_dict()``, which calls ``Money.as_dict()`` — while
-    ``primitives.Money`` names that serialiser ``to_dict()``. Without the alias
-    the invoice write raises ``AttributeError`` and the whole settlement rolls
-    back. Same function, same output, no behaviour change; the alias is removed
-    the moment ``src/primitives.py`` grows it.
-    """
-    if not hasattr(Money, "as_dict"):
-        Money.as_dict = Money.to_dict  # type: ignore[attr-defined]
-
-
-_ensure_money_serialiser_alias()
 
 
 # --------------------------------------------------------------------------- #
@@ -527,6 +509,14 @@ class ReconciliationClosed(PaymentError):
 
 class ReconciliationInvoiceMissing(PaymentError):
     code = RECON_INVOICE_MISSING
+
+
+class ReconciliationNoteRequired(PaymentError):
+    code = RECON_NOTE_REQUIRED
+
+
+class InvalidRefund(PaymentError):
+    code = INVALID_REFUND
 
 
 class ReconciliationAmountUnknown(PaymentError):
@@ -684,12 +674,21 @@ def _luhn_ok(digits: str) -> bool:
 
 
 def contains_card_data(value: Any) -> bool:
-    """True when a string looks like a card number (13-19 digits, Luhn-valid)."""
+    """True when a string looks like a card number (13-19 digits, Luhn-valid).
+
+    A run of one repeated digit (``0000…``, ``1111…``) is padding or a digest,
+    never an issued card, so it is not counted; a Luhn-valid run with at least
+    two distinct digits is.
+    """
     if not isinstance(value, str):
         return False
     for match in _CARD_CANDIDATE.finditer(value):
         digits = re.sub(r"[ -]", "", match.group(0))
-        if 13 <= len(digits) <= 19 and _luhn_ok(digits):
+        if not 13 <= len(digits) <= 19:
+            continue
+        if len(set(digits)) < 2:
+            continue
+        if _luhn_ok(digits):
             return True
     return False
 
@@ -2017,15 +2016,52 @@ class PaymentService:
             )
         return None
 
+    def _credited_shares(self, invoice_id: str) -> dict[str, int]:
+        """What has already been posted for this invoice, per account and direction.
+
+        Read from the ledger (the accounting record) rather than from the invoice
+        row, so a settlement that was posted and then rolled back cannot leave a
+        phantom credit behind.
+        """
+
+        rows = self._conn.execute(
+            "SELECT account, direction, SUM(amount_minor) AS total FROM ledger_entries"
+            " WHERE invoice_id = ? GROUP BY account, direction",
+            (invoice_id,),
+        ).fetchall()
+        shares: dict[str, int] = {}
+        for row in rows:
+            account = str(row["account"])
+            if str(row["direction"]) == "CREDIT":
+                shares[account] = shares.get(account, 0) + int(row["total"])
+            else:
+                shares["CASH_IN"] = shares.get("CASH_IN", 0) + int(row["total"])
+        return shares
+
     def _post_settlement(
         self, payment: Payment, invoice: Invoice, *, occurred_at: str
     ) -> tuple[LedgerEntry, ...]:
         """Debit cash and credit the invoice's tax, service and owner shares."""
         amount = payment.amount_minor
-        tax = min(invoice.tax_minor, amount)
-        remaining = amount - tax
-        service = min(invoice.service_minor, remaining)
-        owner = remaining - service
+        total = max(int(invoice.total_minor), 0)
+        # Shares are cumulative against the invoice, never per instalment. Taking
+        # min(tax_minor, amount) on every settlement credits the whole tax twice
+        # while the owner is short by the same amount -- and the batch still
+        # balances, so only the per-account totals reveal it.
+        already = self._credited_shares(invoice.invoice_id)
+        paid_before = already.get("CASH_IN", 0)
+        paid_after = min(paid_before + amount, total) if total else paid_before + amount
+        if total:
+            tax_target = int(invoice.tax_minor) * paid_after // total
+            service_target = int(invoice.service_minor) * paid_after // total
+        else:  # pragma: no cover - a zero-total invoice cannot be settled
+            tax_target = service_target = 0
+        # The owner absorbs the rounding remainder, so the last settlement clears
+        # the invoice exactly and the journal always balances.
+        owner_target = paid_after - tax_target - service_target
+        tax = tax_target - already.get("TAX_PAYABLE", 0)
+        service = service_target - already.get("SERVICE_FEE", 0)
+        owner = owner_target - already.get("OWNER_PAYABLE", 0)
         entries: list[dict[str, Any]] = [
             {
                 "account": "CASH_IN",
@@ -2227,9 +2263,8 @@ class PaymentService:
             )
         note = require_text(note, "note", max_len=1000)
         if len(note) < MIN_NOTE_LENGTH:
-            raise DomainError(
+            raise ReconciliationNoteRequired(
                 f"note must be at least {MIN_NOTE_LENGTH} characters",
-                code=RECON_NOTE_REQUIRED,
                 length=len(note),
             )
         assert_no_card_data({"note": note})
@@ -2259,8 +2294,12 @@ class PaymentService:
                 " payment_id = COALESCE(payment_id, ?) WHERE recon_id = ?",
                 (status, note, at_iso, actor, posted_payment_id, recon_id),
             )
-            subject_id = case.payment_id or posted_payment_id or case.payment_event_id
-            if subject_id is not None:
+            subjects = {
+                subject
+                for subject in (case.payment_id, posted_payment_id, case.payment_event_id)
+                if subject is not None
+            }
+            for subject_id in sorted(subjects):
                 self._close_breaches(subject_id, note=note, at=at_iso)
             self._audit.append(
                 action=AUDIT_RECONCILIATION_RESOLVED,
@@ -2318,6 +2357,15 @@ class PaymentService:
                 recon_id=case.recon_id,
                 currency=currency,
                 invoice_currency=invoice.currency,
+            )
+        outstanding = invoice.outstanding().minor_units
+        if amount > outstanding:
+            raise PaymentAmountMismatch(
+                "the invoice no longer owes the amount this case wants to post;"
+                " posting it would settle the same debt twice",
+                recon_id=case.recon_id,
+                amount_minor=amount,
+                outstanding_minor=outstanding,
             )
         provider = self._provider
         if case.payment_event_id is not None:
@@ -2403,6 +2451,11 @@ class PaymentService:
         invoice service.
         """
         payment_id = require_ref(payment_id, "payment_id", max_len=64)
+        if not isinstance(approval_id, str) or not approval_id.strip():
+            raise RefundNotApproved(
+                "a refund needs the id of an approved approval request",
+                approval_id=repr(approval_id),
+            )
         approval_id = require_ref(approval_id, "approval_id", max_len=64)
         actor = require_ref(actor, "actor", max_len=64)
         actor_role = require_ref(actor_role, "actor_role", max_len=64)
@@ -2410,9 +2463,8 @@ class PaymentService:
         at_iso = _normalise_instant(at if at is not None else self._clock.now(), field_name="at")
         reason = require_text(reason, "reason", max_len=500)
         if len(reason) < MIN_NOTE_LENGTH:
-            raise DomainError(
+            raise InvalidRefund(
                 f"reason must be at least {MIN_NOTE_LENGTH} characters",
-                code=INVALID_REFUND,
                 length=len(reason),
             )
         assert_no_card_data({"reason": reason, "note": reason})
