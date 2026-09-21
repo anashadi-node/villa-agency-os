@@ -643,12 +643,14 @@ CREATE INDEX ix_case_events_case ON case_events (case_id, seq);
 
 CREATE TABLE sla_breaches (
     breach_id      TEXT    NOT NULL,
-    subject_type   TEXT    NOT NULL CHECK (subject_type IN ('case','payment','complaint','approval')),
+    subject_type   TEXT    NOT NULL CHECK (subject_type IN (
+                       'case','payment','complaint','approval','incident','ops_task','invoice')),
     subject_id     TEXT    NOT NULL,
     case_id        TEXT,
     kind           TEXT    NOT NULL CHECK (kind IN (
                        'FIRST_RESPONSE','AVAILABILITY_ANSWER','QUOTE','COMPLAINT_FIRST_RESPONSE',
-                       'COMPLAINT_RESOLUTION','UNMATCHED_PAYMENT','APPROVAL_QUEUE')),
+                       'COMPLAINT_RESOLUTION','UNMATCHED_PAYMENT','APPROVAL_QUEUE','OPS_TASK',
+                       'REGULATOR_NOTICE','PAYMENT_DUNNING')),
     due_at         TEXT    NOT NULL,
     detected_at    TEXT    NOT NULL,
     breach_minutes BIGINT NOT NULL CHECK (breach_minutes >= 0),

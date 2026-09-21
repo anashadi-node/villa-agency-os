@@ -379,6 +379,23 @@ def serialize_state(
 # --------------------------------------------------------------------------- #
 # The chain
 # --------------------------------------------------------------------------- #
+def _clean_reason_text(reason: Optional[str]) -> Optional[str]:
+    """Redact and validate free text without needing an :class:`AuditLog` instance.
+
+    The instance method delegates here: a reason that is redacted on one write
+    path and stored raw on another would leak personal data through whichever
+    path the author happened to use.
+    """
+
+    if reason is None:
+        return None
+    text = redact(require_text(reason, "reason", max_len=2000, allow_empty=True))
+    if not text:
+        return None
+    assert_pii_free(text, context="audit reason")
+    return text
+
+
 def compute_event_hash(prev_hash: str, body: Mapping[str, Any]) -> str:
     """``SHA-256(domain ‖ prev_hash ‖ canonical_json(body))``.
 
@@ -616,6 +633,88 @@ def _write_transaction(conn: sqlite3.Connection) -> Iterator[None]:
 # --------------------------------------------------------------------------- #
 # Writer / reader / verifier
 # --------------------------------------------------------------------------- #
+def append_event(
+    conn: sqlite3.Connection,
+    *,
+    clock: Clock,
+    ids: IdFactory,
+    action: str,
+    entity_type: str,
+    entity_id: str,
+    actor: str,
+    actor_role: str,
+    before: Optional[Mapping[str, Any]] = None,
+    after: Optional[Mapping[str, Any]] = None,
+    reason: Optional[str] = None,
+    policy_version_id: Optional[str] = None,
+    evidence_ref: Optional[str] = None,
+    tool: Optional[str] = None,
+    trace_id: Optional[str] = None,
+    salt: str = PII_SALT,
+    verify_on_append: bool = True,
+) -> AuditEvent:
+    """Append one event **inside the caller's open transaction**.
+
+    This is the single place in the codebase that knows how an audit row is
+    built and hashed. :meth:`AuditLog.append` wraps it in a transaction;
+    modules that already own a transaction (the reservation kernel writes the
+    state change and its audit row atomically) call it directly. Two writers
+    with two hash recipes is how a chain silently stops verifying.
+    """
+
+    action = require_ref(action, "action")
+    entity_type = require_ref(entity_type, "entity_type")
+    entity_id = require_ref(entity_id, "entity_id")
+    actor = require_ref(actor, "actor")
+    actor_role = require_ref(actor_role, "actor_role")
+    policy_version_id = _optional_ref(policy_version_id, "policy_version_id")
+    evidence_ref = _optional_ref(evidence_ref, "evidence_ref")
+    tool = _optional_ref(tool, "tool")
+    trace_id = _optional_ref(trace_id, "trace_id")
+    salt = require_text(salt, "salt")
+
+    before_state = serialize_state(before, salt=salt, field_name="before_state")
+    after_state = serialize_state(after, salt=salt, field_name="after_state")
+    reason_text = _clean_reason_text(reason)
+    occurred_at = to_iso(clock.now())
+    audit_event_id = ids.new("audit")
+
+    body: dict[str, Any] = {
+        "audit_event_id": audit_event_id,
+        "seq": 0,
+        "occurred_at": occurred_at,
+        "actor": actor,
+        "actor_role": actor_role,
+        "action": action,
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "before_state": before_state,
+        "after_state": after_state,
+        "reason": reason_text,
+        "policy_version_id": policy_version_id,
+        "evidence_ref": evidence_ref,
+        "tool": tool,
+        "trace_id": trace_id,
+    }
+
+    tail_row = conn.execute(
+        "SELECT * FROM audit_events ORDER BY seq DESC LIMIT 1"
+    ).fetchone()
+    if tail_row is None:
+        seq, prev_hash = 1, GENESIS_HASH
+    else:
+        tail = AuditEvent.from_row(tail_row)
+        if verify_on_append:
+            # Cheap fail-closed check: never extend a chain whose head no longer
+            # hashes to what it claims.
+            tail.verify_hash()
+        seq, prev_hash = tail.seq + 1, tail.hash
+    body["seq"] = seq
+    event = AuditEvent(prev_hash=prev_hash, hash=compute_event_hash(prev_hash, body), **body)
+    conn.execute(_INSERT_SQL, tuple(getattr(event, c) for c in COLUMNS))
+    return event
+
+
 class AuditLog:
     """Append-only writer and verifier for the ``audit_events`` chain.
 
@@ -665,72 +764,30 @@ class AuditLog:
         cannot name who did the thing cannot be used in an incident review, and a
         defaulted actor would hide exactly that defect.
         """
-        action = require_ref(action, "action")
-        entity_type = require_ref(entity_type, "entity_type")
-        entity_id = require_ref(entity_id, "entity_id")
-        actor = require_ref(actor, "actor")
-        actor_role = require_ref(actor_role, "actor_role")
-        policy_version_id = _optional_ref(policy_version_id, "policy_version_id")
-        evidence_ref = _optional_ref(evidence_ref, "evidence_ref")
-        tool = _optional_ref(tool, "tool")
-        trace_id = _optional_ref(trace_id, "trace_id")
-
-        before_state = serialize_state(
-            before, salt=self._salt, field_name="before_state"
-        )
-        after_state = serialize_state(after, salt=self._salt, field_name="after_state")
-        reason_text = self._clean_reason(reason)
-        occurred_at = to_iso(self._clock.now())
-        audit_event_id = self._ids.new("audit")
-
-        body: dict[str, Any] = {
-            "audit_event_id": audit_event_id,
-            "seq": 0,
-            "occurred_at": occurred_at,
-            "actor": actor,
-            "actor_role": actor_role,
-            "action": action,
-            "entity_type": entity_type,
-            "entity_id": entity_id,
-            "before_state": before_state,
-            "after_state": after_state,
-            "reason": reason_text,
-            "policy_version_id": policy_version_id,
-            "evidence_ref": evidence_ref,
-            "tool": tool,
-            "trace_id": trace_id,
-        }
-
         with _write_transaction(self._conn):
-            tail = self._tail_event()
-            if tail is None:
-                seq, prev_hash = 1, GENESIS_HASH
-            else:
-                if self._verify_on_append:
-                    # Cheap fail-closed check: never extend a chain whose head no
-                    # longer hashes to what it claims.
-                    tail.verify_hash()
-                seq, prev_hash = tail.seq + 1, tail.hash
-            body["seq"] = seq
-            event = AuditEvent(
-                prev_hash=prev_hash,
-                hash=compute_event_hash(prev_hash, body),
-                **body,
+            return append_event(
+                self._conn,
+                clock=self._clock,
+                ids=self._ids,
+                salt=self._salt,
+                verify_on_append=self._verify_on_append,
+                action=action,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                actor=actor,
+                actor_role=actor_role,
+                before=before,
+                after=after,
+                reason=reason,
+                policy_version_id=policy_version_id,
+                evidence_ref=evidence_ref,
+                tool=tool,
+                trace_id=trace_id,
             )
-            self._conn.execute(_INSERT_SQL, tuple(getattr(event, c) for c in COLUMNS))
-        return event
 
     def _clean_reason(self, reason: Optional[str]) -> Optional[str]:
         """Redact free text; a blank reason is stored as NULL, not as ``''``."""
-        if reason is None:
-            return None
-        text = redact(
-            require_text(reason, "reason", max_len=2000, allow_empty=True)
-        )
-        if not text:
-            return None
-        assert_pii_free(text, context="audit reason")
-        return text
+        return _clean_reason_text(reason)
 
     # -- read -------------------------------------------------------------- #
     def count(self) -> int:

@@ -40,6 +40,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
 
+from audit import AuditLog, append_event
 from primitives import (
     DomainError,
     IdFactory,
@@ -145,7 +146,6 @@ DEFAULT_ROLE = "kernel"
 
 #: The chain's starting value. 64 zeros rather than a word, because the schema
 #: requires every ``prev_hash`` to look like a SHA-256 hex digest.
-_GENESIS_HASH = "0" * 64
 
 
 # --------------------------------------------------------------------------- #
@@ -1139,13 +1139,17 @@ class ReservationKernel:
         return tuple(dict(row) for row in rows)
 
     def verify_audit_chain(self) -> bool:
-        """Recompute the audit hash chain; False means the log was tampered with."""
-        previous = _GENESIS_HASH
-        for row in self.conn.execute("SELECT * FROM audit_events ORDER BY seq"):
-            expected = _audit_hash(dict(row), previous)
-            if row["hash"] != expected or row["prev_hash"] != previous:
-                return False
-            previous = row["hash"]
+        """Recompute the audit chain using the chain's own verifier.
+
+        Delegating (rather than re-hashing here) is what keeps this answer equal to
+        the one :mod:`audit` gives. Two verifiers with two recipes disagree
+        eventually, and the disagreement looks exactly like tampering.
+        """
+
+        try:
+            AuditLog(self.conn, clock=self.clock, ids=self.ids).verify()
+        except DomainError:
+            return False
         return True
 
     # -- internals ---------------------------------------------------------- #
@@ -1394,45 +1398,30 @@ class ReservationKernel:
         evidence_ref: Optional[str],
         actor: Optional[str] = None,
     ) -> str:
-        """Append one audit row, chained to the previous hash inside this transaction."""
-        last = conn.execute(
-            "SELECT seq, hash FROM audit_events ORDER BY seq DESC LIMIT 1"
-        ).fetchone()
-        seq = (int(last["seq"]) + 1) if last is not None else 1
-        prev_hash = last["hash"] if last is not None else _GENESIS_HASH
-        event_id = self.ids.new("audit")
-        record = {
-            "audit_event_id": event_id,
-            "seq": seq,
-            "occurred_at": self._now(),
-            "actor": actor or self.actor,
-            "actor_role": self.actor_role,
-            "action": action,
-            "entity_type": entity_type,
-            "entity_id": entity_id,
-            "before_state": canonical_json(dict(before)) if before is not None else None,
-            "after_state": canonical_json(dict(after)) if after is not None else None,
-            "reason": reason,
-            "policy_version_id": policy_version_id,
-            "evidence_ref": evidence_ref,
-        }
-        digest = _audit_hash(record, prev_hash)
-        conn.execute(
-            """
-            INSERT INTO audit_events (
-                audit_event_id, seq, occurred_at, actor, actor_role, action, entity_type,
-                entity_id, before_state, after_state, reason, policy_version_id, evidence_ref,
-                tool, trace_id, prev_hash, hash
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
-            """,
-            (
-                record["audit_event_id"], record["seq"], record["occurred_at"], record["actor"],
-                record["actor_role"], record["action"], record["entity_type"], record["entity_id"],
-                record["before_state"], record["after_state"], record["reason"],
-                record["policy_version_id"], record["evidence_ref"], prev_hash, digest,
-            ),
+        """Append one audit row through the chain's single implementation.
+
+        The kernel writes the state change and its audit row in one transaction,
+        so it calls :func:`audit.append_event` directly instead of opening a
+        nested transaction. It must not hash the row itself: a second hash recipe
+        produces rows that the audit module then reports as tampered.
+        """
+
+        event = append_event(
+            conn,
+            clock=self.clock,
+            ids=self.ids,
+            action=action,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            actor=actor or self.actor,
+            actor_role=self.actor_role,
+            before=dict(before) if before is not None else None,
+            after=dict(after) if after is not None else None,
+            reason=reason,
+            policy_version_id=policy_version_id,
+            evidence_ref=evidence_ref,
         )
-        return event_id
+        return event.audit_event_id
 
     def _booking_outcome(
         self, conn: sqlite3.Connection, row: sqlite3.Row, *, replayed: bool
@@ -1513,12 +1502,6 @@ _AUDIT_HASH_FIELDS: tuple[str, ...] = (
     "policy_version_id",
     "evidence_ref",
 )
-
-
-def _audit_hash(record: Mapping[str, Any], prev_hash: str) -> str:
-    """Hash of the audit row over :data:`_AUDIT_HASH_FIELDS`, chained to the previous."""
-    payload = {field: record.get(field) for field in _AUDIT_HASH_FIELDS}
-    return sha256_hex("audit", prev_hash, canonical_json(payload))
 
 
 #: Transitions the kernel performs itself, used when no richer gate is injected.
