@@ -1,4 +1,4 @@
-# Data Model — 24 Tabel, Kunci, dan Aturan Bukti
+# Data Model — 34 Tabel, Kunci, dan Aturan Bukti
 
 Versi: 1.0 · Tanggal: 2026-09-21 · Sumber: `src/schema/001_initial.sql` (SQLite) ⇄ `src/schema/001_initial.pg.sql` (PostgreSQL, generated)
 
@@ -170,7 +170,61 @@ berulang tidak menggandakan). Pelanggaran yang ditutup wajib punya `resolved_at`
 
 ---
 
-## 7. Audit & infrastruktur
+## 7. Phase 3 — billing, pembayaran, rekonsiliasi, dokumen, ops, insiden
+
+Uang tidak pernah disimpan sebagai float dan tidak pernah bergerak tanpa jejak.
+Sepuluh tabel di bawah ini dijaga `TestPhase3FailClosedGuards` (SQLite) dan
+`TestLivePostgres` (trigger di server nyata).
+
+### `invoices` / `invoice_lines`
+`total_minor = subtotal_minor + tax_minor + service_minor` **dijaga CHECK** — invoice
+yang tidak balance tidak bisa masuk DB. Invoice `ISSUED` wajib punya `invoice_number`
+unik ≥ 8 karakter dan `due_at > issued_at`. Invoice `VOID` wajib punya `voided_at` +
+`void_reason`, dan **tidak boleh menyimpan uang** (`amount_paid_minor = 0`). Baris
+invoice: `amount_minor = quantity * unit_amount_minor`; baris `DISCOUNT` hanya boleh
+mengurangi tagihan (`amount_minor <= 0`).
+
+### `payments`
+Satu niat bayar = satu baris; `UNIQUE (provider, provider_intent_id)` membuat retry
+tidak menciptakan dua niat. Status `SUCCEEDED` wajib punya `settled_at`; `amount_minor
+> 0`.
+
+### `payment_events` (append-only)
+Setiap webhook yang diterima dicatat, termasuk yang ditolak. Dua CHECK yang penting:
+`applied = 1` hanya mungkin bila `signature_verified = 1` (**webhook tanpa tanda tangan
+yang sah tidak akan pernah menggerakkan uang**), dan `applied = 0` wajib punya
+`rejection_reason`. `UNIQUE (provider, provider_event_id)` = rekonsiliasi idempoten:
+event yang dikirim ulang tidak diproses dua kali.
+
+### `ledger_entries` (append-only)
+Buku besar dengan rantai hash (`entry_hash`, `prev_hash`, `seq` unik) — pola yang sama
+dengan `audit_events`. Akun: `CASH_IN`, `TAX_PAYABLE`, `SERVICE_FEE`, `GUEST_DEPOSIT`,
+`REFUND_OUT`, `OWNER_PAYABLE`, `PSP_FEE`.
+
+### `reconciliation_cases`
+Setiap selisih punya jenis, tenggat (`due_at > detected_at`, target 48 jam), pemilik,
+dan penutupan ber-catatan. Tanpa ini, uang yang tidak cocok hanya menjadi baris log yang
+tidak diurus siapa pun.
+
+### `documents`
+Dokumen guest-facing disimpan sebagai artifact disk dengan `storage_ref` relatif,
+`content_class`, `redaction_profile`, dan `body_sha256`. Versi unik per `document_key`
+(regenerate = versi baru, bukan menimpa). Status `GENERATED` wajib punya `storage_ref`.
+
+### `ops_tasks`
+Tugas operasional (check-in prep, cleaning, inspeksi, chase pembayaran) dengan
+`idempotency_key` unik supaya job terjadwal tidak menggandakan tugas. `DONE`/`CANCELLED`
+wajib punya `completed_at`; `BLOCKED` wajib punya `blocked_reason`.
+
+### `incidents` / `incident_steps`
+Insiden dengan playbook, jejak langkah append-only, dan aturan yang tidak bisa
+dinegosiasi: notifikasi regulator (UU PDP) hanya boleh untuk `SEV1`/`SEV2` dan wajib
+punya `notified_at`; `RESOLVED` wajib punya `summary`; `POSTMORTEM_DONE` wajib punya
+`postmortem_ref`.
+
+---
+
+## 8. Audit & infrastruktur
 
 ### `audit_events`
 `audit_event_id` (PK), UNIQUE `seq`, `seq >= 1`, `action`/`actor`/`actor_role`/`entity_type`/`entity_id` wajib ≥ 1 karakter, `hash` & `prev_hash` 64 hex. Rantai hash: setiap baris menunjuk hash baris sebelumnya; baris pertama memakai `GENESIS_HASH`. Trigger menolak `UPDATE`/`DELETE` → tamper terbukti, bukan tersembunyi.
@@ -183,7 +237,7 @@ PK `idempotency_key` (global, lintas operasi), `operation`, `request_hash` (64 h
 
 ---
 
-## 8. Gotcha yang harus diketahui semua kontributor
+## 9. Gotcha yang harus diketahui semua kontributor
 
 1. **Casing enum: status UPPERCASE, kosakata lowercase (diverifikasi ulang 2026-09-21 lewat audit 96 literal `CHECK ... IN (...)`).** Kolom *status/keadaan* menyimpan nilai **UPPERCASE** di DDL **dan** di modul Python (`'CONFIRMED'`, `'SELLABLE'`, `'ACTIVE'`, `'AVAILABLE'`, `'PENDING'`) — jadi tidak ada normalisasi casing yang perlu dilakukan untuk status. Hanya kolom *kosakata* yang lowercase: `property_type`, `unit_type`, `unit_scope`, `source_type`, `channel`, `method`, `value_type`, `subject_type`, `region`/`province`. Klaim lama dokumen ini ("DDL menyimpan status lowercase") **salah** dan sudah dikoreksi — mempercayainya pernah mengarahkan perbaikan ke arah yang keliru.
 2. **`availability_evidence.result = 'unknown'` bukan `available`.** Jangan menulis default yang menguntungkan penjualan.
