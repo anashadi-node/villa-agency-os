@@ -341,6 +341,45 @@ class TestNoDoubleBooking(KernelTestCase):
             self.hold(check_in="2026-10-02", check_out="2026-10-04", key="idem_hold_0009")
         self.assertEqual(ctx.exception.code, "SLOT_ALREADY_BOOKED")
 
+    def test_cancellation_under_review_still_blocks_a_new_hold(self):
+        """ADR-0002 Opsi A: the dates stay locked until the decision lands.
+
+        The blocking row is written straight into the table, so the refusal can
+        only come from the kernel's own occupancy check — the partial unique index
+        guards bookings against bookings, not bookings against holds.
+        """
+        cases = (
+            ("CANCELLATION_REQUESTED", "2026-10-01", "2026-10-03", "2026-10-02", "2026-10-05"),
+            ("CANCELLATION_REVIEW", "2026-11-01", "2026-11-03", "2026-11-02", "2026-11-05"),
+            ("DISPUTED", "2026-12-01", "2026-12-03", "2026-12-02", "2026-12-05"),
+        )
+        for state, start, booking_end, hold_start, hold_end in cases:
+            with self.subTest(state=state):
+                self.kernel.conn.execute(
+                    "INSERT INTO bookings (booking_id, property_id, unit_id, check_in, check_out,"
+                    " nights, status, guest_ref, adults, children, infants, currency,"
+                    " policy_version_id, policy_fingerprint, quote_ref, hold_ref, total_minor,"
+                    " amount_paid_minor, security_deposit_minor, payment_status, idempotency_key,"
+                    " version_lock, created_at, updated_at, confirmed_at, cancelled_at)"
+                    " VALUES (?, 'prop_1', 'unit_1', ?, ?, 2, ?, 'guest_abc123', 2, 0, 0, 'IDR',"
+                    " 'policy_v1', ?, NULL, NULL, 1000000, 0, 0, 'UNPAID', ?, 1, ?, ?, ?, NULL)",
+                    (
+                        f"book_review_{state.lower()}",
+                        start,
+                        booking_end,
+                        state,
+                        "0" * 64,
+                        f"idem_review_{state.lower()}",
+                        NOW,
+                        NOW,
+                        NOW,
+                    ),
+                )
+                with self.assertRaises(DomainError) as ctx:
+                    self.hold(check_in=hold_start, check_out=hold_end,
+                              key=f"idem_hold_{state.lower()}")
+                self.assertEqual(ctx.exception.code, "SLOT_ALREADY_BOOKED")
+
     def test_cancelled_booking_releases_the_slot(self):
         quote = self.persist_quote()
         hold = self.hold(quote_ref=quote.quote_id)

@@ -83,6 +83,11 @@ OCCUPYING_BOOKING_STATES: tuple[str, ...] = (
     "BALANCE_OVERDUE",
     "PRE_ARRIVAL",
     "IN_STAY",
+    # ADR-0002 (Opsi A): the slot stays bound while a cancellation is reviewed or
+    # a dispute is open — see the matching partial index in 001_initial.sql.
+    "CANCELLATION_REQUESTED",
+    "CANCELLATION_REVIEW",
+    "DISPUTED",
 )
 
 #: Every legal booking status, mirroring the CHECK constraint verbatim

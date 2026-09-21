@@ -15,7 +15,7 @@ Risiko residual tercatat di §5.
 
 | # | Perintah | Hasil |
 |---|---|---|
-| 1 | `bash scripts/secret_scan.sh` | PASS — 0 temuan / 37 file (termasuk `docs/`, `reports/`) |
+| 1 | `bash scripts/secret_scan.sh` | PASS — 0 temuan / 40 file (termasuk `docs/`, `reports/`) |
 | 2 | `bash scripts/unsafe_config_scan.sh` | PASS — 0 temuan / 37 file |
 | 3 | `grep -rnE '\beval\(\|\bexec\(\|os\.system\|subprocess\|shell=True\|pickle\|yaml\.load' src/` | 0 temuan |
 | 4 | `grep -rn 'requests\|urllib\|socket\|http.client\|httpx' src/` | 0 temuan (kernel offline) |
@@ -102,7 +102,7 @@ uji PostgreSQL hidup dan test untuk `audit.py`/`gates.py` (lihat §1 dan
 
 | # | Risiko | Dampak | Status |
 |---|---|---|---|
-| R-1 | Okupansi dilepas saat `CANCELLATION_REQUESTED`/`CANCELLATION_REVIEW`/`DISPUTED` | Unit bisa dijual ulang saat tamu masih terikat/di dalam unit → double booking | **ADR-0002 (Proposed)** — butuh keputusan pemilik sistem; dikarakterisasi oleh test `test_mid_stay_dispute_leaves_the_occupying_set` |
+| R-1 | Okupansi dilepas saat `CANCELLATION_REQUESTED`/`CANCELLATION_REVIEW`/`DISPUTED` | Unit bisa dijual ulang saat tamu masih terikat/di dalam unit → double booking | **DITUTUP.** ADR-0002 Opsi A diputuskan pemilik sistem 2026-09-21: predikat occupying 5 → 8 status di tiga lapis penegakan (kernel, index parsial SQLite, `ex_bookings_no_overlap` PostgreSQL), dibuktikan 5 test termasuk di PostgreSQL 16 hidup |
 | R-2 | Anker rantai audit belum eksternal | Penulisan ulang rantai oleh aktor ber-privilege DB | Phase 2 |
 | R-3 | Okupansi/redaksi: jalur `apply_redaction` per kelas data belum diuji penuh | Data keluar bisa teredaksi tidak sesuai kelasnya | Item iterasi berikutnya (dicatat di `reports/release-quality-gate.md` §5) |
 

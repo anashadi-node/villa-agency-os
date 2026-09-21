@@ -305,8 +305,12 @@ CREATE INDEX ix_bookings_unit_window ON bookings (unit_id, check_in, check_out);
 CREATE INDEX ix_bookings_status ON bookings (status);
 
 -- Occupying statuses only: a cancelled/closed booking must not block a re-sale.
+-- ADR-0002 (Opsi A, diputuskan 2026-09-21): pembatalan yang sedang ditinjau dan
+-- sengketa saat tamu masih di dalam unit JUGA menahan slot. Tanggal terkunci sampai
+-- pembatalan DIPUTUSKAN (-> CANCELLED) atau sengketa ditutup — fail-closed, bukan
+-- berdasarkan janji untuk tidak menjual ulang.
 CREATE UNIQUE INDEX uq_bookings_active_slot ON bookings (unit_id, check_in)
-    WHERE status IN ('CONFIRMED','BALANCE_DUE','BALANCE_OVERDUE','PRE_ARRIVAL','IN_STAY');
+    WHERE status IN ('CONFIRMED','BALANCE_DUE','BALANCE_OVERDUE','PRE_ARRIVAL','IN_STAY','CANCELLATION_REQUESTED','CANCELLATION_REVIEW','DISPUTED');
 
 -- --------------------------------------------------------------------------
 -- Append-only logs

@@ -1,15 +1,16 @@
 # Laporan Akhir Phase 1 — villa-agency-os
 
-Versi: 1.0 · Tanggal: 2026-09-21 · Commit kode: `e83225a` · Eksekutor: Hermes Anantara v3
+Versi: 1.1 · Tanggal: 2026-09-21 · Commit kode: `e83225a` + penerapan ADR-0002 (lihat §8) · Eksekutor: Hermes Anantara v3
 (Ekosistem Copy Cloning Super Dev Builders)
 
 Repo: `/home/anashadi/villa-agency-os` — sistem operasi reservasi & agency untuk
 **Villa Management & Agency** (Bali + Yogyakarta). Fondasi deterministik sebelum lapisan AI
 diaktifkan.
 
-Keputusan akhir: **Phase 1 SELESAI dan PASS** (gate keamanan + gate mutu rilis). Satu
-keputusan bisnis masih menunggu pemilik sistem: **ADR-0002** (okupansi saat pembatalan
-ditinjau) — lihat §6.
+Keputusan akhir: **Phase 1 SELESAI dan PASS** (gate keamanan + gate mutu rilis). Kedua ADR
+sudah **Accepted**: ADR-0001 (storage/runtime) dan ADR-0002 **Opsi A** (okupansi saat
+pembatalan ditinjau — diputuskan pemilik sistem 2026-09-21, sudah diterapkan & diverifikasi)
+— lihat §6. Tidak ada keputusan bisnis yang menggantung.
 
 ---
 
@@ -19,15 +20,15 @@ ditinjau) — lihat §6.
 |---|---|---|
 | `src/primitives.py` | 668 | Uang = integer minor unit + ISO-4217 (tidak pernah float), `FrozenClock`, `IdFactory` deterministik, fingerprint, redaksi, tata bahasa error ber-kode |
 | `src/schema_loader.py` | 808 | Penerap DDL + pembaca model skema (tabel/kolom/index/trigger/enum) untuk kedua dialek |
-| `src/schema/001_initial.sql` ⇄ `001_initial.pg.sql` | 412 / 416 | **Twin semantik**: 13 tabel, 14 enum, 13 index, 8 trigger, 1 seed. Berkas kedua **dibangkitkan** dari yang pertama |
-| `src/schema/002_pg_range_exclusions.pg.sql` | 69 | Pengerasan khusus PostgreSQL (EXCLUDE pada `daterange`) — eksplisit **di luar** pasangan twin |
+| `src/schema/001_initial.sql` ⇄ `001_initial.pg.sql` | 416 / 420 | **Twin semantik**: 13 tabel, 14 enum, 13 index, 8 trigger, 1 seed. Berkas kedua **dibangkitkan** dari yang pertama |
+| `src/schema/002_pg_range_exclusions.pg.sql` | 70 | Pengerasan khusus PostgreSQL (EXCLUDE pada `daterange`) — eksplisit **di luar** pasangan twin |
 | `src/policy_engine.py` | 548 | Satu objek policy versioned + fingerprint stabil; batas nilai mencerminkan CHECK di DDL |
 | `src/quote_calculator.py` | 713 | Aritmetika harga deterministik: musim, long-stay, cleaning, ekstra, deposit, pajak, service |
-| `src/reservation_kernel.py` | 1548 | Hold → booking → jurnal; **inti 0 double booking** |
-| `src/booking_states.py` | 1038 | State machine 32 status (116 sisi legal dari 1024 pasangan) + 3 guard |
+| `src/reservation_kernel.py` | 1553 | Hold → booking → jurnal; **inti 0 double booking** |
+| `src/booking_states.py` | 1051 | State machine 32 status (116 sisi legal dari 1024 pasangan) + 3 guard |
 | `src/audit.py` | 878 | Jurnal audit ber-rantai hash, append-only, penjaga PII, anker eksternal |
 | `src/gates.py` | 1466 | Gerbang contract-pack, ketersediaan, unit, keluar (redaksi P0..P4) |
-| `tests/` (8 berkas) | 7144 | 583 test lulus (2800 subtest) |
+| `tests/` (8 berkas) | 7241 | 586 test lulus (2814 subtest); 589 lulus dengan PostgreSQL hidup |
 | `docs/` (7 dokumen + 2 ADR) | ~760 | Charter, Property Contract Pack, Policy Matrix, Data Model, State Machine, klasifikasi data, retensi/insiden |
 | `reports/` (3 laporan) | ~380 | Gate keamanan, gate mutu rilis, serah terima (berkas ini) |
 
@@ -39,14 +40,14 @@ ketersediaan bertingkat (A–D) dengan aturan "hanya A/B boleh mengonfirmasi".
 
 ```
 $ python3 -m pytest tests/
-583 passed, 2 skipped, 2800 subtests passed in 2.53s
-2 skipped = uji PostgreSQL hidup (aktif bila VILLA_PG_DSN diset)
+586 passed, 3 skipped, 2814 subtests passed in 2.52s
+3 skipped = uji PostgreSQL hidup (aktif bila VILLA_PG_DSN diset)
 
-$ VILLA_PG_DSN=postgresql://…@127.0.0.1:55432/villa_test python3 -m pytest tests/
-tests=3398, failures=0, errors=0, skipped=0  (PostgreSQL 16, container sekali pakai)
+$ VILLA_PG_DSN=postgresql://…@127.0.0.1:55433/villa_test python3 -m pytest tests/
+589 passed, 2827 subtests passed in 3.27s  (PostgreSQL 16, container sekali pakai; 0 skip)
 
 $ make check
-compile OK · pytest OK · SECRET-SCAN PASS (37 file) · UNSAFE-SCAN PASS (37 file)
+compile OK · pytest OK · SECRET-SCAN PASS (0 findings, 40 file) · UNSAFE-SCAN PASS (0 findings, 40 file)
 twin parity OK · === PRE-DEPLOY GATE: PASS ===
 ```
 
@@ -77,7 +78,7 @@ Daftar lengkap D-1..D-30: `reports/release-quality-gate.md` §4. Tidak ada defec
 | ADR | Isi | Status |
 |---|---|---|
 | ADR-0001 | SQLite untuk dev/test, PostgreSQL untuk produksi; berkas skema kembar wajib setara, dijaga test parity | **Accepted** |
-| ADR-0002 | Okupansi saat `CANCELLATION_REQUESTED` / `CANCELLATION_REVIEW` / `DISPUTED` | **Proposed** — butuh keputusan Anda (§6) |
+| ADR-0002 | Okupansi saat `CANCELLATION_REQUESTED` / `CANCELLATION_REVIEW` / `DISPUTED` | **Accepted (Opsi A)** — diputuskan 2026-09-21, diterapkan & diverifikasi (§6) |
 
 Pendukung keputusan lain: berkas PostgreSQL **dibangkitkan** dari berkas SQLite
 (`scripts/generate_pg_twin.py`) sehingga tidak bisa melenceng diam-diam; uang selalu integer
@@ -101,19 +102,30 @@ VILLA_PG_DSN=postgresql://villa_test@127.0.0.1:55432/villa_test python3 -m pytes
 Aturan kredensial repo: `.env` tidak pernah di-commit, kredensial asli tidak pernah ditempel
 ke chat/tiket/dokumen/AI co-pilot, nilai contoh hanya `[REDACTED]`/placeholder.
 
-## 6. Keputusan yang menunggu Anda
+## 6. ADR-0002 — diputuskan: Opsi A diterapkan
 
-**ADR-0002.** `DISPUTED`, `CANCELLATION_REQUESTED`, dan `CANCELLATION_REVIEW` bukan status
-okupansi. Konsekuensinya: booking yang pembatalannya sedang ditinjau — atau tamu yang sedang
-bersengketa **di dalam villa** — melepas slotnya untuk dijual ulang (risiko double booking).
+**Keputusan pemilik sistem (2026-09-21): Opsi A.** `CANCELLATION_REQUESTED`,
+`CANCELLATION_REVIEW`, dan `DISPUTED` sekarang **menahan** tanggal: unit tetap terkunci
+sampai pembatalannya diputuskan (`→ CANCELLED`) atau sengketa ditutup. Sebelumnya ketiganya
+melepas slot, sehingga booking yang sedang ditinjau — atau tamu yang masih **fisik di dalam
+villa** — bisa dijual ulang (risiko double booking).
 
-- **Opsi A (rekomendasi)**: perluas predikat index okupansi menjadi 8 status. Unit tetap
-  terblokir sampai hasil pembatalan diputuskan (fail-closed). Biayanya peluang, bukan risiko.
-- **Opsi B**: larang perpindahan dari status okupansi ke tiga status itu. Lebih murah, tapi
-  operasional kehilangan kemampuan mencatat pembatalan/sengketa di tengah masa inap.
+Perubahan (5 berkas kode/DDL + 3 berkas test): predikat `uq_bookings_active_slot` 5 → 8
+status, `OCCUPYING_STATES`, `OCCUPYING_BOOKING_STATES`, dan `ex_bookings_no_overlap`
+(PostgreSQL) ikut disamakan; twin PostgreSQL diregenerasi dan parity-nya hijau.
 
-Perilaku saat ini sudah dikunci oleh test karakterisasi
-(`test_mid_stay_dispute_leaves_the_occupying_set`) supaya tidak berubah tanpa sengaja.
+Ditegakkan di **tiga lapis**, masing-masing dengan testnya sendiri:
+
+| Lapis | Test |
+|---|---|
+| Pemeriksaan okupansi kernel | `test_reservation_kernel.py::TestNoDoubleBooking::test_cancellation_under_review_still_blocks_a_new_hold` |
+| Index parsial SQLite (`uq_bookings_active_slot`) | `test_booking_states.py::TestAgainstSqlite::test_review_and_dispute_bindings_are_refused_by_the_database` + `test_a_decided_cancellation_does_release_the_slot` |
+| EXCLUDE PostgreSQL (`ex_bookings_no_overlap`) | `test_schema.py::TestLivePostgres::test_booking_exclusion_holds_the_dates_during_review_and_dispute` |
+
+Biaya yang diterima sadar: unit bisa tertahan selama review; itu dibayar dengan
+**mempercepat keputusan pembatalan**, bukan dengan membuka slot sebelum ada keputusan.
+Kalau keputusan ini ingin dibatalkan, cukup kembalikan predikat 8 → 5 di tiga tempat dan
+hapus lima test di atas — tidak ada data lama yang menjadi tidak valid. Rincian: `docs/adr/0002-occupancy-during-cancellation-review.md`.
 
 ## 7. Yang belum dikerjakan (Phase 2, jangan diklaim ada)
 

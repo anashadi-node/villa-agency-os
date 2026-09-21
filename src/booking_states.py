@@ -156,7 +156,20 @@ TERMINAL_STATES: frozenset[str] = frozenset({"CLOSED"})
 #: Occupying statuses, from the partial unique index ``uq_bookings_active_slot``
 #: in the DDL: a cancelled/closed booking must not block a re-sale, these do.
 OCCUPYING_STATES: frozenset[str] = frozenset(
-    {"CONFIRMED", "BALANCE_DUE", "BALANCE_OVERDUE", "PRE_ARRIVAL", "IN_STAY"}
+    {
+        "CONFIRMED",
+        "BALANCE_DUE",
+        "BALANCE_OVERDUE",
+        "PRE_ARRIVAL",
+        "IN_STAY",
+        # ADR-0002 (Opsi A): a cancellation under review, and a dispute raised
+        # while the guest is still inside the villa, keep the dates locked until
+        # the cancellation is DECIDED (-> CANCELLED) or the dispute is closed.
+        # The slot is never released on the strength of a promise not to re-sell.
+        "CANCELLATION_REQUESTED",
+        "CANCELLATION_REVIEW",
+        "DISPUTED",
+    }
 )
 
 

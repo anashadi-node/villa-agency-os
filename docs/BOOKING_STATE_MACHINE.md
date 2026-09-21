@@ -1,6 +1,6 @@
 # Booking State Machine — 32 Status, Graf Transisi, dan Guard-nya
 
-Versi: 1.0 · Tanggal: 2026-09-21 · Kode: `src/booking_states.py` · Skema: `src/schema/001_initial.sql`
+Versi: 1.1 · Tanggal: 2026-09-21 · Kode: `src/booking_states.py` · Skema: `src/schema/001_initial.sql`
 
 Dokumen ini menjelaskan **satu-satunya** state machine status booking di Villa Agency OS.
 Sumber kebenaran ada di dua tempat dan keduanya dijaga tetap sinkron oleh test:
@@ -38,11 +38,17 @@ langsung dari DDL; kalau DDL berubah dan modul tidak, import akan gagal (fail cl
 
 ### Status yang menempati slot (occupying)
 
-`CONFIRMED`, `BALANCE_DUE`, `BALANCE_OVERDUE`, `PRE_ARRIVAL`, `IN_STAY` — persis sama
-dengan predikat index `uq_bookings_active_slot`. Artinya: begitu booking masuk salah
-satu status ini, tanggal + unit terkunci dan tidak bisa dijual lagi sampai booking
-keluar dari himpunan ini. Status selain itu (mis. `CANCELLED`, `CLOSED`, `NO_SHOW`,
-`DISPUTED`) **melepas** slot.
+Delapan status: `CONFIRMED`, `BALANCE_DUE`, `BALANCE_OVERDUE`, `PRE_ARRIVAL`, `IN_STAY`,
+`CANCELLATION_REQUESTED`, `CANCELLATION_REVIEW`, `DISPUTED` — persis sama dengan predikat
+index `uq_bookings_active_slot`. Artinya: begitu booking masuk salah satu status ini,
+tanggal + unit terkunci dan tidak bisa dijual lagi sampai booking keluar dari himpunan
+ini. Status selain itu (mis. `CANCELLED`, `CLOSED`, `NO_SHOW`, `COMPLETED`, `RELOCATED`)
+**melepas** slot.
+
+Tiga status terakhir ditambahkan oleh **ADR-0002 Opsi A** (diputuskan pemilik sistem
+2026-09-21): pembatalan yang masih ditinjau, dan sengketa saat tamu masih **fisik di dalam
+unit**, tetap menahan tanggal — slot baru dibuka ketika pembatalannya *diputuskan*.
+Fail-closed: lebih baik unit tertahan selama review daripada double booking.
 
 ---
 
@@ -147,13 +153,14 @@ membawa `details` berupa **tuple** (bukan list) agar bisa di-hash dan dicatat ap
 
 ## 6. Risiko terbuka
 
-**Slot bisa dilepas saat pembatalan masih ditinjau.** `CANCELLATION_REQUESTED`,
-`CANCELLATION_REVIEW`, dan `DISPUTED` bukan status occupying, sehingga booking yang
-sedang berselisih bisa melepas tanggalnya untuk dijual ulang. Ini keputusan bisnis
-(okupansi vs kecepatan jual ulang) yang **belum disetujui pemilik sistem** — lihat
-`docs/adr/0002-occupancy-during-cancellation-review.md`. Perilaku saat ini dikunci
-oleh `test_mid_stay_dispute_leaves_the_occupying_set` supaya tidak berubah tanpa
-keputusan eksplisit.
+Tidak ada risiko okupansi yang menggantung. Risiko "slot dilepas saat pembatalan masih
+ditinjau" **ditutup** oleh ADR-0002 Opsi A (diputuskan pemilik sistem 2026-09-21):
+`CANCELLATION_REQUESTED`, `CANCELLATION_REVIEW`, dan `DISPUTED` adalah status occupying,
+ditegakkan di tiga lapis — pemeriksaan kernel, index parsial SQLite
+(`uq_bookings_active_slot`), dan `ex_bookings_no_overlap` di PostgreSQL. Yang tersisa
+sebagai **biaya bisnis**, bukan risiko teknis: unit bisa tertahan selama review; itu
+dibayar dengan mempercepat keputusan pembatalan.
+Lihat `docs/adr/0002-occupancy-during-cancellation-review.md`.
 
 ## 7. Cara memverifikasi
 

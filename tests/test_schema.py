@@ -399,5 +399,90 @@ class TestLivePostgres(unittest.TestCase):
                 cur.execute("ROLLBACK")
 
 
+    # --------------------------------------------------------------- ADR-0002 --
+    @staticmethod
+    def _seed_review_probe(cur) -> None:
+        """Seed an isolated property/unit/policy for the ADR-0002 probe."""
+        cur.execute(
+            "INSERT INTO properties (property_id, name, property_type, region, province,"
+            " timezone, status, contract_pack_status, contract_pack_evaluated_at,"
+            " created_at, updated_at) VALUES ('prop_pg_adr2', 'Probe ADR-0002', 'villa',"
+            " 'Probe', 'Bali', 'Asia/Makassar', 'SELLABLE', 'VERIFIED', NULL,"
+            " '2026-09-21T00:00:00+00:00', '2026-09-21T00:00:00+00:00')"
+        )
+        cur.execute(
+            "INSERT INTO units (unit_id, property_id, name, unit_type, bedrooms, bathrooms,"
+            " base_capacity, max_guests, status, created_at, updated_at)"
+            " VALUES ('unit_pg_adr2', 'prop_pg_adr2', 'Probe unit', 'entire_villa', 1, 1, 2, 4,"
+            " 'ACTIVE', '2026-09-21T00:00:00+00:00', '2026-09-21T00:00:00+00:00')"
+        )
+        cur.execute(
+            "INSERT INTO policy_versions (policy_version_id, property_id, unit_scope, version,"
+            " effective_from, effective_to, currency, deposit_pct, service_fee_pct,"
+            " tax_pbjt_pct, max_discount_pct, quote_valid_hours, hold_ttl_minutes,"
+            " max_hold_extensions, payload, fingerprint, source_doc_ref, approved_by, created_at)"
+            " VALUES ('policy_pg_adr2', 'prop_pg_adr2', 'property', 1, '2026-01-01', '2027-12-31',"
+            " 'IDR', '30', '5', '10', '15', 48, 720, 2, '{}', '" + "0" * 64 + "', 'probe',"
+            " 'user:probe', '2026-09-21T00:00:00+00:00')"
+        )
+
+    @staticmethod
+    def _booking_probe(tag: str, check_in: str, check_out: str, status: str) -> str:
+        """One booking on the ADR-0002 probe unit, built from string literals."""
+        return (
+            "INSERT INTO bookings (booking_id, property_id, unit_id, check_in, check_out, nights,"
+            " status, guest_ref, adults, children, infants, currency, policy_version_id,"
+            " policy_fingerprint, total_minor, payment_status, idempotency_key, created_at,"
+            " updated_at) VALUES ("
+            f"'{tag}', 'prop_pg_adr2', 'unit_pg_adr2', '{check_in}', '{check_out}', 2, '{status}',"
+            " 'guest_probe', 2, 0, 0, 'IDR', 'policy_pg_adr2', '" + "0" * 64 + "', 1000000,"
+            f" 'UNPAID', 'idem_{tag}_pg_0001', '2026-09-21T00:00:00+00:00',"
+            " '2026-09-21T00:00:00+00:00')"
+        )
+
+    def test_booking_exclusion_holds_the_dates_during_review_and_dispute(self):
+        """ADR-0002 Opsi A end-to-end: PostgreSQL itself refuses the re-sale.
+
+        The kernel check and the SQLite partial index are proven separately. This is
+        the third layer — ``ex_bookings_no_overlap`` on a live server — and it is the
+        one that has to hold when a row reaches the table by any other route.
+        """
+        import psycopg2
+
+        cases = (
+            ("CANCELLATION_REQUESTED", "2026-11-01", "2026-11-03", "2026-11-02", "2026-11-04"),
+            ("CANCELLATION_REVIEW", "2026-12-01", "2026-12-03", "2026-12-02", "2026-12-04"),
+            ("DISPUTED", "2027-01-01", "2027-01-03", "2027-01-02", "2027-01-04"),
+        )
+        with self.conn.cursor() as cur:
+            cur.execute("BEGIN")
+            try:
+                self._seed_review_probe(cur)
+                for index, (state, held_in, held_out, resale_in, resale_out) in enumerate(cases):
+                    cur.execute("SAVEPOINT adr2")
+                    cur.execute(
+                        self._booking_probe(f"bk_pg_probe_{index}", held_in, held_out, state)
+                    )
+                    with self.assertRaises(psycopg2.errors.ExclusionViolation):
+                        cur.execute(
+                            self._booking_probe(
+                                f"bk_pg_resale_{index}", resale_in, resale_out, "CONFIRMED"
+                            )
+                        )
+                    cur.execute("ROLLBACK TO SAVEPOINT adr2")
+                # The widening must not turn [start, end) into a closed range: a stay
+                # beginning on the release date is a different stay, not an overlap.
+                cur.execute(self._booking_probe("bk_pg_back", "2027-02-01", "2027-02-03", "CONFIRMED"))
+                cur.execute(self._booking_probe("bk_pg_back2", "2027-02-03", "2027-02-05", "CONFIRMED"))
+                # And the decision that releases the dates really does release them.
+                cur.execute(self._booking_probe("bk_pg_gone", "2027-03-01", "2027-03-03", "CANCELLED"))
+                cur.execute(self._booking_probe("bk_pg_new", "2027-03-01", "2027-03-03", "CONFIRMED"))
+                cur.execute("SELECT COUNT(*) FROM bookings WHERE property_id = 'prop_pg_adr2'")
+                stored = cur.fetchone()
+                self.assertEqual(stored[0] if stored else None, 4)
+            finally:
+                cur.execute("ROLLBACK")
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

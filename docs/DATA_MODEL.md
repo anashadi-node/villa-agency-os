@@ -104,10 +104,10 @@ Jurnal transisi: `state_event_id` (PK), FK `booking_id`, UNIQUE `(booking_id, se
 
 | Index | Definisi | Arti |
 |---|---|---|
-| `uq_bookings_active_slot` | UNIQUE `(unit_id, check_in)` WHERE `status IN ('confirmed','balance_due','balance_overdue','pre_arrival','in_stay')` | dua booking **menempati** unit yang sama dengan tanggal masuk sama → ditolak DB |
+| `uq_bookings_active_slot` | UNIQUE `(unit_id, check_in)` WHERE `status IN ('CONFIRMED','BALANCE_DUE','BALANCE_OVERDUE','PRE_ARRIVAL','IN_STAY','CANCELLATION_REQUESTED','CANCELLATION_REVIEW','DISPUTED')` | dua booking **menempati** unit yang sama dengan tanggal masuk sama → ditolak DB |
 | `uq_holds_active_slot` | UNIQUE `(unit_id, check_in)` WHERE `status = 'active'` | dua hold aktif pada slot sama → ditolak DB |
 
-Index ini adalah jaring terakhir: `reservation_kernel` memeriksa tumpang tindih lebih dulu (pesan error yang manusiawi), database menolak kalau ada yang lolos. Status di luar himpunan di atas **tidak** menahan slot (lihat ADR-0002 untuk konsekuensi pembatalan/sengketa yang belum diputuskan).
+Index ini adalah jaring terakhir: `reservation_kernel` memeriksa tumpang tindih lebih dulu (pesan error yang manusiawi), database menolak kalau ada yang lolos. Status di luar himpunan di atas **tidak** menahan slot: hanya status final (mis. `CANCELLED`, `CLOSED`, `NO_SHOW`) yang melepas tanggal. Pembatalan yang masih ditinjau dan sengketa **menahan** slot sampai diputuskan — **ADR-0002 Opsi A**, diputuskan pemilik sistem 2026-09-21.
 
 ---
 

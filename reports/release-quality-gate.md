@@ -1,6 +1,6 @@
 # Laporan Gate Mutu Rilis — villa-agency-os Phase 1
 
-Versi: 1.1 · Tanggal: 2026-09-21 · Commit kode: `e83225a` (laporan ini: commit berikutnya) · Reviewer: Hermes Anantara v3
+Versi: 1.2 · Tanggal: 2026-09-21 · Commit kode: `e83225a` + penerapan ADR-0002 (lihat §8) · Reviewer: Hermes Anantara v3
 
 Keputusan: **PASS untuk Phase 1 (Reservation Kernel)** — termasuk `audit.py` dan `gates.py`,
 yang pada versi 1.0 laporan ini belum dinilai karena belum punya test. Test untuk keduanya
@@ -20,32 +20,33 @@ sudah ada, dijalankan, dan **dua kegagalan yang saya temukan di dalamnya sudah d
 | **0 double booking** di jalur kernel | `src/reservation_kernel.py` overlap proof + 70 test (hold, hold→booking, hold kedaluwarsa boleh dilewati) | PASS (unit) |
 | Status tidak bisa ditulis sebagai teks bebas | `src/booking_states.py`: 32 status dibaca dari enum DDL, 116 sisi legal dari 1024 pasangan, 3 guard | PASS |
 | Audit append-only & tamper-evident | trigger DB + rantai hash; invarian diuji di `tests/test_schema.py` (UPDATE `audit_events` → `sqlite3.IntegrityError`) dan 140 test perilaku di `tests/test_audit.py` (rantai, anchor, PII, append-only) | PASS |
-| Uji PostgreSQL hidup | container Postgres 16 sekali pakai (`127.0.0.1:55432`), `001_initial.pg.sql` + `002_pg_range_exclusions.pg.sql` diterapkan dari nol, katalog dibandingkan model SQLite, lalu dua hold tumpang tindih → `ExclusionViolation` | PASS |
+| Uji PostgreSQL hidup | container Postgres 16 sekali pakai, `001_initial.pg.sql` + `002_pg_range_exclusions.pg.sql` diterapkan dari nol, katalog dibandingkan model SQLite; dua hold tumpang tindih → `ExclusionViolation`; **ADR-0002**: booking `CANCELLATION_REQUESTED`/`CANCELLATION_REVIEW`/`DISPUTED` menolak re-sale lewat `ex_bookings_no_overlap`, `CANCELLED` melepasnya, dan rentang tetap half-open | PASS |
 | Gerbang kredensial & konfigurasi | `make check` → secret-scan 0 temuan, unsafe-scan 0 temuan | PASS |
 | Kode tanpa dependency pihak ketiga | tidak ada import di luar Pustaka Standar Python di `src/` | PASS |
-| Test hijau, bukan "sudah dicek" | `pytest tests/` → **583 passed, 2 skipped, 2800 subtests passed**; dengan PostgreSQL hidup → **3398 testcase, 0 failure, 0 error, 0 skip** | PASS |
+| Test hijau, bukan "sudah dicek" | `pytest tests/` → **586 passed, 3 skipped, 2814 subtests passed**; dengan PostgreSQL hidup → **589 passed, 2827 subtests passed, 0 failure, 0 error, 0 skip** | PASS |
 
 ## 2. Angka eksekusi (bukan klaim)
 
 ```
 $ python3 -m pytest tests/
-583 passed, 2 skipped, 2800 subtests passed in 2.53s
+586 passed, 3 skipped, 2814 subtests passed in 2.52s
 ```
 
-Dua `skipped` = uji PostgreSQL hidup di `tests/test_schema.py`, aktif hanya bila
+Tiga `skipped` = tiga metode `TestLivePostgres` di `tests/test_schema.py`, aktif hanya bila
 `VILLA_PG_DSN` diset. Dengan server Postgres 16 nyata (container sekali pakai), angka
 berubah menjadi **0 skipped, 0 failure**:
 
 ```
-$ VILLA_PG_DSN=postgresql://…@127.0.0.1:55432/villa_test python3 -m pytest tests/ --junitxml=…
-tests=3398, failures=0, errors=0, skipped=0, time=2.949s
+$ VILLA_PG_DSN=postgresql://…@127.0.0.1:55433/villa_test python3 -m pytest tests/ --junitxml=…
+589 passed, 2827 subtests passed in 3.27s   (JUnit: tests=3416, failures=0, errors=0, skipped=0)
 ```
 
 Yang dibuktikan uji hidup itu (bukan klaim): `001_initial.pg.sql` + `002_pg_range_exclusions.pg.sql`
 terpasang **dari nol** di PostgreSQL 16, nama kolom tiap tabel identik dengan model SQLite,
 `ex_holds_no_overlap` dan `ex_bookings_no_overlap` ada, dua hold ACTIVE yang tumpang tindih
 ditolak `ExclusionViolation`, dan stay berdempetan (`10-03 → 10-05` setelah `10-01 → 10-03`)
-tetap diterima karena rentangnya half-open.
+tetap diterima karena rentangnya half-open. Sejak ADR-0002, probe yang sama juga membuktikan
+**booking** yang sedang ditinjau/sengketa menolak re-sale di database nyata.
 
 Sebaran per berkas (entri *testcase* JUnit, termasuk subtest yang dilaporkan terpisah):
 
@@ -53,15 +54,15 @@ Sebaran per berkas (entri *testcase* JUnit, termasuk subtest yang dilaporkan ter
 |---|---|
 | `tests/test_audit.py` | 140 |
 | `tests/test_gates.py` | 136 |
-| `tests/test_booking_states.py` | 85 |
-| `tests/test_reservation_kernel.py` | 70 |
+| `tests/test_booking_states.py` | 87 |
+| `tests/test_reservation_kernel.py` | 71 |
 | `tests/test_quote_calculator.py` | 49 |
 | `tests/test_policy_engine.py` | 40 |
 | `tests/test_primitives.py` | 37 |
-| `tests/test_schema.py` | 28 |
-| **Total** | **585** |
+| `tests/test_schema.py` | 29 |
+| **Total** | **589** |
 
-585 = 583 lulus + 2 skip. `tests/test_audit.py` memuat 140 metode/314 assertion dan
+589 = 586 lulus + 3 skip. `tests/test_audit.py` memuat 140 metode/314 assertion dan
 `tests/test_gates.py` 136 metode/306 assertion (keduanya dihitung langsung dari berkas,
 bukan dari laporan agen yang menulisnya).
 
@@ -69,9 +70,9 @@ bukan dari laporan agen yang menulisnya).
 
 ```
 python3 -m compileall -q src tests scripts      # OK
-python3 -m pytest tests/ -q --tb=short          # OK (583 lulus)
-SECRET-SCAN: PASS (0 findings, 37 files scanned)
-UNSAFE-SCAN: PASS (0 findings, 37 files scanned)
+python3 -m pytest tests/ -q --tb=short          # OK (586 lulus)
+SECRET-SCAN: PASS (0 findings, 40 files scanned)
+UNSAFE-SCAN: PASS (0 findings, 40 files scanned)
 python3 scripts/generate_pg_twin.py --check     # OK — twin identik
 === PRE-DEPLOY GATE: PASS ===
 ```
@@ -133,7 +134,7 @@ menyatakan "semua hijau" tidak pernah saya pakai sebagai bukti apa pun.
 | Item | Alasan | Rencana |
 |---|---|---|
 | Anker rantai audit eksternal | Sudah ada `ChainAnchor` + `verify(anchor=…)` teruji, tetapi belum ada penerbitannya ke sistem kedua (file/sistem luar) | Phase 2 |
-| Okupansi saat pembatalan ditinjau | Keputusan pemilik sistem | **ADR-0002 (Proposed)** |
+| Okupansi saat pembatalan ditinjau | Keputusan pemilik sistem | **SELESAI** — ADR-0002 Opsi A diputuskan 2026-09-21, diterapkan & diverifikasi (5 test, termasuk PostgreSQL hidup) |
 | Cakupan uji `gates.py` terhadap seluruh kode jalan | Suite baru menguji gerbang/kode alasan/klasifikasi; jalur `apply_redaction` per kelas data belum diuji sepenuhnya | Tambah test redaksi per kelas di iterasi berikutnya |
 | Uji beban/volume | Belum ada (kernel deterministik, bukan target Phase 1) | Phase 2 |
 
@@ -143,7 +144,7 @@ Inti Phase 1 (primitives → skema → policy → quote → kernel → state mac
 memenuhi kriteria penerimaan dengan bukti eksekusi yang dapat direproduksi, **tanpa satu pun
 klaim "seharusnya jalan"**:
 
-- 583 test lulus / 2 skip secara lokal; 3398 testcase dengan PostgreSQL 16 hidup, 0 gagal, 0 skip.
+- 586 test lulus / 3 skip secara lokal (2814 subtest); 589 lulus dengan PostgreSQL 16 hidup, 0 gagal, 0 skip.
 - Parity twin SQLite ⇄ PostgreSQL dibuktikan pada engine nyata, termasuk penolakan dua hold
   tumpang tindih lewat `ExclusionConstraint` PostgreSQL.
 - 30 defect nyata ditemukan dan diperbaiki sebelum commit; 6 di antaranya berpotensi
@@ -151,6 +152,6 @@ klaim "seharusnya jalan"**:
 - Appendix: `reports/security-gate.md` (gate keamanan & privasi) dan `reports/final-report.md`
   (serah terima Phase 1).
 
-Gate mutu rilis **PASS**, dengan tiga hal yang tetap harus disebut apa adanya: ADR-0002 masih
-menunggu keputusan pemilik sistem, cakupan redaksi per kelas data di `gates.py` belum penuh,
-dan belum ada uji beban.
+Gate mutu rilis **PASS**, dengan dua hal yang tetap harus disebut apa adanya: cakupan redaksi
+per kelas data di `gates.py` belum penuh, dan belum ada uji beban. ADR-0002 sudah **tidak**
+lagi menggantung: Opsi A diputuskan pemilik sistem 2026-09-21 dan sudah diterapkan.

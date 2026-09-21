@@ -59,10 +59,12 @@ ALTER TABLE holds
 -- One occupying booking per unit per range. The status list must stay identical
 -- to ``OCCUPYING_BOOKING_STATES`` in src/reservation_kernel.py and to the partial
 -- unique index in 001; tests/test_schema.py asserts all three agree.
+-- ADR-0002 (Opsi A): CANCELLATION_REQUESTED, CANCELLATION_REVIEW and DISPUTED are
+-- occupying too, so PostgreSQL refuses a re-sale on those dates as well.
 ALTER TABLE bookings
     ADD CONSTRAINT ex_bookings_no_overlap
     EXCLUDE USING gist (
         unit_id WITH =,
         daterange(villa_iso_date(check_in), villa_iso_date(check_out), '[)') WITH &&
     )
-    WHERE (status IN ('CONFIRMED','BALANCE_DUE','BALANCE_OVERDUE','PRE_ARRIVAL','IN_STAY'));
+    WHERE (status IN ('CONFIRMED','BALANCE_DUE','BALANCE_OVERDUE','PRE_ARRIVAL','IN_STAY','CANCELLATION_REQUESTED','CANCELLATION_REVIEW','DISPUTED'));

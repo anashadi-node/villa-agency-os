@@ -73,6 +73,10 @@ DDL_OCCUPYING: tuple[str, ...] = (
     "BALANCE_OVERDUE",
     "PRE_ARRIVAL",
     "IN_STAY",
+    # ADR-0002 (Opsi A) — kept in DDL order so a drift shows up as a diff.
+    "CANCELLATION_REQUESTED",
+    "CANCELLATION_REVIEW",
+    "DISPUTED",
 )
 
 #: Columns of ``booking_state_events``, in DDL order — the journal row shape.
@@ -225,7 +229,7 @@ class TestStatesAreDerivedFromSchema(unittest.TestCase):
         self.assertEqual(B.occupying_states_from_schema(), tuple(sorted(DDL_OCCUPYING)))
         self.assertEqual(set(B.OCCUPYING_STATES), set(_occupying_literals()))
         self.assertTrue(set(B.OCCUPYING_STATES).issubset(B.BOOKING_STATES))
-        self.assertEqual(len(B.OCCUPYING_STATES), 5)
+        self.assertEqual(len(B.OCCUPYING_STATES), 8)
 
     def test_load_time_self_check_passes_for_both_dialects(self) -> None:
         for dialect in ("sqlite", "pg"):
@@ -300,7 +304,15 @@ class TestStatesAreDerivedFromSchema(unittest.TestCase):
         self.assertEqual(caught.exception.details.get("unknown"), ("BOOKED",))
         self.assertEqual(
             caught.exception.details.get("missing"),
-            ("BALANCE_DUE", "BALANCE_OVERDUE", "IN_STAY", "PRE_ARRIVAL"),
+            (
+                "BALANCE_DUE",
+                "BALANCE_OVERDUE",
+                "CANCELLATION_REQUESTED",
+                "CANCELLATION_REVIEW",
+                "DISPUTED",
+                "IN_STAY",
+                "PRE_ARRIVAL",
+            ),
         )
 
 
@@ -448,26 +460,44 @@ class TestTransitionGraph(unittest.TestCase):
             with self.subTest(source=pre_arrival):
                 self.assertTrue(B.can_transition(pre_arrival, "NO_SHOW"))
 
-    def test_mid_stay_dispute_leaves_the_occupying_set(self) -> None:
-        """Characterisation of an OPEN decision — see ADR-0002.
+    def test_cancellation_review_and_dispute_hold_the_slot(self) -> None:
+        """ADR-0002 Opsi A (diputuskan pemilik sistem 2026-09-21).
 
-        ``DISPUTED`` and the cancellation pair are not occupying statuses, so a
-        live booking moving into one of them releases its slot for re-sale even
-        though the guest may still be in the villa. This pins today's behaviour so
-        that widening the occupying predicate (ADR-0002 option A) — or any other
-        change — cannot land silently.
+        A cancellation under review and a dispute raised while the guest is still
+        inside the villa are occupying: the unit may not be re-sold until the
+        cancellation is *decided* (-> ``CANCELLED``) or the dispute is closed.
+        Releasing the dates earlier hands them back to the availability engine
+        while the guest may still arrive — that is a double booking.
+
+        Option A widens the predicate only; it does not remove the operational
+        moves (that was option B), so both transitions must stay legal.
         """
         for state in ("DISPUTED", "CANCELLATION_REQUESTED", "CANCELLATION_REVIEW"):
             with self.subTest(state=state):
-                self.assertFalse(B.is_occupying_state(state))
+                self.assertTrue(B.is_occupying_state(state))
+        self.assertEqual(
+            set(B.OCCUPYING_STATES),
+            {
+                "CONFIRMED",
+                "BALANCE_DUE",
+                "BALANCE_OVERDUE",
+                "PRE_ARRIVAL",
+                "IN_STAY",
+                "CANCELLATION_REQUESTED",
+                "CANCELLATION_REVIEW",
+                "DISPUTED",
+            },
+        )
         self.assertTrue(B.can_transition("IN_STAY", "DISPUTED"))
         self.assertTrue(B.can_transition("IN_STAY", "CANCELLATION_REQUESTED"))
         self.assertTrue(B.can_transition("CONFIRMED", "CANCELLATION_REQUESTED"))
-        self.assertEqual(
-            set(B.OCCUPYING_STATES),
-            {"CONFIRMED", "BALANCE_DUE", "BALANCE_OVERDUE", "PRE_ARRIVAL", "IN_STAY"},
-            "occupying set changed — ADR-0002 must be updated and accepted first",
-        )
+        # The decision that DOES release the slot must stay reachable, otherwise
+        # fail-closed becomes fail-stuck.
+        self.assertTrue(B.can_transition("CANCELLATION_REQUESTED", "CANCELLED"))
+        self.assertTrue(B.can_transition("CANCELLATION_REVIEW", "CANCELLED"))
+        for releasing in ("CANCELLED", "NO_SHOW", "RELOCATED", "COMPLETED", "CLOSED"):
+            with self.subTest(releasing=releasing):
+                self.assertFalse(B.is_occupying_state(releasing))
 
 
 # --------------------------------------------------------------------------- #
@@ -1040,6 +1070,67 @@ class TestAgainstSqlite(unittest.TestCase):
     def test_database_rejects_a_state_that_is_not_in_the_enum(self) -> None:
         with self.assertRaises(sqlite3.IntegrityError):
             self._insert_booking(1, "BOOKED")
+
+    def _insert_slot(self, booking_id: str, day_in: str, day_out: str, state: str) -> None:
+        """Insert one booking on an explicit window, so two rows can collide."""
+        self.conn.execute(
+            "INSERT INTO bookings (booking_id, property_id, unit_id, check_in, check_out,"
+            " nights, status, guest_ref, adults, children, infants, currency, policy_version_id,"
+            " policy_fingerprint, total_minor, payment_status, idempotency_key, created_at,"
+            " updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                booking_id,
+                "prop_1",
+                "unit_1",
+                day_in,
+                day_out,
+                30,
+                state,
+                "guest_1",
+                2,
+                0,
+                0,
+                "IDR",
+                "pol_1",
+                "a" * 64,
+                1_000_000,
+                "UNPAID",
+                f"idem_{booking_id}",
+                "2026-01-01T00:00:00+00:00",
+                "2026-01-01T00:00:00+00:00",
+            ),
+        )
+
+    def test_review_and_dispute_bindings_are_refused_by_the_database(self) -> None:
+        """ADR-0002 Opsi A, proven against the DDL rather than the constants.
+
+        ``uq_bookings_active_slot`` is what makes the no-double-booking invariant
+        structural. If the predicate dropped the cancellation/dispute statuses, the
+        kernel's Python check could still be bypassed by any writer that touches the
+        table directly — so the enforcement is asserted here, one window per state.
+        """
+        windows = {
+            "CANCELLATION_REQUESTED": ("2026-05-01", "2026-06-01"),
+            "CANCELLATION_REVIEW": ("2026-05-02", "2026-06-02"),
+            "DISPUTED": ("2026-05-03", "2026-06-03"),
+        }
+        for index, (state, (day_in, day_out)) in enumerate(windows.items()):
+            with self.subTest(state=state):
+                # One row per state: the primary key and the idempotency key are
+                # derived from the id, so each subtest needs its own.
+                self._insert_slot(f"bk_review_{index}", day_in, day_out, state)
+                with self.assertRaises(sqlite3.IntegrityError):
+                    self._insert_slot(f"bk_resale_{index}", day_in, day_out, "CONFIRMED")
+
+    def test_a_decided_cancellation_does_release_the_slot(self) -> None:
+        """The other half of the decision: fail-closed, not permanently stuck."""
+        self._insert_slot("bk_gone", "2026-07-01", "2026-08-01", "CANCELLED")
+        self._insert_slot("bk_resale", "2026-07-01", "2026-08-01", "CONFIRMED")
+        stored = self.conn.execute(
+            "SELECT booking_id FROM bookings WHERE status = 'CONFIRMED'"
+        ).fetchall()
+        self.assertEqual([row["booking_id"] for row in stored], ["bk_resale"])
+        self.assertTrue(B.is_occupying_state("CONFIRMED"))
 
     def test_journal_row_can_be_inserted_and_is_append_only(self) -> None:
         self._insert_booking(1, "INQUIRY")
