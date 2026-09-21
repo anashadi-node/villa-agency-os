@@ -1,12 +1,13 @@
 # Laporan Gate Keamanan & Privasi — villa-agency-os
 
-Versi: 1.0 · Tanggal: 2026-09-21 · Commit: `1ccdcce` (kode: `8c4c777`) · Reviewer: Hermes Anantara v3
+Versi: 1.1 · Tanggal: 2026-09-21 · Commit kode: `e83225a` · Reviewer: Hermes Anantara v3
 
-Lingkup: seluruh repo `/home/anashadi/villa-agency-os` (35 file ter-track). Kode milik
+Lingkup: seluruh repo `/home/anashadi/villa-agency-os` (37 file ter-track). Kode milik
 pengguna; tidak ada target pihak ketiga yang diaudit, tidak ada eksploit yang dikembangkan.
 
-Keputusan: **PASS untuk Phase 1 (Reservation Kernel)**, dengan 2 risiko residual tercatat
-di §5 (tidak memblokir karena belum ada data tamu nyata yang diproses).
+Keputusan: **PASS untuk Phase 1 (Reservation Kernel)**, termasuk `audit.py` dan `gates.py`
+yang pada versi 1.0 laporan ini belum punya test (dan karenanya belum boleh disebut aman).
+Risiko residual tercatat di §5.
 
 ---
 
@@ -14,8 +15,8 @@ di §5 (tidak memblokir karena belum ada data tamu nyata yang diproses).
 
 | # | Perintah | Hasil |
 |---|---|---|
-| 1 | `bash scripts/secret_scan.sh` | PASS — 0 temuan / 35 file |
-| 2 | `bash scripts/unsafe_config_scan.sh` | PASS — 0 temuan / 35 file |
+| 1 | `bash scripts/secret_scan.sh` | PASS — 0 temuan / 37 file (termasuk `docs/`, `reports/`) |
+| 2 | `bash scripts/unsafe_config_scan.sh` | PASS — 0 temuan / 37 file |
 | 3 | `grep -rnE '\beval\(\|\bexec\(\|os\.system\|subprocess\|shell=True\|pickle\|yaml\.load' src/` | 0 temuan |
 | 4 | `grep -rn 'requests\|urllib\|socket\|http.client\|httpx' src/` | 0 temuan (kernel offline) |
 | 5 | `grep -rnE 'execute\(.*\{' src/` | 1 temuan, informational (lihat §3) |
@@ -58,6 +59,9 @@ Pola yang diblokir `unsafe_config_scan.sh`: (1) saklar uang-hidup
 | F-3 | Integritas data | `decimal_to_str(10.50)` → `10.5` (desimal dibuang) | format kanonik dengan `places` |
 | F-4 | Integritas audit | `_GENESIS_HASH = "genesis"` tidak memenuhi CHECK SHA-256 di skema | `"0" * 64` |
 | F-5 | DoS/derajat payload | (dicek) kedalaman payload audit dibatasi `MAX_PAYLOAD_DEPTH` | sudah ada |
+| F-6 | **Kebocoran PII** | `audit._normalise_key` tidak memecah batas camelCase: kunci `guestName` menjadi `guestname` sehingga tidak cocok dengan registry field terlarang maupun registry pseudonim — **nama tamu tersimpan apa adanya** di jurnal (tidak ada pola nilai yang bisa menangkapnya) | batas camelCase/PascalCase/akronim dipecah sebelum tanda baca dilipat; test per varian (`Guest-Email`, `guestName`, `GUEST_EMAIL`) |
+| F-7 | Integritas rantai audit | `compute_event_hash` hanya memeriksa *panjang* `prev_hash` (64), bukan bentuk hex | pemeriksaan karakter hex — tautan non-hex kini ditolak |
+| F-8 | Fail-closed gate | `ContractPack.from_row` melempar exception saat kolom `items` bukan container | container rusak = pack kosong = **tolak**, bukan crash |
 
 ### 3.2 Informational (bukan dapat dieksploitasi)
 
@@ -71,6 +75,9 @@ Pola yang diblokir `unsafe_config_scan.sh`: (1) saklar uang-hidup
 - Aturan cardholder-data versi lama menandai **penyebutan** nama field, sehingga denylist
   PII di `src/audit.py` terhitung sebagai temuan (false positive yang melatih tim mengabaikan
   gate). **Diperbaiki** menjadi deteksi definisi field.
+- `unsafe_config_scan.sh` melewati `reports/*` sejak laporan ini mulai **mengutip** aturannya
+  (`shuffle=true`, `dry_run=false`) — prosa bukan konfigurasi. Kebocoran kredensial tetap
+  dipindai `secret_scan.sh` di seluruh berkas, termasuk `reports/`.
 
 ### 3.3 Risky pattern (diterima, dengan alasan)
 
@@ -79,16 +86,17 @@ Pola yang diblokir `unsafe_config_scan.sh`: (1) saklar uang-hidup
   append-only, `ChainAnchor` (anchor eksternal), dan `verify_chain` untuk rekonsiliasi.
   Anker eksternal (file mingguan / WORM) belum diaktifkan → dicatat sebagai item Phase 2.
 
-## 4. Bukti yang tidak bisa saya klaim hari ini
+## 4. Yang masih tidak bisa saya klaim
 
-- **Uji PostgreSQL hidup** (`tests/test_schema.py`) di-skip tanpa `VILLA_PG_DSN`; lihat
-  `pytest -rs` → 2 skipped. Parity yang terbukti hari ini adalah **parity struktural**
-  (tabel/index/trigger/enum) via model skema, bukan eksekusi DDL di Postgres nyata.
-  Rencana: container Postgres sekali pakai (image sudah ada lokal) + `psycopg2` untuk
-  menjalankan `001_initial.pg.sql` + `002_pg_range_exclusions.pg.sql` dan membuktikan
-  `ExclusionViolation`.
-- `src/gates.py` dan `src/audit.py` (≈2.300 baris) belum punya test pada commit ini —
-  penulisan test sedang berjalan. Klaim "aman" untuk kedua modul itu **belum** saya berikan.
+- **Cakupan redaksi per kelas data di `gates.py`** (`apply_redaction` untuk P0..P4) belum
+  diuji penuh; suite `tests/test_gates.py` menguji gerbang, kode alasan, dan klasifikasi.
+- **Uji beban / volume** belum ada — di luar lingkup Phase 1, tapi jangan diklaim ada.
+- **Anker audit eksternal** (file mingguan / WORM) belum diterbitkan; hanya mekanisme
+  verifikasinya yang ada dan teruji.
+
+Sebelumnya (versi 1.0) dua butir lain juga belum bisa diklaim, kini **sudah**:
+uji PostgreSQL hidup dan test untuk `audit.py`/`gates.py` (lihat §1 dan
+`reports/release-quality-gate.md` §2).
 
 ## 5. Risiko residual yang tersisa
 
@@ -96,7 +104,7 @@ Pola yang diblokir `unsafe_config_scan.sh`: (1) saklar uang-hidup
 |---|---|---|---|
 | R-1 | Okupansi dilepas saat `CANCELLATION_REQUESTED`/`CANCELLATION_REVIEW`/`DISPUTED` | Unit bisa dijual ulang saat tamu masih terikat/di dalam unit → double booking | **ADR-0002 (Proposed)** — butuh keputusan pemilik sistem; dikarakterisasi oleh test `test_mid_stay_dispute_leaves_the_occupying_set` |
 | R-2 | Anker rantai audit belum eksternal | Penulisan ulang rantai oleh aktor ber-privilege DB | Phase 2 |
-| R-3 | Coverage `gates.py`/`audit.py` belum ada | Regresi tidak tertangkap | Sedang dikerjakan |
+| R-3 | Okupansi/redaksi: jalur `apply_redaction` per kelas data belum diuji penuh | Data keluar bisa teredaksi tidak sesuai kelasnya | Item iterasi berikutnya (dicatat di `reports/release-quality-gate.md` §5) |
 
 ## 6. Kesimpulan gate
 

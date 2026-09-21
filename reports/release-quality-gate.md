@@ -1,10 +1,11 @@
 # Laporan Gate Mutu Rilis — villa-agency-os Phase 1
 
-Versi: 1.0 · Tanggal: 2026-09-21 · Commit: `1ccdcce` · Reviewer: Hermes Anantara v3
+Versi: 1.1 · Tanggal: 2026-09-21 · Commit kode: `e83225a` (laporan ini: commit berikutnya) · Reviewer: Hermes Anantara v3
 
-Keputusan: **PASS untuk Phase 1 (Reservation Kernel)** — inti deterministik lolos semua
-gerbang dan sudah punya bukti eksekusi. Dua modul pendukung (`audit.py`, `gates.py`)
-**belum** masuk penilaian mutu karena test-nya belum ada (§5).
+Keputusan: **PASS untuk Phase 1 (Reservation Kernel)** — termasuk `audit.py` dan `gates.py`,
+yang pada versi 1.0 laporan ini belum dinilai karena belum punya test. Test untuk keduanya
+sudah ada, dijalankan, dan **dua kegagalan yang saya temukan di dalamnya sudah diperbaiki**
+(bukan dilonggarkan) sebelum masuk penilaian.
 
 ---
 
@@ -18,17 +19,17 @@ gerbang dan sudah punya bukti eksekusi. Dua modul pendukung (`audit.py`, `gates.
 | Aritmetika quote reproducible | `src/quote_calculator.py` + 49 test | PASS |
 | **0 double booking** di jalur kernel | `src/reservation_kernel.py` overlap proof + 70 test (hold, hold→booking, hold kedaluwarsa boleh dilewati) | PASS (unit) |
 | Status tidak bisa ditulis sebagai teks bebas | `src/booking_states.py`: 32 status dibaca dari enum DDL, 116 sisi legal dari 1024 pasangan, 3 guard | PASS |
-| Audit append-only & tamper-evident | trigger DB + rantai hash; invarian diuji di `tests/test_schema.py` (UPDATE `audit_events` → `sqlite3.IntegrityError`) | PASS (struktur + SQLite) |
+| Audit append-only & tamper-evident | trigger DB + rantai hash; invarian diuji di `tests/test_schema.py` (UPDATE `audit_events` → `sqlite3.IntegrityError`) dan 140 test perilaku di `tests/test_audit.py` (rantai, anchor, PII, append-only) | PASS |
 | Uji PostgreSQL hidup | container Postgres 16 sekali pakai (`127.0.0.1:55432`), `001_initial.pg.sql` + `002_pg_range_exclusions.pg.sql` diterapkan dari nol, katalog dibandingkan model SQLite, lalu dua hold tumpang tindih → `ExclusionViolation` | PASS |
 | Gerbang kredensial & konfigurasi | `make check` → secret-scan 0 temuan, unsafe-scan 0 temuan | PASS |
 | Kode tanpa dependency pihak ketiga | tidak ada import di luar Pustaka Standar Python di `src/` | PASS |
-| Test hijau, bukan "sudah dicek" | `pytest tests/ -q` → **307 passed, 2 skipped, 1952 subtests passed** | PASS |
+| Test hijau, bukan "sudah dicek" | `pytest tests/` → **583 passed, 2 skipped, 2800 subtests passed**; dengan PostgreSQL hidup → **3398 testcase, 0 failure, 0 error, 0 skip** | PASS |
 
 ## 2. Angka eksekusi (bukan klaim)
 
 ```
-$ python3 -m pytest tests/ -q
-307 passed, 2 skipped, 1952 subtests passed in 3.03s
+$ python3 -m pytest tests/
+583 passed, 2 skipped, 2800 subtests passed in 2.53s
 ```
 
 Dua `skipped` = uji PostgreSQL hidup di `tests/test_schema.py`, aktif hanya bila
@@ -37,7 +38,7 @@ berubah menjadi **0 skipped, 0 failure**:
 
 ```
 $ VILLA_PG_DSN=postgresql://…@127.0.0.1:55432/villa_test python3 -m pytest tests/ --junitxml=…
-tests=2274, failures=0, errors=0, skipped=0, time=2.117s
+tests=3398, failures=0, errors=0, skipped=0, time=2.949s
 ```
 
 Yang dibuktikan uji hidup itu (bukan klaim): `001_initial.pg.sql` + `002_pg_range_exclusions.pg.sql`
@@ -46,28 +47,31 @@ terpasang **dari nol** di PostgreSQL 16, nama kolom tiap tabel identik dengan mo
 ditolak `ExclusionViolation`, dan stay berdempetan (`10-03 → 10-05` setelah `10-01 → 10-03`)
 tetap diterima karena rentangnya half-open.
 
-Sebaran per file (jumlah *testcase*, termasuk subtest yang dilaporkan JUnit):
+Sebaran per berkas (entri *testcase* JUnit, termasuk subtest yang dilaporkan terpisah):
 
-| File | Testcase | Kelas uji |
-|---|---|---|
-| `tests/test_booking_states.py` | 85 | 8 |
-| `tests/test_reservation_kernel.py` | 70 | 10 |
-| `tests/test_quote_calculator.py` | 49 | 8 |
-| `tests/test_policy_engine.py` | 40 | 6 |
-| `tests/test_primitives.py` | 37 | 8 |
-| `tests/test_schema.py` | 28 | 5 |
-| **Total** | **309** | **45** |
+| File | Testcase |
+|---|---|
+| `tests/test_audit.py` | 140 |
+| `tests/test_gates.py` | 136 |
+| `tests/test_booking_states.py` | 85 |
+| `tests/test_reservation_kernel.py` | 70 |
+| `tests/test_quote_calculator.py` | 49 |
+| `tests/test_policy_engine.py` | 40 |
+| `tests/test_primitives.py` | 37 |
+| `tests/test_schema.py` | 28 |
+| **Total** | **585** |
 
-Bukti mentah: `pytest --junitxml` → `tests=2261, failures=0, errors=0, skipped=2, time=1.339s`
-(2261 = 307 lulus + 1952 subtest + 2 skip).
+585 = 583 lulus + 2 skip. `tests/test_audit.py` memuat 140 metode/314 assertion dan
+`tests/test_gates.py` 136 metode/306 assertion (keduanya dihitung langsung dari berkas,
+bukan dari laporan agen yang menulisnya).
 
 ## 3. Gerbang pre-deploy (`make check`)
 
 ```
 python3 -m compileall -q src tests scripts      # OK
-python3 -m pytest tests/ -q --tb=short          # OK
-SECRET-SCAN: PASS (0 findings, 35 files scanned)
-UNSAFE-SCAN: PASS (0 findings, 35 files scanned)
+python3 -m pytest tests/ -q --tb=short          # OK (583 lulus)
+SECRET-SCAN: PASS (0 findings, 37 files scanned)
+UNSAFE-SCAN: PASS (0 findings, 37 files scanned)
 python3 scripts/generate_pg_twin.py --check     # OK — twin identik
 === PRE-DEPLOY GATE: PASS ===
 ```
@@ -103,28 +107,50 @@ eksekusi test atau pembacaan ulang terhadap DDL.
 | D-22 | `guardrails` | Aturan cardholder menandai *penyebutan* nama field ⇒ denylist PII `audit.py` dihitung temuan | Gate penuh false positive → diabaikan tim | deteksi definisi field (`:`/`=`) |
 | D-23 | `Makefile` | Teks `help` memuat `shuffle=true` ⇒ skrip keamanan menandai Makefile sendiri | Gate gagal karena dokumentasinya | teks help diubah |
 | D-24 | `tests/test_schema.py` | Uji PostgreSQL hidup membersihkan data probe dengan `DELETE FROM policy_versions` — ditolak trigger append-only (dan skema diterapkan dua kali dalam satu DB ⇒ `DuplicateTable`) | Uji hidup gagal karena alasan yang salah; umpan balik menyesatkan | probe dibungkus satu transaksi `BEGIN … ROLLBACK`, skema diterapkan sekali di `setUpClass` setelah `public` di-reset, `VILLA_PG_DSN` didokumentasikan wajib menunjuk DB sekali pakai |
+| D-25 | `audit` | `_normalise_key` tidak memecah batas camelCase/PascalCase: kunci `guestName` menjadi `guestname`, tidak cocok dengan registry field terlarang maupun registry pseudonim | **Nama tamu tersimpan apa adanya** di jurnal audit (kebocoran PII diam-diam; tidak ada pola nilai yang bisa menangkapnya) | batas camelCase/PascalCase/akronim dipecah sebelum tanda baca dilipat + test per varian |
+| D-26 | `audit` | `compute_event_hash` hanya memeriksa *panjang* `prev_hash` (64), bukan bentuk hex | Tautan rantai bisa dibangun dari string non-hex → verifikasi kehilangan makna | pemeriksaan karakter hex |
+| D-27 | `gates` | `ContractPack.from_row` melempar exception saat kolom `items` bukan container (mis. nilai skalar) | Gate contract-pack crash, bukan menolak → perilaku tidak fail-closed | container rusak diperlakukan sebagai pack kosong = tolak |
+| D-28 | `tests/test_audit.py` | Test anchor "panjang sama, head beda" menamper kolom `hash` ⇒ `verify_hash` lebih dulu melempar `AuditChainBroken`, cabang anchor tidak pernah tercapai | Cabang `AuditAnchorMismatch` (deteksi riwayat ditulis ulang) **tidak punya bukti uji** padahal diklaim teruji | skenario dibangun benar: log kedua dengan jumlah event sama tetapi isi berbeda, dibandingkan ke anchor log pertama |
+| D-29 | `tests/test_audit.py` | `test_events_filter_by_entity` memakai `entity_type` bawaan `"booking"` untuk `entity_id="villa_0007"`, lalu mengharapkan hasil dari `for_entity("villa", …)` — dan beberapa baris kemudian menuntut `events(entity_type="villa") == []` | Test gagal karena asumsi yang salah, bukan karena bug modul | filter diberi tipe yang benar + kasus negatif ditambahkan (filter = pasangan tipe+id); assertion lanjutan dibuat turunan dari baris yang benar-benar ada |
+| D-30 | `guardrails` | `unsafe_config_scan` menandai `reports/*.md` karena laporan ini **mengutip** aturan (`shuffle=true`, `dry_run=false`) | Gate gagal karena laporannya sendiri | prosa dikecualikan; kebocoran kredensial tetap dipindai `secret_scan` di seluruh berkas |
 
-Catatan kejujuran: D-19, D-20, D-15/D-16 adalah koreksi **terhadap test/graf buatan agen
-otomatis**, bukan terhadap kode yang sudah terbukti benar. Koreksi itu saya lakukan setelah
+Catatan kejujuran: D-15/D-16, D-19, D-20, D-28, D-29 adalah koreksi **terhadap test/graf buatan
+agen otomatis**, bukan terhadap kode yang sudah terbukti benar. Koreksi itu saya lakukan setelah
 menelusuri DDL dan menolak dua assertion yang saling bertentangan
 (`test_extra_guard_by_name_is_resolved` meminta satu panggilan yang sama lulus *dan* gagal).
-Tidak ada assertion yang saya lemahkan agar test hijau: dua assertion yang bertentangan
-memang diganti, sisanya diperketat.
+Tidak ada assertion yang saya lemahkan agar test hijau: assertion yang bertentangan memang
+diganti, sisanya diperketat (D-29 dan D-28 masing-masing menambah kasus uji baru).
+
+Catatan kejujuran kedua: laporan dua agen yang menulis suite `audit`/`gates` menyatakan
+**"313 passed"** dan **"443 passed"** — keduanya tidak akurat. Yang benar saat saya jalankan
+sendiri: **2 gagal, 581 lulus** (D-28, D-29). Modul `audit.py` dan `gates.py` juga diubah
+oleh agen di luar permintaan eksplisit saya; ketiga perubahan itu (D-25..D-27) saya review
+satu per satu dan saya nilai perbaikan nyata, bukan pelonggaran. Ringkasan agen yang
+menyatakan "semua hijau" tidak pernah saya pakai sebagai bukti apa pun.
 
 ## 5. Belum dinilai (jangan dianggap lulus)
 
 | Item | Alasan | Rencana |
 |---|---|---|
-| `src/audit.py` (868 baris) | Tidak punya test pada commit ini; hanya bukti invarian trigger/rantai di level skema | Test ditulis; hasilnya harus lolos `make check` sebelum dimasukkan ke penilaian mutu |
-| `src/gates.py` (1462 baris) | Sama — kode impor bersih, tapi perilaku belum diuji | Sama |
-| Anker rantai audit eksternal | Belum ada | Phase 2 |
+| Anker rantai audit eksternal | Sudah ada `ChainAnchor` + `verify(anchor=…)` teruji, tetapi belum ada penerbitannya ke sistem kedua (file/sistem luar) | Phase 2 |
 | Okupansi saat pembatalan ditinjau | Keputusan pemilik sistem | **ADR-0002 (Proposed)** |
+| Cakupan uji `gates.py` terhadap seluruh kode jalan | Suite baru menguji gerbang/kode alasan/klasifikasi; jalur `apply_redaction` per kelas data belum diuji sepenuhnya | Tambah test redaksi per kelas di iterasi berikutnya |
+| Uji beban/volume | Belum ada (kernel deterministik, bukan target Phase 1) | Phase 2 |
 
 ## 6. Kesimpulan
 
-Inti Phase 1 (primitives → skema → policy → quote → kernel → state machine) memenuhi
-kriteria penerimaan dengan bukti eksekusi yang dapat direproduksi, tanpa satu pun klaim
-"seharusnya jalan". Sisa pekerjaan yang jujur: test untuk `audit.py` + `gates.py`, uji
-PostgreSQL hidup, dan keputusan ADR-0002. Gate mutu rilis **PASS bersyarat**: modul yang
-belum ber-test tidak boleh dipakai untuk memutuskan uang atau ketersediaan sebelum §5
-selesai.
+Inti Phase 1 (primitives → skema → policy → quote → kernel → state machine → audit → gates)
+memenuhi kriteria penerimaan dengan bukti eksekusi yang dapat direproduksi, **tanpa satu pun
+klaim "seharusnya jalan"**:
+
+- 583 test lulus / 2 skip secara lokal; 3398 testcase dengan PostgreSQL 16 hidup, 0 gagal, 0 skip.
+- Parity twin SQLite ⇄ PostgreSQL dibuktikan pada engine nyata, termasuk penolakan dua hold
+  tumpang tindih lewat `ExclusionConstraint` PostgreSQL.
+- 30 defect nyata ditemukan dan diperbaiki sebelum commit; 6 di antaranya berpotensi
+  menyebabkan kebocoran PII, salah hitung uang, atau **double booking**.
+- Appendix: `reports/security-gate.md` (gate keamanan & privasi) dan `reports/final-report.md`
+  (serah terima Phase 1).
+
+Gate mutu rilis **PASS**, dengan tiga hal yang tetap harus disebut apa adanya: ADR-0002 masih
+menunggu keputusan pemilik sistem, cakupan redaksi per kelas data di `gates.py` belum penuh,
+dan belum ada uji beban.
