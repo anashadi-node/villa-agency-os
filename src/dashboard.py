@@ -62,6 +62,8 @@ from approvals import (
 )
 from audit import AuditEvent, ChainAnchor, verify_chain
 from primitives import (
+    DEFAULT_AGENCY_ID,
+    resolve_agency_id,
     MINOR_UNITS,
     DomainError,
     IdFactory,
@@ -568,15 +570,23 @@ def nav_links(role: str) -> Markup:
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class Principal:
-    """One authenticated caller: an opaque identity plus a dashboard role."""
+    """One authenticated caller: identity, role, **and the agency it serves**.
+
+    The agency is part of the principal because it is part of who the caller is,
+    not something a request may assert. A token is only valid inside the agency it
+    was issued for (``require_page`` enforces that); ``agency_default`` keeps a
+    single-agency deployment working unchanged.
+    """
 
     identity: str
     role: str
+    agency_id: str = DEFAULT_AGENCY_ID
 
     def __post_init__(self) -> None:
         require_ref(self.identity, "identity")
         if self.role not in ROLES:
             raise InvalidInput("peran tidak dikenal", role=self.role, known=list(ROLES))
+        require_ref(self.agency_id, "agency_id")
 
     @property
     def approval_role(self) -> Optional[str]:
@@ -607,13 +617,22 @@ def _bearer(header: Optional[str]) -> Optional[str]:
 
 
 def _token_registry(
-    actor: str, actor_role: str, tokens: Optional[Mapping[str, Any]]
+    actor: str,
+    actor_role: str,
+    tokens: Optional[Mapping[str, Any]],
+    agency_id: str = DEFAULT_AGENCY_ID,
 ) -> "dict[str, Principal]":
-    """Build ``token → principal``.
+    """Build ``token → principal`` for **one** agency's dashboard.
 
     With no explicit ``tokens`` every role gets a freshly generated token, so a
     default deployment has no guessable credential; ``actor``/``actor_role``
     replace the demo identity of that role, so the operator is who they say.
+
+    A spec that names an agency keeps it (and ``require_page`` then refuses it
+    unless it is this dashboard's agency — minting a token for a *different*
+    agency is a configuration mistake, and it must not quietly grant access). A
+    spec that names none inherits this dashboard's agency; inheriting
+    ``agency_default`` instead would lock every page of a scoped deployment.
     """
     if tokens is not None:
         registry: dict[str, Principal] = {}
@@ -623,17 +642,35 @@ def _token_registry(
                 role = _validate_role(spec)
                 identity = DEFAULT_IDENTITIES[role]
             else:
+                agency = agency_id
                 try:
-                    identity, role = spec
+                    parts = tuple(spec)
+                    if len(parts) == 2:
+                        identity, role = parts
+                    elif len(parts) == 3:
+                        identity, role, agency = parts
+                    else:
+                        raise ValueError(len(parts))
                 except (TypeError, ValueError) as exc:
                     raise InvalidInput(
                         "spec token harus (identitas, peran) atau nama peran",
                         token=secret[:8],
                     ) from exc
                 role = _validate_role(role)
-            registry[secret] = Principal(
-                identity=require_ref(identity, "identity"), role=role
-            )
+            try:
+                registry[secret] = Principal(
+                    identity=require_ref(identity, "identity"),
+                    role=role,
+                    agency_id=require_ref(agency, "agency_id"),
+                )
+            except DomainError as exc:
+                # A malformed token specification is a deployment mistake: report it
+                # as the dashboard's own input error, not as a domain refusal.
+                raise InvalidInput(
+                    "spec token tidak sah",
+                    token=secret[:8],
+                    detail=str(exc),
+                ) from exc
         if not registry:
             raise InvalidInput("tokens tidak boleh kosong")
         return registry
@@ -642,7 +679,7 @@ def _token_registry(
     for role in ROLES:
         identity = actor if role == actor_role else DEFAULT_IDENTITIES[role]
         registry[secrets.token_urlsafe(24)] = Principal(
-            identity=require_ref(identity, "identity"), role=role
+            identity=require_ref(identity, "identity"), role=role, agency_id=agency_id
         )
     return registry
 
@@ -726,7 +763,7 @@ class Dashboard:
         self.templates_dir = Path(templates_dir) if templates_dir is not None else None
         self.anchor_dir = Path(anchor_dir) if anchor_dir is not None else None
         self.page_roles = {name: tuple(roles) for name, roles in (page_roles or PAGE_ROLES).items()}
-        self.tokens = _token_registry(self.actor, self.actor_role, tokens)
+        self.tokens = _token_registry(self.actor, self.actor_role, tokens, self.agency_id)
         self.token_by_role = _invert_tokens(self.tokens)
         # The approval queue is the only writer this app ever talks to; building
         # it fails closed when the audit guards are missing.
@@ -792,6 +829,13 @@ class Dashboard:
                 role=principal.role,
                 page=page,
                 allowed=list(self.page_roles.get(page, ())),
+            )
+        if principal.agency_id != self.agency_id:
+            raise Forbidden(
+                "token ini milik agency lain",
+                principal_agency=principal.agency_id,
+                scope=self.agency_id,
+                page=page,
             )
         return principal
 
@@ -1994,9 +2038,11 @@ class Dashboard:
             details = getattr(exc, "details", {}) or {}
             role = details.get("role")
             if isinstance(role, str) and role in ROLES:
-                principal = Principal(DEFAULT_IDENTITIES[role], role)
+                principal = Principal(
+                    DEFAULT_IDENTITIES[role], role, agency_id=self.agency_id
+                )
         context = self.base_context(
-            principal or Principal(self.actor, self.actor_role),
+            principal or Principal(self.actor, self.actor_role, agency_id=self.agency_id),
             "error",
         )
         context.update(
@@ -2018,7 +2064,7 @@ class Dashboard:
         """Write every page this role may open as a static file, for a demo."""
         base = Path(directory)
         base.mkdir(parents=True, exist_ok=True)
-        principal = Principal(self.actor, self.actor_role)
+        principal = Principal(self.actor, self.actor_role, agency_id=self.agency_id)
         written: list[Path] = []
         for page, route in NAV:
             if not self.page_allowed(page, principal.role):
@@ -2263,6 +2309,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--templates-dir", default=None, help="direktori template alternatif")
     parser.add_argument("--token", default=None, help="token tetap untuk peran operator")
     parser.add_argument(
+        "--agency",
+        default=None,
+        help=(
+            "agency yang dilayani dashboard ini (default: VILLA_AGENCY_ID, "
+            "lalu agency_default); token yang diterbitkan terikat pada agency ini"
+        ),
+    )
+    parser.add_argument(
         "--allow-remote",
         action="store_true",
         help="izinkan bind ke 0.0.0.0/:: (default: loopback saja)",
@@ -2289,9 +2343,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"dashboard: menolak start: {redact_pii(exc)}", file=sys.stderr)
         return 2
     identity = args.actor or DEFAULT_IDENTITIES[args.role]
-    tokens = {args.token: (identity, args.role)} if args.token else None
+    agency = resolve_agency_id(args.agency)
+    tokens = {args.token: (identity, args.role, agency)} if args.token else None
     options: dict[str, Any] = {
         "tokens": tokens,
+        "agency_id": agency,
         "templates_dir": args.templates_dir,
         "anchor_dir": args.anchor_dir,
     }
