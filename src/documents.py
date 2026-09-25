@@ -855,11 +855,25 @@ class DocumentService:
         clock: Optional[Any] = None,
         ids: Optional[Any] = None,
         root: Optional[Any] = None,
+        agency_id: str = "agency_default",
     ) -> None:
         self._conn = conn
         self._clock = clock if clock is not None else SystemClock()
         self._ids = ids if ids is not None else IdFactory(deterministic=False)
         self._root = Path(root) if root is not None else default_root()
+        self.agency_id = require_ref(agency_id, "agency_id")
+        self._ensure_agency_scope()
+
+    def _ensure_agency_scope(self) -> None:
+        now = _normalise_instant(self._clock.now(), field="now")
+        self._conn.execute(
+            """
+            INSERT INTO agencies (agency_id, name, status, created_at, updated_at)
+            VALUES (?, ?, 'ACTIVE', ?, ?)
+            ON CONFLICT(agency_id) DO UPDATE SET updated_at = excluded.updated_at
+            """,
+            (self.agency_id, self.agency_id, now, now),
+        )
 
     # -- accessors -------------------------------------------------------
     @property
@@ -933,13 +947,14 @@ class DocumentService:
                 path = resolve_storage_path(self._root, storage_ref)
                 self._supersede(key)
                 self._conn.execute(
-                    "INSERT INTO documents (document_id, document_key, kind, version,"
+                    "INSERT INTO documents (document_id, agency_id, document_key, kind, version,"
                     " format, booking_id, invoice_id, case_id, content_class,"
                     " redaction_profile, storage_ref, body_sha256, status, generated_by,"
                     " generated_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
-                    " ?, 'GENERATED', ?, ?, ?)",
+                    " ?, ?, 'GENERATED', ?, ?, ?)",
                     (
                         document_id,
+                        self.agency_id,
                         key,
                         document_kind,
                         version,
@@ -998,8 +1013,8 @@ class DocumentService:
         with _write_transaction(self._conn):
             self._conn.execute(
                 "UPDATE documents SET status = 'VOID' WHERE document_id = ?"
-                " AND status = 'GENERATED'",
-                (document.document_id,),
+                " AND agency_id = ? AND status = 'GENERATED'",
+                (document.document_id, self.agency_id),
             )
         return self.get(document.document_id)
 
@@ -1007,7 +1022,8 @@ class DocumentService:
     def get(self, document_id: Any) -> Document:
         ref = require_ref(document_id, "document_id", max_len=64)
         row = self._conn.execute(
-            "SELECT * FROM documents WHERE document_id = ?", (ref,)
+            "SELECT * FROM documents WHERE document_id = ? AND agency_id = ?",
+            (ref, self.agency_id),
         ).fetchone()
         if row is None:
             raise EntityNotFound(
@@ -1029,8 +1045,8 @@ class DocumentService:
         ``subject_ref`` matches whichever of ``booking_id``/``invoice_id``/
         ``case_id`` the caller means — the row has one subject column per kind.
         """
-        clauses: list[str] = []
-        params: list[Any] = []
+        clauses: list[str] = ["agency_id = ?"]
+        params: list[Any] = [self.agency_id]
         if kind is not None:
             clauses.append("kind = ?")
             params.append(_require_kind(kind))
@@ -1051,8 +1067,8 @@ class DocumentService:
         """The highest-version row for ``document_key`` (whatever its status)."""
         key = _safe_document_key(document_key)
         row = self._conn.execute(
-            "SELECT * FROM documents WHERE document_key = ? ORDER BY version DESC LIMIT 1",
-            (key,),
+            "SELECT * FROM documents WHERE document_key = ? AND agency_id = ? ORDER BY version DESC LIMIT 1",
+            (key, self.agency_id),
         ).fetchone()
         if row is None:
             raise EntityNotFound(
@@ -1252,7 +1268,8 @@ class DocumentService:
             fields, allowed=("currency", "total_minor", "invoice_number")
         )
         invoice = self._conn.execute(
-            "SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)
+            "SELECT * FROM invoices WHERE invoice_id = ? AND agency_id = ?",
+            (invoice_id, self.agency_id),
         ).fetchone()
         if invoice is None:
             raise EntityNotFound(
@@ -1365,7 +1382,8 @@ class DocumentService:
         if case_id is not None:
             ref = require_ref(case_id, "case_id", max_len=64)
             row = self._conn.execute(
-                "SELECT case_id, status, channel FROM cases WHERE case_id = ?", (ref,)
+                "SELECT case_id, status, channel FROM cases WHERE case_id = ? AND agency_id = ?",
+                (ref, self.agency_id),
             ).fetchone()
             if row is None:
                 raise EntityNotFound(
@@ -1392,7 +1410,8 @@ class DocumentService:
 
     def _load_booking(self, booking_id: str) -> Any:
         row = self._conn.execute(
-            "SELECT * FROM bookings WHERE booking_id = ?", (booking_id,)
+            "SELECT * FROM bookings WHERE booking_id = ? AND agency_id = ?",
+            (booking_id, self.agency_id),
         ).fetchone()
         if row is None:
             raise EntityNotFound(

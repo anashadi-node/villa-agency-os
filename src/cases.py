@@ -748,13 +748,33 @@ class CaseService:
     change and the change itself are committed together or not at all.
     """
 
-    def __init__(self, conn: sqlite3.Connection, clock: Any = None, ids: Optional[IdFactory] = None) -> None:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        clock: Any = None,
+        ids: Optional[IdFactory] = None,
+        *,
+        agency_id: str = "agency_default",
+    ) -> None:
         self.conn = conn
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.clock = clock or SystemClock()
         self.ids = ids or IdFactory()
+        self.agency_id = require_ref(agency_id, "agency_id")
         self._in_tx = False
+        self._ensure_agency_scope()
+
+    def _ensure_agency_scope(self) -> None:
+        now = self._stamp()
+        self.conn.execute(
+            """
+            INSERT INTO agencies (agency_id, name, status, created_at, updated_at)
+            VALUES (?, ?, 'ACTIVE', ?, ?)
+            ON CONFLICT(agency_id) DO UPDATE SET updated_at = excluded.updated_at
+            """,
+            (self.agency_id, self.agency_id, now, now),
+        )
 
     # -- transactions ------------------------------------------------------- #
     @contextmanager
@@ -792,7 +812,10 @@ class CaseService:
     # -- reads -------------------------------------------------------------- #
     def _require_case_row(self, case_id: Any) -> sqlite3.Row:
         ref = _require_bounded_ref(case_id, "case_id", minimum=1, code=InvalidRef.code)
-        row = self.conn.execute("SELECT * FROM cases WHERE case_id = ?", (ref,)).fetchone()
+        row = self.conn.execute(
+            "SELECT * FROM cases WHERE case_id = ? AND agency_id = ?",
+            (ref, self.agency_id),
+        ).fetchone()
         if row is None:
             raise CaseNotFound(f"case tidak ditemukan: {ref}", case_id=ref)
         return row
@@ -829,14 +852,15 @@ class CaseService:
         rows = self.conn.execute(
             f"""
             SELECT * FROM cases
-             WHERE status NOT IN ({closed})
+             WHERE agency_id = ?
+               AND status NOT IN ({closed})
                AND (
                      (first_responded_at IS NULL AND first_response_due_at < ?)
                   OR (quoted_at IS NULL AND quote_due_at < ?)
                )
              ORDER BY first_response_due_at ASC, case_id ASC
             """,
-            (*CLOSED_STATUSES, moment, moment),
+            (self.agency_id, *CLOSED_STATUSES, moment, moment),
         ).fetchall()
         return [Case.from_row(r) for r in rows]
 
@@ -846,12 +870,13 @@ class CaseService:
         rows = self.conn.execute(
             f"""
             SELECT * FROM cases
-             WHERE status NOT IN ({closed})
+             WHERE agency_id = ?
+               AND status NOT IN ({closed})
                AND {answered_column} IS NULL
                AND {due_column} < ?
              ORDER BY {due_column} ASC, case_id ASC
             """,
-            (*CLOSED_STATUSES, moment),
+            (self.agency_id, *CLOSED_STATUSES, moment),
         ).fetchall()
         return [Case.from_row(r) for r in rows]
 
@@ -974,7 +999,10 @@ class CaseService:
         message_id = self.ids.new("cmsg")
 
         with self._write() as conn:
-            clash = conn.execute("SELECT case_id FROM cases WHERE idempotency_key = ?", (key,)).fetchone()
+            clash = conn.execute(
+                "SELECT case_id FROM cases WHERE agency_id = ? AND idempotency_key = ?",
+                (self.agency_id, key),
+            ).fetchone()
             if clash is not None:
                 raise DuplicateCase(
                     f"idempotency_key sudah dipakai: {key}",
@@ -984,14 +1012,15 @@ class CaseService:
             conn.execute(
                 """
                 INSERT INTO cases (
-                    case_id, channel, channel_ref, guest_ref, status, priority, owner_actor,
+                    case_id, agency_id, channel, channel_ref, guest_ref, status, priority, owner_actor,
                     booking_id, sla_policy, first_response_due_at, quote_due_at,
                     first_responded_at, quoted_at, idempotency_key, created_at, updated_at,
                     closed_at, close_reason
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, NULL, ?, ?, ?, NULL, NULL)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, NULL, ?, ?, ?, NULL, NULL)
                 """,
                 (
                     case_id,
+                    self.agency_id,
                     channel_value,
                     channel_ref_value,
                     guest,
@@ -1042,7 +1071,10 @@ class CaseService:
                 refs=(message_id,),
                 occurred_at=created_at,
             )
-            case_row = conn.execute("SELECT * FROM cases WHERE case_id = ?", (case_id,)).fetchone()
+            case_row = conn.execute(
+                "SELECT * FROM cases WHERE case_id = ? AND agency_id = ?",
+                (case_id, self.agency_id),
+            ).fetchone()
             message_row = conn.execute(
                 "SELECT * FROM case_messages WHERE case_message_id = ?", (message_id,)
             ).fetchone()

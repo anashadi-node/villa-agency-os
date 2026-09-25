@@ -1296,6 +1296,7 @@ class PaymentService:
         invoices: Optional[InvoiceService] = None,
         actor: str = SYSTEM_ACTOR,
         actor_role: str = "system",
+        agency_id: str = "agency_default",
         enforce_triggers: bool = True,
     ) -> None:
         self._conn = conn
@@ -1311,6 +1312,8 @@ class PaymentService:
         self._provider = provider
         self._actor = require_ref(actor, "actor", max_len=64)
         self._actor_role = require_ref(actor_role, "actor_role", max_len=64)
+        self.agency_id = require_ref(agency_id, "agency_id")
+        self._ensure_agency_scope()
         if enforce_triggers:
             guard_append_only(conn)
         self._audit = (
@@ -1319,6 +1322,17 @@ class PaymentService:
             else AuditLog(conn, clock=self._clock, ids=self._ids, enforce_triggers=enforce_triggers)
         )
         self._invoices = invoices
+
+    def _ensure_agency_scope(self) -> None:
+        now = self._now_iso()
+        self._conn.execute(
+            """
+            INSERT INTO agencies (agency_id, name, status, created_at, updated_at)
+            VALUES (?, ?, 'ACTIVE', ?, ?)
+            ON CONFLICT(agency_id) DO UPDATE SET updated_at = excluded.updated_at
+            """,
+            (self.agency_id, self.agency_id, now, now),
+        )
 
     # -- internals --------------------------------------------------------- #
     @property
@@ -1332,7 +1346,7 @@ class PaymentService:
     def _invoicing(self) -> InvoiceService:
         if self._invoices is None:
             self._invoices = InvoiceService(
-                self._conn, self._clock, self._ids, actor=self._actor, actor_role=self._actor_role
+                self._conn, self._clock, self._ids, actor=self._actor, actor_role=self._actor_role, agency_id=self.agency_id
             )
         return self._invoices
 
@@ -1346,7 +1360,8 @@ class PaymentService:
 
     def _payment_row(self, payment_id: str) -> Any:
         return self._conn.execute(
-            "SELECT * FROM payments WHERE payment_id = ?", (payment_id,)
+            "SELECT * FROM payments WHERE payment_id = ? AND agency_id = ?",
+            (payment_id, self.agency_id),
         ).fetchone()
 
     def _idempotent_lookup(self, key: str, operation: str, request_hash: str) -> Optional[str]:
@@ -1479,7 +1494,7 @@ class PaymentService:
                 f" VALUES ({', '.join('?' * len(PAYMENT_COLUMNS))})",
                 (
                     payment_id,
-                    "agency_default",
+                    self.agency_id,
                     invoice.invoice_id,
                     self._provider,
                     provider_intent_id,
@@ -1842,8 +1857,8 @@ class PaymentService:
         if event_type in FAILURE_EVENT_TYPES or event_type in EXPIRY_EVENT_TYPES:
             status = "FAILED" if event_type in FAILURE_EVENT_TYPES else "EXPIRED"
             self._conn.execute(
-                "UPDATE payments SET status = ?, provider_status = ? WHERE payment_id = ?",
-                (status, event_type, payment.payment_id),
+                "UPDATE payments SET status = ?, provider_status = ? WHERE payment_id = ? AND agency_id = ?",
+                (status, event_type, payment.payment_id, self.agency_id),
             )
             return self._record_event(
                 provider=provider,
@@ -1864,8 +1879,8 @@ class PaymentService:
 
         if event_type in PENDING_EVENT_TYPES:
             self._conn.execute(
-                "UPDATE payments SET provider_status = ? WHERE payment_id = ?",
-                (event_type, payment.payment_id),
+                "UPDATE payments SET provider_status = ? WHERE payment_id = ? AND agency_id = ?",
+                (event_type, payment.payment_id, self.agency_id),
             )
             return self._record_event(
                 provider=provider,
@@ -1928,8 +1943,8 @@ class PaymentService:
         entries = self._post_settlement(payment, invoice, occurred_at=received_at)
         self._conn.execute(
             "UPDATE payments SET status = 'SUCCEEDED', settled_at = ?, provider_status = ?"
-            " WHERE payment_id = ?",
-            (received_at, event_type, payment.payment_id),
+            " WHERE payment_id = ? AND agency_id = ?",
+            (received_at, event_type, payment.payment_id, self.agency_id),
         )
         settled = Payment.from_row(self._payment_row(payment.payment_id))
         self._invoicing().record_settlement(
@@ -2384,7 +2399,7 @@ class PaymentService:
             f" VALUES ({', '.join('?' * len(PAYMENT_COLUMNS))})",
             (
                 payment_id,
-                "agency_default",
+                self.agency_id,
                 invoice.invoice_id,
                 provider,
                 self._ids.new("pi"),
@@ -2416,8 +2431,8 @@ class PaymentService:
             # would let the guest pay a second time for money already settled.
             self._conn.execute(
                 "UPDATE payments SET status = 'EXPIRED', provider_status = 'reconciled_elsewhere'"
-                " WHERE payment_id = ? AND status = 'PENDING'",
-                (case.payment_id,),
+                " WHERE payment_id = ? AND agency_id = ? AND status = 'PENDING'",
+                (case.payment_id, self.agency_id),
             )
         self._audit.append(
             action=AUDIT_PAYMENT_SETTLED,
@@ -2526,8 +2541,8 @@ class PaymentService:
             refunded_total = already + amount
             fully = refunded_total >= payment.amount_minor
             self._conn.execute(
-                "UPDATE payments SET status = ?, provider_status = ? WHERE payment_id = ?",
-                ("REFUNDED" if fully else payment.status, "refunded" if fully else "partially_refunded", payment.payment_id),
+                "UPDATE payments SET status = ?, provider_status = ? WHERE payment_id = ? AND agency_id = ?",
+                ("REFUNDED" if fully else payment.status, "refunded" if fully else "partially_refunded", payment.payment_id, self.agency_id),
             )
             invoice = self._invoicing().get(payment.invoice_id)
             self._invoicing().record_settlement(
@@ -2649,8 +2664,8 @@ class PaymentService:
         """Every payment raised against one invoice, oldest first."""
         invoice_id = require_ref(invoice_id, "invoice_id", max_len=64)
         rows = self._conn.execute(
-            "SELECT * FROM payments WHERE invoice_id = ? ORDER BY created_at, payment_id",
-            (invoice_id,),
+            "SELECT * FROM payments WHERE invoice_id = ? AND agency_id = ? ORDER BY created_at, payment_id",
+            (invoice_id, self.agency_id),
         ).fetchall()
         return tuple(Payment.from_row(row) for row in rows)
 
@@ -2736,16 +2751,16 @@ class PaymentService:
         )
         with _write_transaction(self._conn):
             expired = self._conn.execute(
-                "SELECT * FROM payments WHERE status = 'PENDING' AND expires_at IS NOT NULL"
+                "SELECT * FROM payments WHERE agency_id = ? AND status = 'PENDING' AND expires_at IS NOT NULL"
                 " AND expires_at <= ? ORDER BY expires_at, payment_id",
-                (cutoff,),
+                (self.agency_id, cutoff),
             ).fetchall()
             for row in expired:
                 payment = Payment.from_row(row)
                 self._conn.execute(
                     "UPDATE payments SET status = 'EXPIRED', provider_status = 'intent_expired'"
-                    " WHERE payment_id = ? AND status = 'PENDING'",
-                    (payment.payment_id,),
+                    " WHERE payment_id = ? AND agency_id = ? AND status = 'PENDING'",
+                    (payment.payment_id, self.agency_id),
                 )
                 self._audit.append(
                     action=AUDIT_INTENT_EXPIRED,
@@ -2758,9 +2773,9 @@ class PaymentService:
                     reason=f"intent expired at {payment.expires_at}",
                 )
         rows = self._conn.execute(
-            "SELECT * FROM payments WHERE status = 'PENDING' AND expires_at IS NOT NULL"
+            "SELECT * FROM payments WHERE agency_id = ? AND status = 'PENDING' AND expires_at IS NOT NULL"
             " AND expires_at > ? ORDER BY expires_at, payment_id",
-            (cutoff,),
+            (self.agency_id, cutoff),
         ).fetchall()
         return tuple(Payment.from_row(row) for row in rows)
 

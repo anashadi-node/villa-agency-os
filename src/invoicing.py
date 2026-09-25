@@ -754,6 +754,7 @@ class InvoiceService:
         *,
         actor: str = SYSTEM_ACTOR,
         actor_role: str = "system",
+        agency_id: str = "agency_default",
         enforce_triggers: bool = True,
     ) -> None:
         self._conn = conn
@@ -761,15 +762,29 @@ class InvoiceService:
         self._ids = ids or IdFactory()
         self._actor = require_ref(actor, "actor")
         self._actor_role = require_ref(actor_role, "actor_role")
+        self.agency_id = require_ref(agency_id, "agency_id")
+        self._ensure_agency_scope()
         self._audit = AuditLog(
             conn, clock=self._clock, ids=self._ids, enforce_triggers=enforce_triggers
+        )
+
+    def _ensure_agency_scope(self) -> None:
+        now = _normalise_instant(self._clock.now(), field_name="now")
+        self._conn.execute(
+            """
+            INSERT INTO agencies (agency_id, name, status, created_at, updated_at)
+            VALUES (?, ?, 'ACTIVE', ?, ?)
+            ON CONFLICT(agency_id) DO UPDATE SET updated_at = excluded.updated_at
+            """,
+            (self.agency_id, self.agency_id, now, now),
         )
 
     # -- reads ------------------------------------------------------------- #
     def get(self, invoice_id: Any) -> Invoice:
         invoice_id = require_ref(invoice_id, "invoice_id", max_len=64)
         row = self._conn.execute(
-            "SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id,)
+            "SELECT * FROM invoices WHERE invoice_id = ? AND agency_id = ?",
+            (invoice_id, self.agency_id),
         ).fetchone()
         if row is None:
             raise EntityNotFound(
@@ -806,8 +821,8 @@ class InvoiceService:
     def for_booking(self, booking_id: Any) -> tuple[Invoice, ...]:
         booking_id = require_ref(booking_id, "booking_id", max_len=64)
         rows = self._conn.execute(
-            "SELECT * FROM invoices WHERE booking_id = ? ORDER BY issued_at, invoice_id",
-            (booking_id,),
+            "SELECT * FROM invoices WHERE booking_id = ? AND agency_id = ? ORDER BY issued_at, invoice_id",
+            (booking_id, self.agency_id),
         ).fetchall()
         return tuple(Invoice.from_row(row) for row in rows)
 
@@ -816,9 +831,9 @@ class InvoiceService:
         cutoff = _normalise_instant(now if now is not None else self._clock.now(), field_name="now")
         rows = self._conn.execute(
             "SELECT * FROM invoices"
-            " WHERE status = 'ISSUED' AND amount_paid_minor < total_minor AND due_at < ?"
+            " WHERE agency_id = ? AND status = 'ISSUED' AND amount_paid_minor < total_minor AND due_at < ?"
             " ORDER BY due_at, invoice_id",
-            (cutoff,),
+            (self.agency_id, cutoff),
         ).fetchall()
         return tuple(Invoice.from_row(row) for row in rows)
 
@@ -906,7 +921,8 @@ class InvoiceService:
             if replay is not None:
                 return self.get(replay)
             booking = self._conn.execute(
-                "SELECT booking_id FROM bookings WHERE booking_id = ?", (booking_id,)
+                "SELECT booking_id FROM bookings WHERE booking_id = ? AND agency_id = ?",
+                (booking_id, self.agency_id),
             ).fetchone()
             if booking is None:
                 raise EntityNotFound(
@@ -923,12 +939,13 @@ class InvoiceService:
                 )
             invoice_id = self._ids.new("inv")
             self._conn.execute(
-                "INSERT INTO invoices (invoice_id, invoice_number, booking_id, policy_fingerprint,"
+                "INSERT INTO invoices (invoice_id, agency_id, invoice_number, booking_id, policy_fingerprint,"
                 " currency, subtotal_minor, tax_minor, service_minor, total_minor, amount_paid_minor,"
                 " status, payment_status, issued_at, due_at, voided_at, void_reason, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'ISSUED', 'UNPAID', ?, ?, NULL, NULL, ?)",
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'ISSUED', 'UNPAID', ?, ?, NULL, NULL, ?)",
                 (
                     invoice_id,
+                    self.agency_id,
                     number,
                     booking_id,
                     fingerprint,
@@ -1174,7 +1191,8 @@ class InvoiceService:
     def _sync_booking(self, invoice: Invoice) -> None:
         """Mirror the money onto the booking, capped at the booking's own total."""
         row = self._conn.execute(
-            "SELECT total_minor FROM bookings WHERE booking_id = ?", (invoice.booking_id,)
+            "SELECT total_minor FROM bookings WHERE booking_id = ? AND agency_id = ?",
+            (invoice.booking_id, self.agency_id),
         ).fetchone()
         if row is None:
             # The DDL forbids deleting a booking that has invoices; a missing row
@@ -1184,12 +1202,13 @@ class InvoiceService:
         paid = min(invoice.amount_paid_minor, booking_total)
         self._conn.execute(
             "UPDATE bookings SET amount_paid_minor = ?, payment_status = ?,"
-            " updated_at = ?, version_lock = version_lock + 1 WHERE booking_id = ?",
+            " updated_at = ?, version_lock = version_lock + 1 WHERE booking_id = ? AND agency_id = ?",
             (
                 paid,
                 booking_payment_status(invoice.payment_status, paid),
                 to_iso(self._clock.now()),
                 invoice.booking_id,
+                self.agency_id,
             ),
         )
 
