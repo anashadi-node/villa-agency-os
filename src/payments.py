@@ -309,6 +309,7 @@ AUDIT_REFUND_RECORDED = "payment.refunded"
 # cannot drift apart.
 PAYMENT_COLUMNS: tuple[str, ...] = (
     "payment_id",
+    "agency_id",
     "invoice_id",
     "provider",
     "provider_intent_id",
@@ -805,6 +806,7 @@ class Payment:
     """One payment intent / settlement as stored in ``payments``."""
 
     payment_id: str
+    agency_id: str
     invoice_id: str
     provider: str
     provider_intent_id: str
@@ -1477,6 +1479,7 @@ class PaymentService:
                 f" VALUES ({', '.join('?' * len(PAYMENT_COLUMNS))})",
                 (
                     payment_id,
+                    "agency_default",
                     invoice.invoice_id,
                     self._provider,
                     provider_intent_id,
@@ -2381,6 +2384,7 @@ class PaymentService:
             f" VALUES ({', '.join('?' * len(PAYMENT_COLUMNS))})",
             (
                 payment_id,
+                "agency_default",
                 invoice.invoice_id,
                 provider,
                 self._ids.new("pi"),

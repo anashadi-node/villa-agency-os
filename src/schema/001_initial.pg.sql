@@ -28,10 +28,23 @@ CREATE TABLE schema_meta (
 );
 
 -- --------------------------------------------------------------------------
+-- Tenant scope (Master Spec Wave 1-A)
+-- --------------------------------------------------------------------------
+CREATE TABLE agencies (
+    agency_id    TEXT    NOT NULL,
+    name         TEXT    NOT NULL CHECK (length(name) BETWEEN 1 AND 200),
+    status       TEXT    NOT NULL CHECK (status IN ('ACTIVE','SUSPENDED')),
+    created_at   TEXT    NOT NULL,
+    updated_at   TEXT    NOT NULL,
+    CONSTRAINT pk_agencies PRIMARY KEY (agency_id)
+);
+
+-- --------------------------------------------------------------------------
 -- Inventory: properties & units
 -- --------------------------------------------------------------------------
 CREATE TABLE properties (
     property_id   TEXT    NOT NULL,
+    agency_id     TEXT    NOT NULL DEFAULT 'agency_default',
     name          TEXT    NOT NULL CHECK (length(name) BETWEEN 1 AND 200),
     property_type TEXT    NOT NULL CHECK (property_type IN ('villa','resort','guesthouse','apartment','homestay')),
     region        TEXT    NOT NULL CHECK (length(region) >= 2),
@@ -42,13 +55,15 @@ CREATE TABLE properties (
     contract_pack_evaluated_at TEXT,
     created_at    TEXT    NOT NULL,
     updated_at    TEXT    NOT NULL,
-    CONSTRAINT pk_properties PRIMARY KEY (property_id)
+    CONSTRAINT pk_properties PRIMARY KEY (property_id),
+    CONSTRAINT fk_properties_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id)
 );
 
 CREATE INDEX ix_properties_status ON properties (status);
 
 CREATE TABLE units (
     unit_id      TEXT    NOT NULL,
+    agency_id    TEXT    NOT NULL DEFAULT 'agency_default',
     property_id  TEXT    NOT NULL,
     name         TEXT    NOT NULL CHECK (length(name) BETWEEN 1 AND 200),
     unit_type    TEXT    NOT NULL CHECK (unit_type IN ('entire_villa','suite','room','bungalow','compound_unit')),
@@ -60,6 +75,7 @@ CREATE TABLE units (
     created_at   TEXT    NOT NULL,
     updated_at   TEXT    NOT NULL,
     CONSTRAINT pk_units PRIMARY KEY (unit_id),
+    CONSTRAINT fk_units_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
     CONSTRAINT fk_units_property FOREIGN KEY (property_id) REFERENCES properties (property_id),
     CONSTRAINT ck_units_capacity CHECK (max_guests >= base_capacity)
 );
@@ -67,10 +83,84 @@ CREATE TABLE units (
 CREATE INDEX ix_units_property ON units (property_id, status);
 
 -- --------------------------------------------------------------------------
+-- Supplier route skeleton (Master Spec Wave 1-A)
+-- --------------------------------------------------------------------------
+CREATE TABLE suppliers (
+    supplier_id  TEXT    NOT NULL,
+    agency_id    TEXT    NOT NULL DEFAULT 'agency_default',
+    name         TEXT    NOT NULL CHECK (length(name) BETWEEN 1 AND 200),
+    status       TEXT    NOT NULL CHECK (status IN ('ACTIVE','SUSPENDED')),
+    created_at   TEXT    NOT NULL,
+    updated_at   TEXT    NOT NULL,
+    CONSTRAINT pk_suppliers PRIMARY KEY (supplier_id),
+    CONSTRAINT fk_suppliers_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id)
+);
+
+CREATE INDEX ix_suppliers_agency ON suppliers (agency_id, status);
+
+CREATE TABLE villa_supplier_relationships (
+    villa_supplier_relationship_id TEXT NOT NULL,
+    agency_id    TEXT    NOT NULL DEFAULT 'agency_default',
+    supplier_id  TEXT    NOT NULL,
+    property_id  TEXT,
+    unit_id      TEXT,
+    status       TEXT    NOT NULL CHECK (status IN ('ACTIVE','SUSPENDED')),
+    created_at   TEXT    NOT NULL,
+    updated_at   TEXT    NOT NULL,
+    CONSTRAINT pk_villa_supplier_relationships PRIMARY KEY (villa_supplier_relationship_id),
+    CONSTRAINT fk_vsr_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    CONSTRAINT fk_vsr_supplier FOREIGN KEY (supplier_id) REFERENCES suppliers (supplier_id),
+    CONSTRAINT fk_vsr_property FOREIGN KEY (property_id) REFERENCES properties (property_id),
+    CONSTRAINT fk_vsr_unit FOREIGN KEY (unit_id) REFERENCES units (unit_id)
+);
+
+CREATE INDEX ix_vsr_lookup ON villa_supplier_relationships (agency_id, property_id, unit_id, status);
+
+CREATE TABLE contract_versions (
+    contract_version_id TEXT    NOT NULL,
+    agency_id    TEXT    NOT NULL DEFAULT 'agency_default',
+    villa_supplier_relationship_id TEXT NOT NULL,
+    version      BIGINT NOT NULL CHECK (version >= 1),
+    status       TEXT    NOT NULL CHECK (status IN ('DRAFT','PENDING_VERIFICATION','VERIFIED','APPROVED','ACTIVE','SUPERSEDED','EXPIRED')),
+    effective_from TEXT NOT NULL,
+    effective_to   TEXT NOT NULL,
+    source_doc_ref TEXT NOT NULL CHECK (length(source_doc_ref) >= 1),
+    approved_by TEXT,
+    created_at   TEXT    NOT NULL,
+    CONSTRAINT pk_contract_versions PRIMARY KEY (contract_version_id),
+    CONSTRAINT fk_contract_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    CONSTRAINT fk_contract_route FOREIGN KEY (villa_supplier_relationship_id) REFERENCES villa_supplier_relationships (villa_supplier_relationship_id),
+    CONSTRAINT uq_contract_version UNIQUE (villa_supplier_relationship_id, version),
+    CONSTRAINT ck_contract_dates CHECK (effective_from <= effective_to)
+);
+
+CREATE TABLE rate_versions (
+    rate_version_id TEXT    NOT NULL,
+    agency_id    TEXT    NOT NULL DEFAULT 'agency_default',
+    villa_supplier_relationship_id TEXT NOT NULL,
+    contract_version_id TEXT,
+    version      BIGINT NOT NULL CHECK (version >= 1),
+    status       TEXT    NOT NULL CHECK (status IN ('DRAFT','PENDING_VERIFICATION','VERIFIED','APPROVED','ACTIVE','SUPERSEDED','EXPIRED')),
+    currency     TEXT    NOT NULL CHECK (length(currency) = 3),
+    effective_from TEXT NOT NULL,
+    effective_to   TEXT NOT NULL,
+    source_doc_ref TEXT NOT NULL CHECK (length(source_doc_ref) >= 1),
+    approved_by TEXT,
+    created_at   TEXT    NOT NULL,
+    CONSTRAINT pk_rate_versions PRIMARY KEY (rate_version_id),
+    CONSTRAINT fk_rate_version_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    CONSTRAINT fk_rate_version_route FOREIGN KEY (villa_supplier_relationship_id) REFERENCES villa_supplier_relationships (villa_supplier_relationship_id),
+    CONSTRAINT fk_rate_version_contract FOREIGN KEY (contract_version_id) REFERENCES contract_versions (contract_version_id),
+    CONSTRAINT uq_rate_version UNIQUE (villa_supplier_relationship_id, version),
+    CONSTRAINT ck_rate_version_dates CHECK (effective_from <= effective_to)
+);
+
+-- --------------------------------------------------------------------------
 -- Policy versions (append-only business rules)
 -- --------------------------------------------------------------------------
 CREATE TABLE policy_versions (
     policy_version_id   TEXT    NOT NULL,
+    agency_id           TEXT    NOT NULL DEFAULT 'agency_default',
     property_id         TEXT    NOT NULL,
     unit_scope          TEXT    NOT NULL,
     version             BIGINT NOT NULL CHECK (version >= 1),
@@ -90,6 +180,7 @@ CREATE TABLE policy_versions (
     approved_by         TEXT    NOT NULL CHECK (length(approved_by) >= 1),
     created_at          TEXT    NOT NULL,
     CONSTRAINT pk_policy_versions PRIMARY KEY (policy_version_id),
+    CONSTRAINT fk_policy_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
     CONSTRAINT fk_policy_property FOREIGN KEY (property_id) REFERENCES properties (property_id),
     CONSTRAINT uq_policy_version UNIQUE (property_id, unit_scope, version),
     CONSTRAINT ck_policy_dates CHECK (effective_from <= effective_to),
@@ -107,6 +198,7 @@ CREATE INDEX ix_policy_lookup ON policy_versions (property_id, effective_from, e
 -- --------------------------------------------------------------------------
 CREATE TABLE rate_cards (
     rate_card_id        TEXT    NOT NULL,
+    agency_id           TEXT    NOT NULL DEFAULT 'agency_default',
     property_id         TEXT    NOT NULL,
     unit_scope          TEXT    NOT NULL,
     name                TEXT    NOT NULL CHECK (length(name) BETWEEN 1 AND 200),
@@ -120,6 +212,7 @@ CREATE TABLE rate_cards (
     approved_by         TEXT    NOT NULL CHECK (length(approved_by) >= 1),
     created_at          TEXT    NOT NULL,
     CONSTRAINT pk_rate_cards PRIMARY KEY (rate_card_id),
+    CONSTRAINT fk_rate_cards_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
     CONSTRAINT fk_rate_cards_property FOREIGN KEY (property_id) REFERENCES properties (property_id),
     CONSTRAINT uq_rate_card_version UNIQUE (property_id, unit_scope, version),
     CONSTRAINT ck_rate_card_dates CHECK (effective_from <= effective_to),
@@ -151,6 +244,7 @@ CREATE INDEX ix_rate_seasons_card ON rate_seasons (rate_card_id, start_date);
 -- --------------------------------------------------------------------------
 CREATE TABLE availability_evidence (
     evidence_id    TEXT    NOT NULL,
+    agency_id      TEXT    NOT NULL DEFAULT 'agency_default',
     unit_id        TEXT    NOT NULL,
     evidence_level TEXT    NOT NULL CHECK (evidence_level IN ('A','B','C','D')),
     source_type    TEXT    NOT NULL CHECK (source_type IN ('property_api','booking_engine','manager_written','ical','memory','manual_ops')),
@@ -165,6 +259,7 @@ CREATE TABLE availability_evidence (
     notes          TEXT,
     created_at     TEXT    NOT NULL,
     CONSTRAINT pk_availability_evidence PRIMARY KEY (evidence_id),
+    CONSTRAINT fk_evidence_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
     CONSTRAINT fk_evidence_unit FOREIGN KEY (unit_id) REFERENCES units (unit_id),
     CONSTRAINT ck_evidence_window CHECK (captured_at < valid_until),
     CONSTRAINT ck_evidence_confirm_requires_ab CHECK (can_confirm = 0 OR evidence_level IN ('A','B'))
@@ -177,6 +272,7 @@ CREATE INDEX ix_evidence_unit ON availability_evidence (unit_id, captured_at);
 -- --------------------------------------------------------------------------
 CREATE TABLE quotes (
     quote_id            TEXT    NOT NULL,
+    agency_id           TEXT    NOT NULL DEFAULT 'agency_default',
     property_id         TEXT    NOT NULL,
     unit_id             TEXT    NOT NULL,
     check_in            TEXT    NOT NULL,
@@ -206,6 +302,7 @@ CREATE TABLE quotes (
     created_at          TEXT    NOT NULL,
     expires_at          TEXT    NOT NULL,
     CONSTRAINT pk_quotes PRIMARY KEY (quote_id),
+    CONSTRAINT fk_quotes_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
     CONSTRAINT fk_quotes_property FOREIGN KEY (property_id) REFERENCES properties (property_id),
     CONSTRAINT fk_quotes_unit FOREIGN KEY (unit_id) REFERENCES units (unit_id),
     CONSTRAINT fk_quotes_policy FOREIGN KEY (policy_version_id) REFERENCES policy_versions (policy_version_id),
@@ -221,6 +318,7 @@ CREATE INDEX ix_quotes_unit_window ON quotes (unit_id, check_in, check_out);
 -- --------------------------------------------------------------------------
 CREATE TABLE holds (
     hold_id            TEXT    NOT NULL,
+    agency_id          TEXT    NOT NULL DEFAULT 'agency_default',
     unit_id            TEXT    NOT NULL,
     property_id        TEXT    NOT NULL,
     check_in           TEXT    NOT NULL,
@@ -238,6 +336,7 @@ CREATE TABLE holds (
     close_reason       TEXT,
     extended_count     BIGINT NOT NULL DEFAULT 0 CHECK (extended_count >= 0),
     CONSTRAINT pk_holds PRIMARY KEY (hold_id),
+    CONSTRAINT fk_holds_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
     CONSTRAINT fk_holds_unit FOREIGN KEY (unit_id) REFERENCES units (unit_id),
     CONSTRAINT fk_holds_property FOREIGN KEY (property_id) REFERENCES properties (property_id),
     CONSTRAINT fk_holds_policy FOREIGN KEY (policy_version_id) REFERENCES policy_versions (policy_version_id),
@@ -258,6 +357,8 @@ CREATE UNIQUE INDEX uq_holds_active_slot ON holds (unit_id, check_in) WHERE stat
 -- --------------------------------------------------------------------------
 CREATE TABLE bookings (
     booking_id          TEXT    NOT NULL,
+    agency_id           TEXT    NOT NULL DEFAULT 'agency_default',
+    villa_supplier_relationship_id TEXT NOT NULL DEFAULT 'route_default',
     property_id         TEXT    NOT NULL,
     unit_id             TEXT    NOT NULL,
     check_in            TEXT    NOT NULL,
@@ -292,6 +393,8 @@ CREATE TABLE bookings (
     confirmed_at        TEXT,
     cancelled_at        TEXT,
     CONSTRAINT pk_bookings PRIMARY KEY (booking_id),
+    CONSTRAINT fk_bookings_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    CONSTRAINT fk_bookings_supplier_route FOREIGN KEY (villa_supplier_relationship_id) REFERENCES villa_supplier_relationships (villa_supplier_relationship_id),
     CONSTRAINT fk_bookings_property FOREIGN KEY (property_id) REFERENCES properties (property_id),
     CONSTRAINT fk_bookings_unit FOREIGN KEY (unit_id) REFERENCES units (unit_id),
     CONSTRAINT fk_bookings_policy FOREIGN KEY (policy_version_id) REFERENCES policy_versions (policy_version_id),
@@ -389,6 +492,7 @@ CREATE TABLE idempotency_keys (
 -- --------------------------------------------------------------------------
 CREATE TABLE cases (
     case_id        TEXT    NOT NULL,
+    agency_id      TEXT    NOT NULL DEFAULT 'agency_default',
     channel        TEXT    NOT NULL CHECK (channel IN ('website','email','whatsapp_business','dashboard','phone')),
     channel_ref    TEXT,
     guest_ref      TEXT    NOT NULL CHECK (length(guest_ref) >= 3),
@@ -409,6 +513,7 @@ CREATE TABLE cases (
     closed_at      TEXT,
     close_reason   TEXT,
     CONSTRAINT pk_cases PRIMARY KEY (case_id),
+    CONSTRAINT fk_cases_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
     CONSTRAINT fk_cases_booking FOREIGN KEY (booking_id) REFERENCES bookings (booking_id),
     CONSTRAINT uq_cases_idempotency UNIQUE (idempotency_key),
     CONSTRAINT ck_cases_sla_window CHECK (created_at < first_response_due_at AND first_response_due_at <= quote_due_at),
@@ -678,6 +783,7 @@ CREATE INDEX ix_sla_breaches_open ON sla_breaches (status, due_at);
 
 CREATE TABLE invoices (
     invoice_id     TEXT NOT NULL,
+    agency_id      TEXT NOT NULL DEFAULT 'agency_default',
     invoice_number TEXT,
     booking_id     TEXT NOT NULL,
     policy_fingerprint TEXT NOT NULL CHECK (length(policy_fingerprint) = 64),
@@ -695,6 +801,7 @@ CREATE TABLE invoices (
     void_reason    TEXT,
     created_at     TEXT NOT NULL,
     CONSTRAINT pk_invoices PRIMARY KEY (invoice_id),
+    CONSTRAINT fk_invoices_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
     CONSTRAINT fk_invoices_booking FOREIGN KEY (booking_id) REFERENCES bookings (booking_id),
     CONSTRAINT uq_invoices_number UNIQUE (invoice_number),
     CONSTRAINT ck_invoices_total CHECK (total_minor = subtotal_minor + tax_minor + service_minor),
@@ -726,6 +833,7 @@ CREATE INDEX ix_invoice_lines_invoice ON invoice_lines (invoice_id);
 
 CREATE TABLE payments (
     payment_id     TEXT NOT NULL,
+    agency_id      TEXT NOT NULL DEFAULT 'agency_default',
     invoice_id     TEXT NOT NULL,
     provider       TEXT NOT NULL CHECK (length(provider) >= 3),
     provider_intent_id TEXT NOT NULL CHECK (length(provider_intent_id) >= 6),
@@ -738,6 +846,7 @@ CREATE TABLE payments (
     settled_at     TEXT,
     provider_status TEXT,
     CONSTRAINT pk_payments PRIMARY KEY (payment_id),
+    CONSTRAINT fk_payments_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
     CONSTRAINT fk_payments_invoice FOREIGN KEY (invoice_id) REFERENCES invoices (invoice_id),
     CONSTRAINT uq_payments_intent UNIQUE (provider, provider_intent_id),
     CONSTRAINT ck_payments_settled CHECK (status <> 'SUCCEEDED' OR settled_at IS NOT NULL),
@@ -821,6 +930,7 @@ CREATE INDEX ix_recon_open ON reconciliation_cases (status, due_at);
 
 CREATE TABLE documents (
     document_id    TEXT NOT NULL,
+    agency_id      TEXT NOT NULL DEFAULT 'agency_default',
     document_key   TEXT NOT NULL CHECK (length(document_key) >= 6),
     kind           TEXT NOT NULL CHECK (kind IN ('CONFIRMATION','RECEIPT','INVOICE','CONTRACT','NOTICE','REPORT')),
     version        BIGINT NOT NULL CHECK (version >= 1),
@@ -837,6 +947,7 @@ CREATE TABLE documents (
     generated_at   TEXT NOT NULL,
     created_at     TEXT NOT NULL,
     CONSTRAINT pk_documents PRIMARY KEY (document_id),
+    CONSTRAINT fk_documents_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
     CONSTRAINT fk_documents_booking FOREIGN KEY (booking_id) REFERENCES bookings (booking_id),
     CONSTRAINT fk_documents_invoice FOREIGN KEY (invoice_id) REFERENCES invoices (invoice_id),
     CONSTRAINT fk_documents_case FOREIGN KEY (case_id) REFERENCES cases (case_id),
@@ -848,6 +959,7 @@ CREATE INDEX ix_documents_key ON documents (document_key, version);
 
 CREATE TABLE ops_tasks (
     task_id        TEXT NOT NULL,
+    agency_id      TEXT NOT NULL DEFAULT 'agency_default',
     kind           TEXT NOT NULL CHECK (kind IN ('CHECKIN_PREP','CHECKOUT_INSPECTION','CLEANING','MAINTENANCE','GUEST_FOLLOWUP','PAYMENT_CHASE','DOCUMENT_CHASE','VERIFICATION')),
     booking_id     TEXT,
     unit_id        TEXT,
@@ -863,6 +975,7 @@ CREATE TABLE ops_tasks (
     completed_at   TEXT,
     blocked_reason TEXT,
     CONSTRAINT pk_ops_tasks PRIMARY KEY (task_id),
+    CONSTRAINT fk_ops_tasks_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
     CONSTRAINT fk_ops_tasks_booking FOREIGN KEY (booking_id) REFERENCES bookings (booking_id),
     CONSTRAINT fk_ops_tasks_unit FOREIGN KEY (unit_id) REFERENCES units (unit_id),
     CONSTRAINT fk_ops_tasks_case FOREIGN KEY (case_id) REFERENCES cases (case_id),
@@ -879,6 +992,7 @@ CREATE INDEX ix_ops_tasks_open ON ops_tasks (status, due_at);
 -- bisa disimpan supaya SLA 72 jam-nya bisa ditagih dan terlihat di dashboard.
 CREATE TABLE incidents (
     incident_id    TEXT NOT NULL,
+    agency_id      TEXT NOT NULL DEFAULT 'agency_default',
     severity       TEXT NOT NULL CHECK (severity IN ('SEV1','SEV2','SEV3','SEV4')),
     title          TEXT NOT NULL CHECK (length(title) >= 8),
     detected_at    TEXT NOT NULL,
@@ -896,6 +1010,7 @@ CREATE TABLE incidents (
     postmortem_ref TEXT,
     created_at     TEXT NOT NULL,
     CONSTRAINT pk_incidents PRIMARY KEY (incident_id),
+    CONSTRAINT fk_incidents_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
     CONSTRAINT ck_incidents_regulatory CHECK (regulatory_notification_required = 0 OR severity IN ('SEV1','SEV2')),
     CONSTRAINT ck_incidents_notice_deadline CHECK (
         regulatory_notification_required = 0
@@ -1034,6 +1149,20 @@ CREATE TRIGGER trg_incident_steps_no_update
 CREATE TRIGGER trg_incident_steps_no_delete
     BEFORE DELETE ON incident_steps
     FOR EACH ROW EXECUTE FUNCTION villa_reject_mutation();
+
+INSERT INTO agencies (agency_id, name, status, created_at, updated_at)
+VALUES ('agency_default', 'Default Agency', 'ACTIVE', '2026-09-21T00:00:00+00:00', '2026-09-21T00:00:00+00:00');
+
+INSERT INTO suppliers (supplier_id, agency_id, name, status, created_at, updated_at)
+VALUES ('supplier_default', 'agency_default', 'Default Supplier', 'ACTIVE', '2026-09-21T00:00:00+00:00', '2026-09-21T00:00:00+00:00');
+
+INSERT INTO villa_supplier_relationships (
+    villa_supplier_relationship_id, agency_id, supplier_id, property_id, unit_id, status, created_at, updated_at
+)
+VALUES (
+    'route_default', 'agency_default', 'supplier_default', NULL, NULL, 'ACTIVE',
+    '2026-09-21T00:00:00+00:00', '2026-09-21T00:00:00+00:00'
+);
 
 INSERT INTO schema_meta (schema_version, applied_at, description)
 VALUES ('001_initial', '2026-09-21T00:00:00+00:00', 'Villa Agency OS initial schema: inventory, policy, rates, evidence, quotes, holds, bookings, audit, cases, intake, matching, approvals, drafts, SLA, billing, payments, reconciliation, documents, ops, incidents');

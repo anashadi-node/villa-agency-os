@@ -167,6 +167,7 @@ AUDIT_INVOICE_SETTLED = "invoice.settlement_recorded"
 
 INVOICE_COLUMNS = (
     "invoice_id",
+    "agency_id",
     "invoice_number",
     "booking_id",
     "policy_fingerprint",
@@ -651,6 +652,7 @@ class InvoiceLine:
 @dataclass(frozen=True)
 class Invoice:
     invoice_id: str
+    agency_id: str
     invoice_number: Optional[str]
     booking_id: str
     policy_fingerprint: str

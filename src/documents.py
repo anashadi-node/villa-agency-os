@@ -134,6 +134,7 @@ DOCUMENT_STATUSES: tuple[str, ...] = ("GENERATED", "SUPERSEDED", "VOID")
 
 DOCUMENT_COLUMNS: tuple[str, ...] = (
     "document_id",
+    "agency_id",
     "document_key",
     "kind",
     "version",
@@ -746,6 +747,7 @@ class Document:
     """One ``documents`` row."""
 
     document_id: str
+    agency_id: str
     document_key: str
     kind: str
     version: int
