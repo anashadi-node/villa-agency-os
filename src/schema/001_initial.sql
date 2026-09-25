@@ -1172,6 +1172,95 @@ BEGIN
     SELECT RAISE(ABORT, 'incident_steps: riwayat append-only tidak boleh dihapus (no DELETE)');
 END;
 
+-- --------------------------------------------------------------------------
+-- Identitas & akses (ADR-0005, diterima 2026-09-26 — MFA faktor: TOTP)
+--
+-- Prinsip yang membentuk bentuk tabel di bawah:
+--   * Database TIDAK menyimpan shared secret TOTP. Yang disimpan hanya RUJUKAN
+--     ke penyimpan rahasia (env/vault per identitas), sehingga bocornya tabel
+--     auth tidak dengan sendirinya menghasilkan bypass faktor kedua.
+--   * Sesi punya dua batas waktu sekaligus: idle dan absolut. Satu batas saja
+--     bisa dilanggar oleh penyerang yang cukup sabar, atau oleh sesi yang
+--     ditinggal terbuka.
+--   * Setiap peristiwa auth dicatat append-only. "Siapa masuk kapan, dengan
+--     faktor apa, dan siapa yang ditolak" adalah bukti, bukan log debug.
+-- --------------------------------------------------------------------------
+CREATE TABLE mfa_factors (
+    factor_id      TEXT    NOT NULL,
+    agency_id      TEXT    NOT NULL DEFAULT 'agency_default',
+    identity       TEXT    NOT NULL CHECK (length(identity) >= 1),
+    kind           TEXT    NOT NULL CHECK (kind IN ('TOTP')),
+    secret_ref     TEXT    NOT NULL CHECK (length(secret_ref) >= 3),
+    digits         INTEGER NOT NULL DEFAULT 6 CHECK (digits IN (6, 8)),
+    step_seconds   INTEGER NOT NULL DEFAULT 30 CHECK (step_seconds BETWEEN 15 AND 120),
+    algorithm      TEXT    NOT NULL DEFAULT 'sha1' CHECK (algorithm IN ('sha1','sha256','sha512')),
+    status         TEXT    NOT NULL CHECK (status IN ('ACTIVE','DISABLED')),
+    last_used_step INTEGER,
+    confirmed_at   TEXT,
+    created_at     TEXT    NOT NULL,
+    updated_at     TEXT    NOT NULL,
+    CONSTRAINT pk_mfa_factors PRIMARY KEY (factor_id),
+    CONSTRAINT fk_mfa_factors_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    CONSTRAINT uq_mfa_factor_identity UNIQUE (agency_id, identity, kind),
+    CONSTRAINT ck_mfa_factor_confirmed CHECK (status <> 'ACTIVE' OR confirmed_at IS NOT NULL)
+);
+CREATE INDEX ix_mfa_factors_identity ON mfa_factors (agency_id, identity, status);
+
+CREATE TABLE auth_sessions (
+    session_id       TEXT    NOT NULL,
+    agency_id        TEXT    NOT NULL DEFAULT 'agency_default',
+    identity         TEXT    NOT NULL CHECK (length(identity) >= 1),
+    role             TEXT    NOT NULL CHECK (length(role) >= 1),
+    token_sha256     TEXT    NOT NULL CHECK (length(token_sha256) = 64),
+    issued_at        TEXT    NOT NULL,
+    last_seen_at     TEXT    NOT NULL,
+    idle_expires_at  TEXT    NOT NULL,
+    expires_at       TEXT    NOT NULL,
+    mfa_satisfied_at TEXT,
+    step_up_until    TEXT,
+    revoked_at       TEXT,
+    revoked_reason   TEXT,
+    CONSTRAINT pk_auth_sessions PRIMARY KEY (session_id),
+    CONSTRAINT fk_auth_sessions_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    CONSTRAINT uq_auth_session_token UNIQUE (token_sha256),
+    CONSTRAINT ck_auth_session_window CHECK (issued_at < idle_expires_at AND issued_at < expires_at),
+    CONSTRAINT ck_auth_session_revoked CHECK (
+        revoked_at IS NULL OR (revoked_reason IS NOT NULL AND length(revoked_reason) >= 3)
+    ),
+    CONSTRAINT ck_auth_session_stepup CHECK (step_up_until IS NULL OR mfa_satisfied_at IS NOT NULL)
+);
+CREATE INDEX ix_auth_sessions_identity ON auth_sessions (agency_id, identity, expires_at);
+
+CREATE TABLE auth_events (
+    auth_event_id TEXT NOT NULL,
+    agency_id     TEXT NOT NULL DEFAULT 'agency_default',
+    identity      TEXT NOT NULL CHECK (length(identity) >= 1),
+    kind          TEXT NOT NULL CHECK (kind IN (
+                      'LOGIN','LOGOUT','SESSION_ROTATED','SESSION_REVOKED','SESSION_REFUSED',
+                      'MFA_ENROLLED','MFA_CHALLENGE','MFA_SUCCEEDED','MFA_FAILED','MFA_REPLAY_REFUSED',
+                      'STEP_UP_GRANTED','STEP_UP_REFUSED','ACCESS_DENIED')),
+    session_id    TEXT,
+    actor         TEXT NOT NULL CHECK (length(actor) >= 1),
+    detail        TEXT NOT NULL DEFAULT '{}',
+    occurred_at   TEXT NOT NULL,
+    CONSTRAINT pk_auth_events PRIMARY KEY (auth_event_id),
+    CONSTRAINT fk_auth_events_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    CONSTRAINT fk_auth_events_session FOREIGN KEY (session_id) REFERENCES auth_sessions (session_id)
+);
+CREATE INDEX ix_auth_events_identity ON auth_events (agency_id, identity, occurred_at);
+
+CREATE TRIGGER trg_auth_events_no_update
+BEFORE UPDATE ON auth_events
+BEGIN
+    SELECT RAISE(ABORT, 'auth_events: riwayat append-only tidak boleh diubah (no UPDATE)');
+END;
+
+CREATE TRIGGER trg_auth_events_no_delete
+BEFORE DELETE ON auth_events
+BEGIN
+    SELECT RAISE(ABORT, 'auth_events: riwayat append-only tidak boleh dihapus (no DELETE)');
+END;
+
 INSERT INTO agencies (agency_id, name, status, created_at, updated_at)
 VALUES ('agency_default', 'Default Agency', 'ACTIVE', '2026-09-21T00:00:00+00:00', '2026-09-21T00:00:00+00:00');
 

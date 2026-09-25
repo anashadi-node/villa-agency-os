@@ -33,6 +33,9 @@ JUSTIFIED_GLOBAL_UNIQUE = {
     # The PSP owns this namespace: the same provider cannot issue one intent id
     # to two tenants, so the constraint is about the provider, not about us.
     ("payments", "uq_payments_intent"): "provider-owned intent id namespace",
+    # A 256-bit token hash must resolve to exactly one session *platform-wide*:
+    # scoping it per agency would only weaken the lookup, not add information.
+    ("auth_sessions", "uq_auth_session_token"): "session token hash is global by design",
 }
 
 CONSTRAINT_RE = re.compile(
