@@ -1180,18 +1180,22 @@ class DocumentService:
             ) from exc
 
     def _next_version(self, document_key: str) -> int:
+        """Next version *of this agency's* document: the key is a per-tenant name."""
         row = self._conn.execute(
-            "SELECT MAX(version) AS top FROM documents WHERE document_key = ?",
-            (document_key,),
+            "SELECT MAX(version) AS top FROM documents WHERE document_key = ?"
+            " AND agency_id = ?",
+            (document_key, self.agency_id),
         ).fetchone()
         top = row["top"] if row is not None else None
         return 1 if top is None else int(top) + 1
 
     def _supersede(self, document_key: str) -> int:
+        """Retire this agency's earlier versions only: a shared key must not let one
+        tenant rewrite another tenant's document status."""
         cursor = self._conn.execute(
             "UPDATE documents SET status = 'SUPERSEDED' WHERE document_key = ?"
-            " AND status = 'GENERATED'",
-            (document_key,),
+            " AND agency_id = ? AND status = 'GENERATED'",
+            (document_key, self.agency_id),
         )
         changed = cursor.rowcount
         return int(changed) if changed and changed > 0 else 0

@@ -782,7 +782,7 @@ CREATE TABLE invoices (
     CONSTRAINT pk_invoices PRIMARY KEY (invoice_id),
     CONSTRAINT fk_invoices_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
     CONSTRAINT fk_invoices_booking FOREIGN KEY (booking_id) REFERENCES bookings (booking_id),
-    CONSTRAINT uq_invoices_number UNIQUE (invoice_number),
+    CONSTRAINT uq_invoices_number UNIQUE (agency_id, invoice_number),
     CONSTRAINT ck_invoices_total CHECK (total_minor = subtotal_minor + tax_minor + service_minor),
     CONSTRAINT ck_invoices_due CHECK (due_at > issued_at),
     CONSTRAINT ck_invoices_number CHECK (status <> 'ISSUED' OR (invoice_number IS NOT NULL AND length(invoice_number) >= 8)),
@@ -927,10 +927,10 @@ CREATE TABLE documents (
     CONSTRAINT fk_documents_booking FOREIGN KEY (booking_id) REFERENCES bookings (booking_id),
     CONSTRAINT fk_documents_invoice FOREIGN KEY (invoice_id) REFERENCES invoices (invoice_id),
     CONSTRAINT fk_documents_case FOREIGN KEY (case_id) REFERENCES cases (case_id),
-    CONSTRAINT uq_documents_version UNIQUE (document_key, version),
+    CONSTRAINT uq_documents_version UNIQUE (agency_id, document_key, version),
     CONSTRAINT ck_documents_storage CHECK (status <> 'GENERATED' OR (storage_ref IS NOT NULL AND length(storage_ref) >= 3))
 );
-CREATE INDEX ix_documents_key ON documents (document_key, version);
+CREATE INDEX ix_documents_key ON documents (agency_id, document_key, version);
 
 CREATE TABLE ops_tasks (
     task_id        TEXT NOT NULL,

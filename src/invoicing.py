@@ -1213,8 +1213,10 @@ class InvoiceService:
         )
 
     def _number_taken(self, number: str) -> bool:
+        """Taken *by this agency*: another tenant's number is not ours to reserve."""
         row = self._conn.execute(
-            "SELECT 1 FROM invoices WHERE invoice_number = ?", (number,)
+            "SELECT 1 FROM invoices WHERE invoice_number = ? AND agency_id = ?",
+            (number, self.agency_id),
         ).fetchone()
         return row is not None
 
@@ -1223,7 +1225,9 @@ class InvoiceService:
         prefix = f"INV-{parse_iso(issued_iso):%Y%m}-"
         highest = 0
         for row in self._conn.execute(
-            "SELECT invoice_number FROM invoices WHERE invoice_number LIKE ?", (prefix + "%",)
+            "SELECT invoice_number FROM invoices WHERE invoice_number LIKE ?"
+            " AND agency_id = ?",
+            (prefix + "%", self.agency_id),
         ).fetchall():
             number = row["invoice_number"] or ""
             tail = number[len(prefix) :]

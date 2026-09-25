@@ -39,6 +39,7 @@ from primitives import (  # noqa: E402
     IdFactory,
     SystemClock,
     parse_iso,
+    require_ref,
     to_iso,
 )
 from schema_loader import SCHEMA_VERSION, applied_version, connect_sqlite  # noqa: E402
@@ -116,9 +117,9 @@ def _scalar(conn: Any, sql: str, params: Iterable[Any] = ()) -> int:
     return int(value or 0)
 
 
-def _grouped(conn: Any, sql: str) -> dict[str, int]:
+def _grouped(conn: Any, sql: str, params: Iterable[Any] = ()) -> dict[str, int]:
     try:
-        rows = conn.execute(sql).fetchall()
+        rows = conn.execute(sql, tuple(params)).fetchall()
     except Exception as exc:  # noqa: BLE001
         raise ObservabilityError(
             f"metric query failed: {exc}", code="METRIC_QUERY_FAILED", sql=sql,
@@ -135,184 +136,324 @@ def _grouped(conn: Any, sql: str) -> dict[str, int]:
     return out
 
 
-def collect_metrics(conn: Any, *, clock: Any = None) -> Metrics:
-    """Read every operational counter in one pass. Read-only, no writes."""
+def _scoped(
+    sql: str, params: Iterable[Any] = (), agency_id: Optional[str] = None, *, alias: str = ""
+) -> tuple[str, tuple[Any, ...]]:
+    """Add ``agency_id = ?`` to a statement, keeping its bind order intact.
+
+    The tenant clause is *prepended* to the existing parameters because it is
+    inserted at the head of the ``WHERE`` clause. With ``agency_id=None`` the
+    statement is returned untouched, so a single-agency deployment keeps reading
+    the whole database exactly as before.
+    """
+    if agency_id is None:
+        return sql, tuple(params)
+    prefix = f"{alias}." if alias else ""
+    clause = f"{prefix}agency_id = ?"
+    if " WHERE " in sql:
+        sql = sql.replace(" WHERE ", f" WHERE {clause} AND ", 1)
+    elif " GROUP BY " in sql:
+        sql = sql.replace(" GROUP BY ", f" WHERE {clause} GROUP BY ", 1)
+    else:
+        sql = f"{sql} WHERE {clause}"
+    return sql, (agency_id,) + tuple(params)
+
+
+def _through_parent(
+    agency_id: Optional[str], plain: str, joined: str, params: Iterable[Any] = ()
+) -> tuple[str, tuple[Any, ...]]:
+    """A child table has no ``agency_id`` of its own: reach the tenant via its parent."""
+    if agency_id is None:
+        return plain, ()
+    return joined, tuple(params)
+
+
+def collect_metrics(
+    conn: Any, *, clock: Any = None, agency_id: Optional[str] = None
+) -> Metrics:
+    """Read every operational counter in one pass. Read-only, no writes.
+
+    ``agency_id`` scopes the numbers to one tenant. Child tables are reached
+    through their parent's ``agency_id`` (a join), so no counter silently counts a
+    sibling agency's rows.
+
+    Two counters stay global on purpose, and only these two:
+    ``audit_events_total`` and ``audit_chain_head_seq``. The audit chain is a single
+    platform-wide hash chain; scoping it would make its verification meaningless.
+    The same is true of ``ledger_entries_total``'s edge case: a ledger row that
+    references neither an invoice nor a payment belongs to no agency, so a scoped
+    count leaves it out (the global count still sees it).
+    """
 
     clock = clock or SystemClock()
     now = clock.now()
     now_iso = to_iso(now)
+    agency = None if agency_id is None else require_ref(agency_id, "agency_id")
+
+    def q(sql: str, params: Iterable[Any] = ()) -> tuple[str, tuple[Any, ...]]:
+        return _scoped(sql, params, agency)
+
+    approval_oldest_sql, approval_oldest_params = q(
+        "SELECT MIN(requested_at) FROM approval_requests WHERE status = 'PENDING'"
+    )
+    recon_oldest_sql, recon_oldest_params = q(
+        "SELECT MIN(detected_at) FROM reconciliation_cases WHERE status = 'OPEN'"
+    )
+    ops_oldest_sql, ops_oldest_params = q(
+        "SELECT MIN(due_at) FROM ops_tasks "
+        "WHERE status IN ('OPEN','IN_PROGRESS','BLOCKED') AND due_at <= ?",
+        (now_iso,),
+    )
 
     counters = {
+        # One hash chain for the whole platform: deliberately not scoped.
         "audit_events_total": _scalar(conn, "SELECT COUNT(*) FROM audit_events"),
-        "bookings_total": _scalar(conn, "SELECT COUNT(*) FROM bookings"),
+        "bookings_total": _scalar(conn, *q("SELECT COUNT(*) FROM bookings")),
         "bookings_occupying": _scalar(
             conn,
-            "SELECT COUNT(*) FROM bookings WHERE status IN "
-            "('CONFIRMED','BALANCE_DUE','BALANCE_OVERDUE','PRE_ARRIVAL','IN_STAY',"
-            "'CANCELLATION_REQUESTED','CANCELLATION_REVIEW','DISPUTED')",
+            *q(
+                "SELECT COUNT(*) FROM bookings WHERE status IN "
+                "('CONFIRMED','BALANCE_DUE','BALANCE_OVERDUE','PRE_ARRIVAL','IN_STAY',"
+                "'CANCELLATION_REQUESTED','CANCELLATION_REVIEW','DISPUTED')"
+            ),
         ),
         "holds_active": _scalar(
-            conn,
-            "SELECT COUNT(*) FROM holds WHERE status = 'ACTIVE'",
+            conn, *q("SELECT COUNT(*) FROM holds WHERE status = 'ACTIVE'")
         ),
         "holds_expiring_soon": _scalar(
             conn,
-            "SELECT COUNT(*) FROM holds WHERE status = 'ACTIVE' "
-            "AND expires_at <= ?",
-            (_plus_hours(now, 24),),
+            *q(
+                "SELECT COUNT(*) FROM holds WHERE status = 'ACTIVE' AND expires_at <= ?",
+                (_plus_hours(now, 24),),
+            ),
         ),
         "holds_expired_but_open": _scalar(
             conn,
-            "SELECT COUNT(*) FROM holds WHERE status = 'ACTIVE' "
-            "AND expires_at <= ?",
-            (now_iso,),
+            *q(
+                "SELECT COUNT(*) FROM holds WHERE status = 'ACTIVE' AND expires_at <= ?",
+                (now_iso,),
+            ),
         ),
-        "cases_total": _scalar(conn, "SELECT COUNT(*) FROM cases"),
+        "cases_total": _scalar(conn, *q("SELECT COUNT(*) FROM cases")),
         "cases_open": _scalar(
             conn,
-            "SELECT COUNT(*) FROM cases WHERE status IN "
-            "('NEW','TRIAGED','MATCHING','AWAITING_EVIDENCE','QUOTED',"
-            "'HOLD_PENDING','BOOKED','ESCALATED')",
+            *q(
+                "SELECT COUNT(*) FROM cases WHERE status IN "
+                "('NEW','TRIAGED','MATCHING','AWAITING_EVIDENCE','QUOTED',"
+                "'HOLD_PENDING','BOOKED','ESCALATED')"
+            ),
         ),
         "cases_first_response_overdue": _scalar(
             conn,
-            "SELECT COUNT(*) FROM cases WHERE first_responded_at IS NULL "
-            "AND first_response_due_at <= ? AND status NOT LIKE 'CLOSED_%'",
-            (now_iso,),
+            *q(
+                "SELECT COUNT(*) FROM cases WHERE first_responded_at IS NULL "
+                "AND first_response_due_at <= ? AND status NOT LIKE 'CLOSED_%'",
+                (now_iso,),
+            ),
         ),
         "cases_quote_overdue": _scalar(
             conn,
-            "SELECT COUNT(*) FROM cases WHERE quoted_at IS NULL AND quote_due_at <= ? "
-            "AND status NOT LIKE 'CLOSED_%'",
-            (now_iso,),
+            *q(
+                "SELECT COUNT(*) FROM cases WHERE quoted_at IS NULL AND quote_due_at <= ? "
+                "AND status NOT LIKE 'CLOSED_%'",
+                (now_iso,),
+            ),
         ),
         "sla_breaches_open": _scalar(
-            conn, "SELECT COUNT(*) FROM sla_breaches WHERE status = 'OPEN'",
+            conn, *q("SELECT COUNT(*) FROM sla_breaches WHERE status = 'OPEN'")
         ),
         "approvals_pending": _scalar(
-            conn, "SELECT COUNT(*) FROM approval_requests WHERE status = 'PENDING'",
+            conn, *q("SELECT COUNT(*) FROM approval_requests WHERE status = 'PENDING'")
         ),
         "approvals_expired_but_pending": _scalar(
             conn,
-            "SELECT COUNT(*) FROM approval_requests WHERE status = 'PENDING' "
-            "AND expires_at <= ?",
-            (now_iso,),
+            *q(
+                "SELECT COUNT(*) FROM approval_requests WHERE status = 'PENDING' "
+                "AND expires_at <= ?",
+                (now_iso,),
+            ),
         ),
         "invoices_unpaid": _scalar(
             conn,
-            "SELECT COUNT(*) FROM invoices WHERE status = 'ISSUED' "
-            "AND payment_status IN ('UNPAID','PARTIAL')",
+            *q(
+                "SELECT COUNT(*) FROM invoices WHERE status = 'ISSUED' "
+                "AND payment_status IN ('UNPAID','PARTIAL')"
+            ),
         ),
         "invoices_overdue": _scalar(
             conn,
-            "SELECT COUNT(*) FROM invoices WHERE status = 'ISSUED' "
-            "AND payment_status IN ('UNPAID','PARTIAL') AND due_at <= ?",
-            (now_iso,),
+            *q(
+                "SELECT COUNT(*) FROM invoices WHERE status = 'ISSUED' "
+                "AND payment_status IN ('UNPAID','PARTIAL') AND due_at <= ?",
+                (now_iso,),
+            ),
         ),
+        # payment_events is a child of payments: the tenant lives on the parent.
         "payments_unmatched": _scalar(
             conn,
-            "SELECT COUNT(*) FROM payment_events WHERE applied = 0",
+            *_through_parent(
+                agency,
+                "SELECT COUNT(*) FROM payment_events WHERE applied = 0",
+                "SELECT COUNT(*) FROM payment_events e "
+                "JOIN payments p ON p.payment_id = e.payment_id "
+                "WHERE p.agency_id = ? AND e.applied = 0",
+                (agency,),
+            ),
         ),
         "reconciliation_open": _scalar(
-            conn, "SELECT COUNT(*) FROM reconciliation_cases WHERE status = 'OPEN'",
+            conn, *q("SELECT COUNT(*) FROM reconciliation_cases WHERE status = 'OPEN'")
         ),
         "reconciliation_overdue": _scalar(
             conn,
-            "SELECT COUNT(*) FROM reconciliation_cases WHERE status = 'OPEN' "
-            "AND due_at <= ?",
-            (now_iso,),
+            *q(
+                "SELECT COUNT(*) FROM reconciliation_cases WHERE status = 'OPEN' "
+                "AND due_at <= ?",
+                (now_iso,),
+            ),
         ),
         "ops_tasks_open": _scalar(
             conn,
-            "SELECT COUNT(*) FROM ops_tasks WHERE status IN ('OPEN','IN_PROGRESS','BLOCKED')",
+            *q(
+                "SELECT COUNT(*) FROM ops_tasks "
+                "WHERE status IN ('OPEN','IN_PROGRESS','BLOCKED')"
+            ),
         ),
         "ops_tasks_overdue": _scalar(
             conn,
-            "SELECT COUNT(*) FROM ops_tasks WHERE status IN ('OPEN','IN_PROGRESS','BLOCKED') "
-            "AND due_at <= ?",
-            (now_iso,),
+            *q(
+                "SELECT COUNT(*) FROM ops_tasks "
+                "WHERE status IN ('OPEN','IN_PROGRESS','BLOCKED') AND due_at <= ?",
+                (now_iso,),
+            ),
         ),
         "incidents_open": _scalar(
-            conn, "SELECT COUNT(*) FROM incidents WHERE status IN ('OPEN','MITIGATING')",
+            conn,
+            *q(
+                "SELECT COUNT(*) FROM incidents WHERE status IN ('OPEN','MITIGATING')"
+            ),
         ),
         "incidents_sev1_open": _scalar(
             conn,
-            "SELECT COUNT(*) FROM incidents WHERE severity = 'SEV1' "
-            "AND status IN ('OPEN','MITIGATING')",
+            *q(
+                "SELECT COUNT(*) FROM incidents WHERE severity = 'SEV1' "
+                "AND status IN ('OPEN','MITIGATING')"
+            ),
         ),
         "incidents_pending_regulator_notice": _scalar(
             conn,
-            "SELECT COUNT(*) FROM incidents WHERE regulatory_notification_required = 1 "
-            "AND notified_at IS NULL",
+            *q(
+                "SELECT COUNT(*) FROM incidents WHERE regulatory_notification_required = 1 "
+                "AND notified_at IS NULL"
+            ),
         ),
         "incidents_notice_overdue": _scalar(
             conn,
-            "SELECT COUNT(*) FROM incidents WHERE regulatory_notification_required = 1 "
-            "AND notified_at IS NULL AND notice_due_at <= ?",
-            (now_iso,),
+            *q(
+                "SELECT COUNT(*) FROM incidents WHERE regulatory_notification_required = 1 "
+                "AND notified_at IS NULL AND notice_due_at <= ?",
+                (now_iso,),
+            ),
         ),
         "documents_generated": _scalar(
-            conn, "SELECT COUNT(*) FROM documents WHERE status = 'GENERATED'",
+            conn, *q("SELECT COUNT(*) FROM documents WHERE status = 'GENERATED'")
         ),
+        # message_drafts and intake_fields are children of cases.
         "drafts_awaiting_approval": _scalar(
-            conn, "SELECT COUNT(*) FROM message_drafts WHERE status = 'PENDING_APPROVAL'",
+            conn,
+            *_through_parent(
+                agency,
+                "SELECT COUNT(*) FROM message_drafts WHERE status = 'PENDING_APPROVAL'",
+                "SELECT COUNT(*) FROM message_drafts d "
+                "JOIN cases c ON c.case_id = d.case_id "
+                "WHERE c.agency_id = ? AND d.status = 'PENDING_APPROVAL'",
+                (agency,),
+            ),
         ),
         "drafts_ungrounded": _scalar(
-            conn, "SELECT COUNT(*) FROM message_drafts WHERE grounding <> 'GROUNDED'",
+            conn,
+            *_through_parent(
+                agency,
+                "SELECT COUNT(*) FROM message_drafts WHERE grounding <> 'GROUNDED'",
+                "SELECT COUNT(*) FROM message_drafts d "
+                "JOIN cases c ON c.case_id = d.case_id "
+                "WHERE c.agency_id = ? AND d.grounding <> 'GROUNDED'",
+                (agency,),
+            ),
         ),
         "intake_fields_proposed": _scalar(
-            conn, "SELECT COUNT(*) FROM intake_fields WHERE status = 'PROPOSED'",
+            conn,
+            *_through_parent(
+                agency,
+                "SELECT COUNT(*) FROM intake_fields WHERE status = 'PROPOSED'",
+                "SELECT COUNT(*) FROM intake_fields f "
+                "JOIN cases c ON c.case_id = f.case_id "
+                "WHERE c.agency_id = ? AND f.status = 'PROPOSED'",
+                (agency,),
+            ),
         ),
-        "ledger_entries_total": _scalar(conn, "SELECT COUNT(*) FROM ledger_entries"),
+        # The ledger reaches its tenant through whichever parent it names.
+        "ledger_entries_total": _scalar(
+            conn,
+            *_through_parent(
+                agency,
+                "SELECT COUNT(*) FROM ledger_entries",
+                "SELECT COUNT(*) FROM ledger_entries l "
+                "WHERE l.invoice_id IN (SELECT invoice_id FROM invoices WHERE agency_id = ?) "
+                "OR l.payment_id IN (SELECT payment_id FROM payments WHERE agency_id = ?)",
+                (agency, agency),
+            ),
+        ),
     }
 
     labels = {
         "cases_by_status": _grouped(
-            conn, "SELECT status AS key, COUNT(*) AS value FROM cases GROUP BY status",
+            conn, *q("SELECT status AS key, COUNT(*) AS value FROM cases GROUP BY status")
         ),
         "bookings_by_status": _grouped(
-            conn, "SELECT status AS key, COUNT(*) AS value FROM bookings GROUP BY status",
+            conn, *q("SELECT status AS key, COUNT(*) AS value FROM bookings GROUP BY status")
         ),
         "invoices_by_payment_status": _grouped(
             conn,
-            "SELECT payment_status AS key, COUNT(*) AS value FROM invoices GROUP BY payment_status",
+            *q(
+                "SELECT payment_status AS key, COUNT(*) AS value FROM invoices "
+                "GROUP BY payment_status"
+            ),
         ),
         "payments_by_status": _grouped(
-            conn, "SELECT status AS key, COUNT(*) AS value FROM payments GROUP BY status",
+            conn, *q("SELECT status AS key, COUNT(*) AS value FROM payments GROUP BY status")
         ),
         "ops_tasks_by_status": _grouped(
-            conn, "SELECT status AS key, COUNT(*) AS value FROM ops_tasks GROUP BY status",
+            conn, *q("SELECT status AS key, COUNT(*) AS value FROM ops_tasks GROUP BY status")
         ),
         "incidents_by_severity": _grouped(
             conn,
-            "SELECT severity AS key, COUNT(*) AS value FROM incidents "
-            "WHERE status IN ('OPEN','MITIGATING') GROUP BY severity",
+            *q(
+                "SELECT severity AS key, COUNT(*) AS value FROM incidents "
+                "WHERE status IN ('OPEN','MITIGATING') GROUP BY severity"
+            ),
         ),
         "reconciliation_by_kind": _grouped(
             conn,
-            "SELECT kind AS key, COUNT(*) AS value FROM reconciliation_cases "
-            "WHERE status = 'OPEN' GROUP BY kind",
+            *q(
+                "SELECT kind AS key, COUNT(*) AS value FROM reconciliation_cases "
+                "WHERE status = 'OPEN' GROUP BY kind"
+            ),
         ),
     }
 
     gauges = {
-        "audit_chain_head_seq": float(_scalar(conn, "SELECT COALESCE(MAX(seq), 0) FROM audit_events")),
+        # Deliberately global: see the function docstring.
+        "audit_chain_head_seq": float(
+            _scalar(conn, "SELECT COALESCE(MAX(seq), 0) FROM audit_events")
+        ),
         "oldest_open_approval_age_hours": _age_hours(
-            conn,
-            "SELECT MIN(requested_at) FROM approval_requests WHERE status = 'PENDING'",
-            now,
+            conn, approval_oldest_sql, now, approval_oldest_params
         ),
         "oldest_open_reconciliation_age_hours": _age_hours(
-            conn,
-            "SELECT MIN(detected_at) FROM reconciliation_cases WHERE status = 'OPEN'",
-            now,
+            conn, recon_oldest_sql, now, recon_oldest_params
         ),
         "oldest_overdue_ops_task_age_hours": _age_hours(
-            conn,
-            "SELECT MIN(due_at) FROM ops_tasks "
-            "WHERE status IN ('OPEN','IN_PROGRESS','BLOCKED') AND due_at <= ?",
-            now,
-            (now_iso,),
+            conn, ops_oldest_sql, now, ops_oldest_params
         ),
     }
 
@@ -557,6 +698,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--anchor-dir", default=os.environ.get("VILLA_ANCHOR_DIR"))
     parser.add_argument("--format", choices=("text", "json", "prometheus"), default="text")
     parser.add_argument(
+        "--agency",
+        default=os.environ.get("VILLA_AGENCY_ID"),
+        help=(
+            "scope every counter to one agency (defaults to VILLA_AGENCY_ID); "
+            "without it the numbers are the whole database, all agencies together"
+        ),
+    )
+    parser.add_argument(
         "--now", default=None,
         help="ISO timestamp to evaluate the snapshot at (defaults to the real clock)",
     )
@@ -570,7 +719,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     clock = FrozenClock.at(args.now) if args.now else SystemClock()
     conn = connect_sqlite(str(db_path))
     try:
-        metrics = collect_metrics(conn, clock=clock)
+        metrics = collect_metrics(conn, clock=clock, agency_id=args.agency)
         checks = health_checks(conn, clock=clock, anchor_dir=args.anchor_dir)
     finally:
         conn.close()
