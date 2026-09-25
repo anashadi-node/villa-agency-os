@@ -202,6 +202,7 @@ class ReservationKernel:
         ids: Optional[IdFactory] = None,
         actor: str = "system:kernel",
         actor_role: str = DEFAULT_ROLE,
+        agency_id: str = "agency_default",
         transition_gate: Optional[Callable[[str, str, str], bool]] = None,
     ) -> None:
         self.conn = conn
@@ -211,8 +212,10 @@ class ReservationKernel:
         self.ids = ids or IdFactory()
         self.actor = actor
         self.actor_role = actor_role
+        self.agency_id = require_ref(agency_id, "agency_id")
         self._transition_gate = transition_gate or _default_transition_gate
         self._in_tx = False
+        self._ensure_agency_scope()
 
     # -- construction ------------------------------------------------------- #
     @classmethod
@@ -224,6 +227,7 @@ class ReservationKernel:
         ids: Optional[IdFactory] = None,
         actor: str = "system:kernel",
         actor_role: str = DEFAULT_ROLE,
+        agency_id: str = "agency_default",
         transition_gate: Optional[Callable[[str, str, str], bool]] = None,
     ) -> "ReservationKernel":
         """Open a SQLite-backed kernel with the schema applied.
@@ -241,6 +245,7 @@ class ReservationKernel:
             ids=ids,
             actor=actor,
             actor_role=actor_role,
+            agency_id=agency_id,
             transition_gate=transition_gate,
         )
 
@@ -257,6 +262,19 @@ class ReservationKernel:
     def schema_version(self) -> Optional[str]:
         """The applied schema version (``None`` when the database is uninitialised)."""
         return applied_version(self.conn)
+
+    def _ensure_agency_scope(self) -> None:
+        """Make the kernel agency explicit before any scoped write/read."""
+        now = self._now()
+        self.conn.execute(
+            """
+            INSERT INTO agencies (agency_id, name, status, created_at, updated_at)
+            VALUES (?, ?, 'ACTIVE', ?, ?)
+            ON CONFLICT(agency_id) DO UPDATE SET
+                updated_at = excluded.updated_at
+            """,
+            (self.agency_id, self.agency_id, now, now),
+        )
 
     # -- transactions ------------------------------------------------------- #
     @contextmanager
@@ -299,13 +317,22 @@ class ReservationKernel:
         property_id = require_ref(property_id, "property_id")
         now = self._now()
         with self.transaction() as conn:
+            existing = conn.execute(
+                "SELECT agency_id FROM properties WHERE property_id = ?", (property_id,)
+            ).fetchone()
+            if existing is not None and existing["agency_id"] != self.agency_id:
+                raise DomainError(
+                    f"unknown property: {property_id}",
+                    code="PROPERTY_NOT_FOUND",
+                    property_id=property_id,
+                )
             conn.execute(
                 """
                 INSERT INTO properties (
-                    property_id, name, property_type, region, province, timezone,
+                    property_id, agency_id, name, property_type, region, province, timezone,
                     status, contract_pack_status, contract_pack_evaluated_at,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(property_id) DO UPDATE SET
                     name = excluded.name,
                     property_type = excluded.property_type,
@@ -319,6 +346,7 @@ class ReservationKernel:
                 """,
                 (
                     property_id,
+                    self.agency_id,
                     require_text(name, "name", max_len=120),
                     property_type,
                     region,
@@ -356,12 +384,27 @@ class ReservationKernel:
             )
         now = self._now()
         with self.transaction() as conn:
+            prop = conn.execute(
+                "SELECT property_id FROM properties WHERE property_id = ? AND agency_id = ?",
+                (property_id, self.agency_id),
+            ).fetchone()
+            if prop is None:
+                raise DomainError(
+                    f"unknown property: {property_id}",
+                    code="PROPERTY_NOT_FOUND",
+                    property_id=property_id,
+                )
+            existing = conn.execute(
+                "SELECT agency_id FROM units WHERE unit_id = ?", (unit_id,)
+            ).fetchone()
+            if existing is not None and existing["agency_id"] != self.agency_id:
+                raise DomainError(f"unknown unit: {unit_id}", code="UNIT_NOT_FOUND", unit_id=unit_id)
             conn.execute(
                 """
                 INSERT INTO units (
-                    unit_id, property_id, name, unit_type, bedrooms, bathrooms,
+                    unit_id, agency_id, property_id, name, unit_type, bedrooms, bathrooms,
                     base_capacity, max_guests, status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(unit_id) DO UPDATE SET
                     property_id = excluded.property_id,
                     name = excluded.name,
@@ -375,6 +418,7 @@ class ReservationKernel:
                 """,
                 (
                     unit_id,
+                    self.agency_id,
                     property_id,
                     require_text(name, "name", max_len=120),
                     unit_type,
@@ -391,22 +435,26 @@ class ReservationKernel:
 
     def insert_policy_version(self, policy: Mapping[str, Any]) -> str:
         """Store a :class:`policy_engine.PolicyVersion` row (``as_row()`` output)."""
+        row = dict(policy)
+        row.setdefault("agency_id", self.agency_id)
         with self.transaction() as conn:
-            columns = sorted(policy)
+            columns = sorted(row)
             placeholders = ", ".join("?" for _ in columns)
             conn.execute(
                 f"INSERT INTO policy_versions ({', '.join(columns)}) VALUES ({placeholders})",
-                tuple(policy[column] for column in columns),
+                tuple(row[column] for column in columns),
             )
-        return str(policy["policy_version_id"])
+        return str(row["policy_version_id"])
 
     def insert_rate_card(self, card: Mapping[str, Any], seasons: Sequence[Mapping[str, Any]] = ()) -> str:
+        row = dict(card)
+        row.setdefault("agency_id", self.agency_id)
         with self.transaction() as conn:
-            columns = sorted(card)
+            columns = sorted(row)
             placeholders = ", ".join("?" for _ in columns)
             conn.execute(
                 f"INSERT INTO rate_cards ({', '.join(columns)}) VALUES ({placeholders})",
-                tuple(card[column] for column in columns),
+                tuple(row[column] for column in columns),
             )
             for season in seasons:
                 season_columns = sorted(season)
@@ -420,6 +468,7 @@ class ReservationKernel:
     def persist_quote(self, quote: Any) -> str:
         """Persist a :class:`quote_calculator.Quote` (``as_row()`` output)."""
         row = quote.as_row()
+        row.setdefault("agency_id", self.agency_id)
         with self.transaction() as conn:
             columns = sorted(row)
             placeholders = ", ".join("?" for _ in columns)
@@ -501,13 +550,14 @@ class ReservationKernel:
             conn.execute(
                 """
                 INSERT INTO availability_evidence (
-                    evidence_id, unit_id, evidence_level, source_type, source_ref,
+                    evidence_id, agency_id, unit_id, evidence_level, source_type, source_ref,
                     captured_at, valid_until, result, occupancy_ranges,
                     can_quote, can_hold, can_confirm, notes, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     evidence_id,
+                    self.agency_id,
                     unit_id,
                     level,
                     source_type,
@@ -527,7 +577,8 @@ class ReservationKernel:
 
     def get_evidence(self, evidence_id: str) -> sqlite3.Row:
         row = self.conn.execute(
-            "SELECT * FROM availability_evidence WHERE evidence_id = ?", (evidence_id,)
+            "SELECT * FROM availability_evidence WHERE evidence_id = ? AND agency_id = ?",
+            (evidence_id, self.agency_id),
         ).fetchone()
         if row is None:
             raise DomainError(
@@ -570,7 +621,7 @@ class ReservationKernel:
             replay = self._idempotent_lookup(conn, "request_hold", idempotency_key, request_hash)
             if replay is not None:
                 row = conn.execute(
-                    "SELECT * FROM holds WHERE hold_id = ?", (replay,)
+                    "SELECT * FROM holds WHERE hold_id = ? AND agency_id = ?", (replay, self.agency_id)
                 ).fetchone()
                 if row is None:  # pragma: no cover - defensive
                     raise DomainError(
@@ -590,13 +641,16 @@ class ReservationKernel:
                     replayed=True,
                 )
 
-            unit = conn.execute("SELECT * FROM units WHERE unit_id = ?", (unit_id,)).fetchone()
+            unit = conn.execute(
+                "SELECT * FROM units WHERE unit_id = ? AND agency_id = ?",
+                (unit_id, self.agency_id),
+            ).fetchone()
             if unit is None:
                 raise DomainError(f"unknown unit: {unit_id}", code="UNIT_NOT_FOUND", unit_id=unit_id)
             property_id = unit["property_id"]
             policy = conn.execute(
-                "SELECT * FROM policy_versions WHERE policy_version_id = ?",
-                (policy_version_id,),
+                "SELECT * FROM policy_versions WHERE policy_version_id = ? AND agency_id = ?",
+                (policy_version_id, self.agency_id),
             ).fetchone()
             if policy is None:
                 raise DomainError(
@@ -625,7 +679,8 @@ class ReservationKernel:
                     notes="auto-recorded by request_hold",
                 )
             evidence = conn.execute(
-                "SELECT * FROM availability_evidence WHERE evidence_id = ?", (evidence_id,)
+                "SELECT * FROM availability_evidence WHERE evidence_id = ? AND agency_id = ?",
+                (evidence_id, self.agency_id),
             ).fetchone()
             if evidence is None:
                 raise DomainError(
@@ -665,7 +720,8 @@ class ReservationKernel:
 
             if quote_ref is not None:
                 quote = conn.execute(
-                    "SELECT * FROM quotes WHERE quote_id = ?", (quote_ref,)
+                    "SELECT * FROM quotes WHERE quote_id = ? AND agency_id = ?",
+                    (quote_ref, self.agency_id),
                 ).fetchone()
                 if quote is None:
                     raise DomainError(
@@ -694,13 +750,13 @@ class ReservationKernel:
             conn.execute(
                 """
                 INSERT INTO holds (
-                    hold_id, unit_id, property_id, check_in, check_out, nights, status,
+                    hold_id, agency_id, unit_id, property_id, check_in, check_out, nights, status,
                     guest_ref, quote_ref, policy_version_id, evidence_id, idempotency_key,
                     created_at, expires_at, closed_at, close_reason, extended_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0)
                 """,
                 (
-                    hold_id, unit_id, property_id, check_in, check_out, nights, HOLD_ACTIVE,
+                    hold_id, self.agency_id, unit_id, property_id, check_in, check_out, nights, HOLD_ACTIVE,
                     guest_ref, quote_ref, policy_version_id, evidence_id, idempotency_key,
                     now, expires_at,
                 ),
@@ -859,7 +915,10 @@ class ReservationKernel:
         with self.transaction() as conn:
             replay = self._idempotent_lookup(conn, "confirm_from_hold", idempotency_key, request_hash)
             if replay is not None:
-                row = conn.execute("SELECT * FROM bookings WHERE booking_id = ?", (replay,)).fetchone()
+                row = conn.execute(
+                    "SELECT * FROM bookings WHERE booking_id = ? AND agency_id = ?",
+                    (replay, self.agency_id),
+                ).fetchone()
                 if row is None:  # pragma: no cover - defensive
                     raise DomainError(
                         "idempotency ledger points at a missing booking",
@@ -871,8 +930,8 @@ class ReservationKernel:
             hold = self._require_hold(conn, hold_id)
             if hold["status"] == HOLD_CONVERTED:
                 existing = conn.execute(
-                    "SELECT * FROM bookings WHERE hold_ref = ? ORDER BY created_at LIMIT 1",
-                    (hold_id,),
+                    "SELECT * FROM bookings WHERE hold_ref = ? AND agency_id = ? ORDER BY created_at LIMIT 1",
+                    (hold_id, self.agency_id),
                 ).fetchone()
                 if existing is not None:
                     return self._booking_outcome(conn, existing, replayed=True)
@@ -891,7 +950,10 @@ class ReservationKernel:
                     expires_at=hold["expires_at"],
                 )
 
-            quote = conn.execute("SELECT * FROM quotes WHERE quote_id = ?", (quote_id,)).fetchone()
+            quote = conn.execute(
+                "SELECT * FROM quotes WHERE quote_id = ? AND agency_id = ?",
+                (quote_id, self.agency_id),
+            ).fetchone()
             if quote is None:
                 raise DomainError(f"unknown quote: {quote_id}", code="QUOTE_NOT_FOUND", quote_id=quote_id)
             if quote["unit_id"] != hold["unit_id"]:
@@ -917,7 +979,10 @@ class ReservationKernel:
                     expires_at=quote["expires_at"],
                 )
 
-            unit = conn.execute("SELECT * FROM units WHERE unit_id = ?", (hold["unit_id"],)).fetchone()
+            unit = conn.execute(
+                "SELECT * FROM units WHERE unit_id = ? AND agency_id = ?",
+                (hold["unit_id"], self.agency_id),
+            ).fetchone()
             if unit is None:  # pragma: no cover - FK guarantees this
                 raise DomainError("hold references an unknown unit", code="UNIT_NOT_FOUND")
             guests = adults + children
@@ -953,15 +1018,16 @@ class ReservationKernel:
             conn.execute(
                 """
                 INSERT INTO bookings (
-                    booking_id, property_id, unit_id, check_in, check_out, nights, status,
+                    booking_id, agency_id, property_id, unit_id, check_in, check_out, nights, status,
                     guest_ref, adults, children, infants, currency, policy_version_id,
                     policy_fingerprint, quote_ref, hold_ref, total_minor, amount_paid_minor,
                     security_deposit_minor, payment_status, idempotency_key, version_lock,
                     created_at, updated_at, confirmed_at, cancelled_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, NULL)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, NULL)
                 """,
                 (
                     booking_id,
+                    self.agency_id,
                     hold["property_id"],
                     hold["unit_id"],
                     hold["check_in"],
@@ -1026,7 +1092,10 @@ class ReservationKernel:
                 evidence_ref=hold["evidence_id"],
                 actor=actor,
             )
-            row = conn.execute("SELECT * FROM bookings WHERE booking_id = ?", (booking_id,)).fetchone()
+            row = conn.execute(
+                "SELECT * FROM bookings WHERE booking_id = ? AND agency_id = ?",
+                (booking_id, self.agency_id),
+            ).fetchone()
             return self._booking_outcome(conn, row, replayed=False)
 
     def cancel_booking(
@@ -1111,15 +1180,15 @@ class ReservationKernel:
             """
             SELECT 'hold' AS kind, hold_id AS id, status, check_in, check_out
             FROM holds
-            WHERE unit_id = ? AND status = ? AND check_in < ? AND ? < check_out
+            WHERE agency_id = ? AND unit_id = ? AND status = ? AND check_in < ? AND ? < check_out
             UNION ALL
             SELECT 'booking' AS kind, booking_id AS id, status, check_in, check_out
             FROM bookings
-            WHERE unit_id = ? AND status IN ({})
+            WHERE agency_id = ? AND unit_id = ? AND status IN ({})
               AND check_in < ? AND ? < check_out
             ORDER BY check_in, id
             """.format(", ".join("?" for _ in OCCUPYING_BOOKING_STATES)),
-            (unit_id, HOLD_ACTIVE, end, start, unit_id, *OCCUPYING_BOOKING_STATES, end, start),
+            (self.agency_id, unit_id, HOLD_ACTIVE, end, start, self.agency_id, unit_id, *OCCUPYING_BOOKING_STATES, end, start),
         ).fetchall()
         return tuple(dict(row) for row in rows)
 
@@ -1157,13 +1226,19 @@ class ReservationKernel:
         return to_iso(self.clock.now())
 
     def _require_hold(self, conn: sqlite3.Connection, hold_id: str) -> sqlite3.Row:
-        row = conn.execute("SELECT * FROM holds WHERE hold_id = ?", (hold_id,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM holds WHERE hold_id = ? AND agency_id = ?",
+            (hold_id, self.agency_id),
+        ).fetchone()
         if row is None:
             raise DomainError(f"unknown hold: {hold_id}", code="HOLD_NOT_FOUND", hold_id=hold_id)
         return row
 
     def _require_booking(self, conn: sqlite3.Connection, booking_id: str) -> sqlite3.Row:
-        row = conn.execute("SELECT * FROM bookings WHERE booking_id = ?", (booking_id,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM bookings WHERE booking_id = ? AND agency_id = ?",
+            (booking_id, self.agency_id),
+        ).fetchone()
         if row is None:
             raise DomainError(
                 f"unknown booking: {booking_id}", code="BOOKING_NOT_FOUND", booking_id=booking_id
@@ -1188,13 +1263,14 @@ class ReservationKernel:
         conn.execute(
             """
             INSERT INTO availability_evidence (
-                evidence_id, unit_id, evidence_level, source_type, source_ref,
+                evidence_id, agency_id, unit_id, evidence_level, source_type, source_ref,
                 captured_at, valid_until, result, occupancy_ranges,
                 can_quote, can_hold, can_confirm, notes, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?)
             """,
             (
                 evidence_id,
+                self.agency_id,
                 kwargs["unit_id"],
                 kwargs.get("evidence_level", "B"),
                 source_type,
@@ -1231,10 +1307,10 @@ class ReservationKernel:
         not count *that same hold* as a conflict — it is being retired in the same
         transaction.
         """
-        params: list[Any] = [unit_id, HOLD_ACTIVE, check_out, check_in]
+        params: list[Any] = [self.agency_id, unit_id, HOLD_ACTIVE, check_out, check_in]
         sql = """
             SELECT hold_id, check_in, check_out FROM holds
-            WHERE unit_id = ? AND status = ? AND check_in < ? AND ? < check_out
+            WHERE agency_id = ? AND unit_id = ? AND status = ? AND check_in < ? AND ? < check_out
         """
         if exclude_hold_id is not None:
             sql += " AND hold_id <> ?"
@@ -1250,10 +1326,10 @@ class ReservationKernel:
                 requested_window=(check_in, check_out),
             )
         placeholders = ", ".join("?" for _ in OCCUPYING_BOOKING_STATES)
-        params: list[Any] = [unit_id, *OCCUPYING_BOOKING_STATES, check_out, check_in]
+        params: list[Any] = [self.agency_id, unit_id, *OCCUPYING_BOOKING_STATES, check_out, check_in]
         sql = f"""
             SELECT booking_id, check_in, check_out FROM bookings
-            WHERE unit_id = ? AND status IN ({placeholders}) AND check_in < ? AND ? < check_out
+            WHERE agency_id = ? AND unit_id = ? AND status IN ({placeholders}) AND check_in < ? AND ? < check_out
         """
         if exclude_booking_id is not None:
             sql += " AND booking_id <> ?"
