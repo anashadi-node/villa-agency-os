@@ -379,6 +379,7 @@ PAYLOAD_HASH_DOMAIN = "payment_event:v1"
 
 RECON_COLUMNS: tuple[str, ...] = (
     "recon_id",
+    "agency_id",
     "kind",
     "payment_event_id",
     "payment_id",
@@ -923,6 +924,7 @@ class ReconciliationCase:
     """One exception row (``reconciliation_cases``) with its deadline."""
 
     recon_id: str
+    agency_id: str
     kind: str
     payment_event_id: Optional[str]
     payment_id: Optional[str]
@@ -2158,6 +2160,7 @@ class PaymentService:
             f" VALUES ({', '.join('?' * len(RECON_COLUMNS))})",
             (
                 recon_id,
+                self.agency_id,
                 kind,
                 event.event_id,
                 payment.payment_id if payment is not None else None,
@@ -2216,8 +2219,8 @@ class PaymentService:
         subject_id = payment.payment_id if payment is not None else event.event_id
         existing = self._conn.execute(
             "SELECT breach_id FROM sla_breaches WHERE subject_type = 'payment'"
-            " AND subject_id = ? AND kind = ?",
-            (subject_id, UNMATCHED_PAYMENT_BREACH),
+            " AND subject_id = ? AND kind = ? AND agency_id = ?",
+            (subject_id, UNMATCHED_PAYMENT_BREACH, self.agency_id),
         ).fetchone()
         if existing is not None:
             return str(existing["breach_id"])
@@ -2228,12 +2231,13 @@ class PaymentService:
         )
         breach_id = self._ids.new("breach")
         self._conn.execute(
-            "INSERT INTO sla_breaches (breach_id, subject_type, subject_id, case_id, kind,"
-            " due_at, detected_at, breach_minutes, owner_actor, status, resolution_note,"
-            " resolved_at, created_at) VALUES (?, 'payment', ?, NULL, ?, ?, ?, ?, ?, 'OPEN',"
-            " NULL, NULL, ?)",
+            "INSERT INTO sla_breaches (breach_id, agency_id, subject_type, subject_id,"
+            " case_id, kind, due_at, detected_at, breach_minutes, owner_actor, status,"
+            " resolution_note, resolved_at, created_at)"
+            " VALUES (?, ?, 'payment', ?, NULL, ?, ?, ?, ?, ?, 'OPEN', NULL, NULL, ?)",
             (
                 breach_id,
+                self.agency_id,
                 subject_id,
                 UNMATCHED_PAYMENT_BREACH,
                 due_at,
@@ -2248,8 +2252,9 @@ class PaymentService:
     def _close_breaches(self, subject_id: str, *, note: str, at: str) -> None:
         self._conn.execute(
             "UPDATE sla_breaches SET status = 'RESOLVED', resolution_note = ?, resolved_at = ?"
-            " WHERE subject_type = 'payment' AND subject_id = ? AND status = 'OPEN'",
-            (note, at, subject_id),
+            " WHERE subject_type = 'payment' AND subject_id = ? AND status = 'OPEN'"
+            " AND agency_id = ?",
+            (note, at, subject_id, self.agency_id),
         )
 
     def resolve_reconciliation(
@@ -2289,7 +2294,8 @@ class PaymentService:
 
         with _write_transaction(self._conn):
             row = self._conn.execute(
-                "SELECT * FROM reconciliation_cases WHERE recon_id = ?", (recon_id,)
+                "SELECT * FROM reconciliation_cases WHERE recon_id = ? AND agency_id = ?",
+                (recon_id, self.agency_id),
             ).fetchone()
             if row is None:
                 raise ReconciliationNotFound(
@@ -2309,8 +2315,8 @@ class PaymentService:
             self._conn.execute(
                 "UPDATE reconciliation_cases SET status = ?, resolution_note = ?,"
                 " resolved_at = ?, owner_actor = ?,"
-                " payment_id = COALESCE(payment_id, ?) WHERE recon_id = ?",
-                (status, note, at_iso, actor, posted_payment_id, recon_id),
+                " payment_id = COALESCE(payment_id, ?) WHERE recon_id = ? AND agency_id = ?",
+                (status, note, at_iso, actor, posted_payment_id, recon_id, self.agency_id),
             )
             subjects = {
                 subject
@@ -2704,7 +2710,9 @@ class PaymentService:
         to work today.
         """
         rows = self._conn.execute(
-            "SELECT * FROM reconciliation_cases WHERE status = 'OPEN' ORDER BY due_at, recon_id"
+            "SELECT * FROM reconciliation_cases WHERE status = 'OPEN' AND agency_id = ?"
+            " ORDER BY due_at, recon_id",
+            (self.agency_id,),
         ).fetchall()
         cases = tuple(ReconciliationCase.from_row(row) for row in rows)
         if now is None:
@@ -2716,7 +2724,8 @@ class PaymentService:
         """Read one reconciliation case by id."""
         recon_id = require_ref(recon_id, "recon_id", max_len=64)
         row = self._conn.execute(
-            "SELECT * FROM reconciliation_cases WHERE recon_id = ?", (recon_id,)
+            "SELECT * FROM reconciliation_cases WHERE recon_id = ? AND agency_id = ?",
+            (recon_id, self.agency_id),
         ).fetchone()
         if row is None:
             raise ReconciliationNotFound(
@@ -2728,14 +2737,19 @@ class PaymentService:
         """SLA breach rows raised for unmatched money, oldest first."""
         if subject_id is None:
             rows = self._conn.execute(
-                "SELECT * FROM sla_breaches WHERE kind = ? ORDER BY detected_at, breach_id",
-                (UNMATCHED_PAYMENT_BREACH,),
+                "SELECT * FROM sla_breaches WHERE kind = ? AND agency_id = ?"
+                " ORDER BY detected_at, breach_id",
+                (UNMATCHED_PAYMENT_BREACH, self.agency_id),
             ).fetchall()
         else:
             rows = self._conn.execute(
                 "SELECT * FROM sla_breaches WHERE kind = ? AND subject_id = ?"
-                " ORDER BY detected_at, breach_id",
-                (UNMATCHED_PAYMENT_BREACH, require_ref(subject_id, "subject_id", max_len=128)),
+                " AND agency_id = ? ORDER BY detected_at, breach_id",
+                (
+                    UNMATCHED_PAYMENT_BREACH,
+                    require_ref(subject_id, "subject_id", max_len=128),
+                    self.agency_id,
+                ),
             ).fetchall()
         return tuple(dict(row) for row in rows)
 

@@ -635,6 +635,7 @@ CREATE INDEX ix_match_candidates_run ON match_candidates (match_run_id, rank);
 
 CREATE TABLE approval_requests (
     approval_id    TEXT    NOT NULL,
+    agency_id      TEXT    NOT NULL DEFAULT 'agency_default',
     subject_type   TEXT    NOT NULL CHECK (subject_type IN (
                        'booking','case','quote','hold','refund','payout','policy_exception',
                        'relocation','bank_change','discount','message_send','cancellation')),
@@ -658,14 +659,15 @@ CREATE TABLE approval_requests (
     created_at     TEXT    NOT NULL,
     closed_at      TEXT,
     CONSTRAINT pk_approval_requests PRIMARY KEY (approval_id),
-    CONSTRAINT uq_approval_idempotency UNIQUE (idempotency_key),
+    CONSTRAINT fk_approval_requests_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    CONSTRAINT uq_approval_idempotency UNIQUE (agency_id, idempotency_key),
     CONSTRAINT ck_approval_money_pair CHECK ((money_minor IS NULL) = (currency IS NULL)),
     CONSTRAINT ck_approval_expiry CHECK (requested_at < expires_at),
     CONSTRAINT ck_approval_closed CHECK (status = 'PENDING' OR closed_at IS NOT NULL),
     CONSTRAINT ck_approval_dual_for_money CHECK (required_approvals >= 2 OR subject_type NOT IN ('refund','payout','bank_change'))
 );
 
-CREATE INDEX ix_approval_status ON approval_requests (status, expires_at);
+CREATE INDEX ix_approval_status ON approval_requests (agency_id, status, expires_at);
 
 CREATE INDEX ix_approval_subject ON approval_requests (subject_type, subject_id);
 
@@ -746,6 +748,7 @@ CREATE INDEX ix_case_events_case ON case_events (case_id, seq);
 
 CREATE TABLE sla_breaches (
     breach_id      TEXT    NOT NULL,
+    agency_id      TEXT    NOT NULL DEFAULT 'agency_default',
     subject_type   TEXT    NOT NULL CHECK (subject_type IN (
                        'case','payment','complaint','approval','incident','ops_task','invoice')),
     subject_id     TEXT    NOT NULL,
@@ -763,13 +766,14 @@ CREATE TABLE sla_breaches (
     resolved_at    TEXT,
     created_at     TEXT    NOT NULL,
     CONSTRAINT pk_sla_breaches PRIMARY KEY (breach_id),
+    CONSTRAINT fk_sla_breaches_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
     CONSTRAINT fk_sla_breaches_case FOREIGN KEY (case_id) REFERENCES cases (case_id),
-    CONSTRAINT uq_sla_breach_once UNIQUE (subject_type, subject_id, kind),
+    CONSTRAINT uq_sla_breach_once UNIQUE (agency_id, subject_type, subject_id, kind),
     CONSTRAINT ck_sla_breach_detected CHECK (detected_at >= due_at),
     CONSTRAINT ck_sla_breach_resolution CHECK (status = 'OPEN' OR (resolved_at IS NOT NULL AND resolution_note IS NOT NULL AND length(resolution_note) >= 3))
 );
 
-CREATE INDEX ix_sla_breaches_open ON sla_breaches (status, due_at);
+CREATE INDEX ix_sla_breaches_open ON sla_breaches (agency_id, status, due_at);
 
 -- --------------------------------------------------------------------------
 -- ---------------------------------------------------------------------------
@@ -906,6 +910,7 @@ CREATE INDEX ix_ledger_entries_ref ON ledger_entries (invoice_id, account);
 
 CREATE TABLE reconciliation_cases (
     recon_id       TEXT NOT NULL,
+    agency_id      TEXT NOT NULL DEFAULT 'agency_default',
     kind           TEXT NOT NULL CHECK (kind IN ('UNMATCHED_PAYMENT','AMOUNT_MISMATCH','DUPLICATE_EVENT','REFUND_WITHOUT_PAYMENT','MISSING_SETTLEMENT','UNVERIFIED_WEBHOOK')),
     payment_event_id TEXT,
     payment_id     TEXT,
@@ -919,6 +924,7 @@ CREATE TABLE reconciliation_cases (
     details        TEXT NOT NULL DEFAULT '{}',
     created_at     TEXT NOT NULL,
     CONSTRAINT pk_reconciliation_cases PRIMARY KEY (recon_id),
+    CONSTRAINT fk_recon_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
     CONSTRAINT fk_recon_event FOREIGN KEY (payment_event_id) REFERENCES payment_events (event_id),
     CONSTRAINT fk_recon_payment FOREIGN KEY (payment_id) REFERENCES payments (payment_id),
     CONSTRAINT fk_recon_invoice FOREIGN KEY (invoice_id) REFERENCES invoices (invoice_id),
@@ -926,7 +932,7 @@ CREATE TABLE reconciliation_cases (
     CONSTRAINT ck_recon_resolved CHECK (status = 'OPEN' OR (resolved_at IS NOT NULL AND resolution_note IS NOT NULL AND length(resolution_note) >= 3))
 );
 
-CREATE INDEX ix_recon_open ON reconciliation_cases (status, due_at);
+CREATE INDEX ix_recon_open ON reconciliation_cases (agency_id, status, due_at);
 
 CREATE TABLE documents (
     document_id    TEXT NOT NULL,

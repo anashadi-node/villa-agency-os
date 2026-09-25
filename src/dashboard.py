@@ -828,11 +828,12 @@ class Dashboard:
             "cases_by_status": by_status,
             "cases_total": sum(by_status.values()),
             "open_sla_breaches": self._count(
-                "SELECT COUNT(*) FROM sla_breaches WHERE status = ?", (OPEN_SLA_STATUS,)
+                "SELECT COUNT(*) FROM sla_breaches WHERE agency_id = ? AND status = ?",
+                (self.agency_id, OPEN_SLA_STATUS),
             ),
             "pending_approvals": self._count(
-                "SELECT COUNT(*) FROM approval_requests WHERE status = ?",
-                (PENDING_APPROVAL_STATUS,),
+                "SELECT COUNT(*) FROM approval_requests WHERE agency_id = ? AND status = ?",
+                (self.agency_id, PENDING_APPROVAL_STATUS),
             ),
             "holds_expiring_today": self._count(
                 "SELECT COUNT(*) FROM holds WHERE agency_id = ? AND status = 'ACTIVE' AND substr(expires_at, 1, 10) = ?",
@@ -1257,7 +1258,9 @@ class Dashboard:
                 ),
             )
             for row in self._rows(
-                "SELECT * FROM sla_breaches WHERE case_id = ? ORDER BY due_at", (clean,)
+                "SELECT * FROM sla_breaches WHERE case_id = ? AND agency_id = ?"
+                " ORDER BY due_at",
+                (clean, self.agency_id),
             )
         ]
         header = definition_list(
@@ -1445,7 +1448,11 @@ class Dashboard:
                     field_name="recon_resolution_note",
                 ),
             )
-            for row in self._rows("SELECT * FROM reconciliation_cases ORDER BY detected_at DESC LIMIT 200")
+            for row in self._rows(
+                "SELECT * FROM reconciliation_cases WHERE agency_id = ?"
+                " ORDER BY detected_at DESC LIMIT 200",
+                (self.agency_id,),
+            )
         ]
         kpis = self.kpi_values()
         return {
@@ -1454,7 +1461,9 @@ class Dashboard:
                     ("Invoice belum lunas", kpis["unpaid_invoices"]),
                     ("Payment belum tercocokkan", kpis["unmatched_payments"]),
                     ("Rekonsiliasi terbuka", self._count(
-                        "SELECT COUNT(*) FROM reconciliation_cases WHERE status = 'OPEN'")),
+                        "SELECT COUNT(*) FROM reconciliation_cases"
+                        " WHERE agency_id = ? AND status = 'OPEN'",
+                        (self.agency_id,))),
                     ("Total tagihan (minor)", self._count(
                         "SELECT COALESCE(SUM(total_minor), 0) FROM invoices WHERE status = 'ISSUED'")),
                 ]
@@ -1815,7 +1824,11 @@ class Dashboard:
                         row["due_at"],
                         row["detected_at"],
                     )
-                    for row in self._rows("SELECT * FROM sla_breaches ORDER BY due_at LIMIT 100")
+                    for row in self._rows(
+                        "SELECT * FROM sla_breaches WHERE agency_id = ?"
+                        " ORDER BY due_at LIMIT 100",
+                        (self.agency_id,),
+                    )
                 ],
                 empty="SLA breach",
             ),

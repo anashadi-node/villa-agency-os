@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import secrets
 import unicodedata
@@ -59,6 +60,9 @@ __all__ = [
     "require_ref",
     "require_text",
     "MONEY_MAX_MINOR",
+    "DEFAULT_AGENCY_ID",
+    "AGENCY_ENV_VAR",
+    "resolve_agency_id",
 ]
 
 UTC = timezone.utc
@@ -569,6 +573,35 @@ def require_ref(value: Any, field_name: str = "ref", max_len: int = 128) -> str:
             field=field_name,
         )
     return text
+
+
+#: Environment variable an operator uses to select the agency a process serves.
+AGENCY_ENV_VAR = "VILLA_AGENCY_ID"
+
+#: The agency id every pre-Wave-1 row already carries. Single-tenant deployments keep
+#: working untouched; a real multi-tenant deployment sets the variable below.
+DEFAULT_AGENCY_ID = "agency_default"
+
+
+def resolve_agency_id(explicit: Optional[str] = None, *, env: Optional[Mapping[str, str]] = None) -> str:
+    """Which agency this process serves: an explicit value, else ``VILLA_AGENCY_ID``.
+
+    Runtime agency selection is deliberately *not* an authentication mechanism — it
+    decides whose rows a process may touch, while the identity/RBAC layer decides who
+    the caller is. Keeping the two apart means a mis-set variable narrows access
+    (the process sees an empty tenant) instead of widening it.
+
+    A malformed value is refused rather than swallowed: silently falling back to
+    ``agency_default`` would point a misconfigured process at another tenant's rows,
+    which is exactly the failure this function exists to prevent.
+    """
+    if explicit is not None:
+        return require_ref(explicit, "agency_id")
+    source = os.environ if env is None else env
+    configured = source.get(AGENCY_ENV_VAR)
+    if configured is None or not str(configured).strip():
+        return DEFAULT_AGENCY_ID
+    return require_ref(str(configured), "agency_id")
 
 
 def require_text(value: Any, field_name: str = "text", max_len: int = 2000, allow_empty: bool = False) -> str:

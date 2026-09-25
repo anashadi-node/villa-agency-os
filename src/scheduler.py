@@ -47,6 +47,9 @@ from primitives import (  # noqa: E402
     parse_iso,
     require_ref,
     to_iso,
+    AGENCY_ENV_VAR,
+    DEFAULT_AGENCY_ID,
+    resolve_agency_id,
 )
 from schema_loader import connect_sqlite  # noqa: E402
 
@@ -141,6 +144,20 @@ def _minutes_between(earlier: str, later: str) -> int:
     return max(int(seconds // 60), 0)
 
 
+
+def _ensure_agency(conn: Any, agency_id: str, *, now: str) -> None:
+    """Create the agency row a scheduler works for, so its FKs can be satisfied."""
+    if conn.execute(
+        "SELECT 1 FROM agencies WHERE agency_id = ?", (agency_id,)
+    ).fetchone() is not None:
+        return
+    conn.execute(
+        "INSERT INTO agencies (agency_id, name, status, created_at, updated_at)"
+        " VALUES (?, ?, 'ACTIVE', ?, ?)"
+        " ON CONFLICT(agency_id) DO NOTHING",
+        (agency_id, agency_id, now, now),
+    )
+
 class Scheduler:
     """One object, one tick, every deadline."""
 
@@ -156,9 +173,12 @@ class Scheduler:
         sweeps: Sequence[str] = DEFAULT_SWEEPS,
         actor: str = "ops.scheduler",
         actor_role: str = "operations",
+        agency_id: str = "agency_default",
     ) -> None:
         self.conn = conn
         self.clock = clock or SystemClock()
+        self.agency_id = require_ref(agency_id, "agency_id")
+        _ensure_agency(self.conn, self.agency_id, now=to_iso(self.clock.now()))
         self.ids = ids or IdFactory()
         self.audit = audit or AuditLog(conn, clock=self.clock, ids=self.ids)
         self.kernel = kernel
@@ -241,8 +261,9 @@ class Scheduler:
         """
 
         existing = self.conn.execute(
-            "SELECT 1 FROM sla_breaches WHERE subject_type = ? AND subject_id = ? AND kind = ?",
-            (subject_type, subject_id, kind),
+            "SELECT 1 FROM sla_breaches WHERE subject_type = ? AND subject_id = ?"
+            " AND kind = ? AND agency_id = ?",
+            (subject_type, subject_id, kind, self.agency_id),
         ).fetchone()
         if existing is not None:
             return False
@@ -253,13 +274,14 @@ class Scheduler:
             self.conn.execute(
                 """
                 INSERT INTO sla_breaches (
-                    breach_id, subject_type, subject_id, case_id, kind, due_at,
+                    breach_id, agency_id, subject_type, subject_id, case_id, kind, due_at,
                     detected_at, breach_minutes, owner_actor, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?)
                 """,
                 (
-                    breach_id, subject_type, subject_id, case_id, kind, due_at,
-                    now_iso, _minutes_between(due_at, now_iso), owner_actor, now_iso,
+                    breach_id, self.agency_id, subject_type, subject_id, case_id, kind,
+                    due_at, now_iso, _minutes_between(due_at, now_iso), owner_actor,
+                    now_iso,
                 ),
             )
         except Exception as exc:  # noqa: BLE001 - unique race or FK problem
@@ -285,8 +307,8 @@ class Scheduler:
         now_iso = self._now_iso()
         due = self._rows(
             "SELECT hold_id FROM holds WHERE status = 'ACTIVE' AND expires_at <= ? "
-            "ORDER BY hold_id",
-            (now_iso,),
+            "AND agency_id = ? ORDER BY hold_id",
+            (now_iso, self.agency_id),
         )
         if dry_run:
             return SweepOutcome("holds", changed=len(due), examined=len(due))
@@ -305,8 +327,8 @@ class Scheduler:
         now_iso = self._now_iso()
         due = self._rows(
             "SELECT approval_id FROM approval_requests WHERE status = 'PENDING' "
-            "AND expires_at <= ? ORDER BY approval_id",
-            (now_iso,),
+            "AND expires_at <= ? AND agency_id = ? ORDER BY approval_id",
+            (now_iso, self.agency_id),
         )
         if dry_run:
             return SweepOutcome("approvals", changed=len(due), examined=len(due))
@@ -327,14 +349,15 @@ class Scheduler:
             """
             SELECT case_id, first_response_due_at, quote_due_at, owner_actor
             FROM cases
-            WHERE status NOT LIKE 'CLOSED_%'
+            WHERE agency_id = ?
+              AND status NOT LIKE 'CLOSED_%'
               AND (
                 (first_responded_at IS NULL AND first_response_due_at <= ?)
                 OR (quoted_at IS NULL AND quote_due_at <= ?)
               )
             ORDER BY case_id
             """,
-            (now_iso, now_iso),
+            (self.agency_id, now_iso, now_iso),
         )
         changed = 0
         for row in rows:
@@ -342,7 +365,8 @@ class Scheduler:
             owner = row["owner_actor"]
             if row["first_response_due_at"] <= now_iso:
                 if self.conn.execute(
-                    "SELECT first_responded_at FROM cases WHERE case_id = ?", (case_id,)
+                    "SELECT first_responded_at FROM cases WHERE case_id = ? AND agency_id = ?",
+                    (case_id, self.agency_id),
                 ).fetchone()["first_responded_at"] is None:
                     changed += self._record_breach(
                         subject_type="case", subject_id=case_id, kind="FIRST_RESPONSE",
@@ -351,7 +375,8 @@ class Scheduler:
                     )
             if row["quote_due_at"] <= now_iso:
                 if self.conn.execute(
-                    "SELECT quoted_at FROM cases WHERE case_id = ?", (case_id,)
+                    "SELECT quoted_at FROM cases WHERE case_id = ? AND agency_id = ?",
+                    (case_id, self.agency_id),
                 ).fetchone()["quoted_at"] is None:
                     changed += self._record_breach(
                         subject_type="case", subject_id=case_id, kind="QUOTE",
@@ -365,8 +390,8 @@ class Scheduler:
         rows = self._rows(
             "SELECT task_id, due_at, assignee FROM ops_tasks "
             "WHERE status IN ('OPEN','IN_PROGRESS','BLOCKED') AND due_at <= ? "
-            "ORDER BY task_id",
-            (now_iso,),
+            "AND agency_id = ? ORDER BY task_id",
+            (now_iso, self.agency_id),
         )
         changed = 0
         for row in rows:
@@ -381,8 +406,8 @@ class Scheduler:
         now_iso = self._now_iso()
         rows = self._rows(
             "SELECT recon_id, due_at, owner_actor FROM reconciliation_cases "
-            "WHERE status = 'OPEN' AND due_at <= ? ORDER BY recon_id",
-            (now_iso,),
+            "WHERE status = 'OPEN' AND due_at <= ? AND agency_id = ? ORDER BY recon_id",
+            (now_iso, self.agency_id),
         )
         changed = 0
         for row in rows:
@@ -398,8 +423,8 @@ class Scheduler:
         rows = self._rows(
             "SELECT incident_id, notice_due_at FROM incidents "
             "WHERE regulatory_notification_required = 1 AND notified_at IS NULL "
-            "AND notice_due_at <= ? ORDER BY incident_id",
-            (now_iso,),
+            "AND notice_due_at <= ? AND agency_id = ? ORDER BY incident_id",
+            (now_iso, self.agency_id),
         )
         changed = 0
         for row in rows:
@@ -418,10 +443,11 @@ class Scheduler:
             """
             SELECT invoice_id, due_at, total_minor, currency
             FROM invoices
-            WHERE status = 'ISSUED' AND payment_status IN ('UNPAID','PARTIAL') AND due_at <= ?
+            WHERE agency_id = ?
+              AND status = 'ISSUED' AND payment_status IN ('UNPAID','PARTIAL') AND due_at <= ?
             ORDER BY due_at, invoice_id
             """,
-            (now_iso,),
+            (self.agency_id, now_iso),
         )
         now = self.clock.now()
         changed = 0
@@ -429,7 +455,8 @@ class Scheduler:
         for row in rows:
             idempotency_key = f"chase:{row['invoice_id']}:{row['due_at']}"
             existing = self.conn.execute(
-                "SELECT 1 FROM ops_tasks WHERE idempotency_key = ?", (idempotency_key,),
+                "SELECT 1 FROM ops_tasks WHERE idempotency_key = ? AND agency_id = ?",
+                (idempotency_key, self.agency_id),
             ).fetchone()
             if existing is not None:
                 continue
@@ -447,12 +474,12 @@ class Scheduler:
             self.conn.execute(
                 """
                 INSERT INTO ops_tasks (
-                    task_id, kind, due_at, priority, status, checklist,
+                    task_id, agency_id, kind, due_at, priority, status, checklist,
                     idempotency_key, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, 'OPEN', ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?)
                 """,
                 (
-                    task_id, CHASE_KIND, due_at, priority,
+                    task_id, self.agency_id, CHASE_KIND, due_at, priority,
                     json.dumps([
                         f"cek mutasi untuk invoice {row['invoice_id']}",
                         "hubungi tamu lewat DRAFT (bukan kirim otomatis)",
@@ -479,25 +506,31 @@ class Scheduler:
 
 
 def build_scheduler(conn: Any, *, clock: Any = None, ids: Optional[IdFactory] = None,
-                    with_kernel: bool = True, with_approvals: bool = True) -> Scheduler:
-    """Wire the real collaborators; import them lazily so the module stays importable."""
+                    with_kernel: bool = True, with_approvals: bool = True,
+                    agency_id: Optional[str] = None) -> Scheduler:
+    """Wire the real collaborators; import them lazily so the module stays importable.
+
+    ``agency_id`` is resolved once here and handed to every collaborator, so a tick
+    cannot half-serve one tenant and half-serve another.
+    """
 
     clock = clock or SystemClock()
     ids = ids or IdFactory()
+    agency = resolve_agency_id(agency_id)
     kernel = None
     approvals = None
     if with_kernel:
         from reservation_kernel import ReservationKernel
 
-        kernel = ReservationKernel(conn, clock=clock, ids=ids)
+        kernel = ReservationKernel(conn, clock=clock, ids=ids, agency_id=agency)
     if with_approvals:
         from approvals import ApprovalService
 
-        approvals = ApprovalService(conn, clock=clock, ids=ids)
+        approvals = ApprovalService(conn, clock=clock, ids=ids, agency_id=agency)
     return Scheduler(
         conn, clock=clock, ids=ids,
         audit=AuditLog(conn, clock=clock, ids=ids),
-        kernel=kernel, approvals=approvals,
+        kernel=kernel, approvals=approvals, agency_id=agency,
     )
 
 
@@ -511,6 +544,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--sweeps", default=",".join(DEFAULT_SWEEPS),
         help="comma separated subset of sweeps to run",
     )
+    parser.add_argument(
+        "--agency", default=None,
+        help=f"agency to sweep (default: ${AGENCY_ENV_VAR}, else {DEFAULT_AGENCY_ID})",
+    )
     args = parser.parse_args(argv)
 
     db_path = Path(args.db)
@@ -521,7 +558,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     clock = SystemClock() if args.now is None else _frozen(args.now)
     conn = connect_sqlite(str(db_path))
     try:
-        scheduler = build_scheduler(conn, clock=clock)
+        scheduler = build_scheduler(
+            conn, clock=clock, agency_id=resolve_agency_id(args.agency)
+        )
         scheduler.configure(s for s in args.sweeps.split(",") if s)
         report = scheduler.tick(dry_run=args.dry_run)
     except DomainError as exc:

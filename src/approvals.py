@@ -211,6 +211,7 @@ APPEND_ONLY_TRIGGERS: tuple[str, ...] = (
 #: the DDL cannot drift apart.
 COLUMNS: tuple[str, ...] = (
     "approval_id",
+    "agency_id",
     "subject_type",
     "subject_id",
     "action",
@@ -886,6 +887,38 @@ def _write_transaction(conn: Any) -> Iterator[None]:
 # --------------------------------------------------------------------------- #
 # Service
 # --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# Tenant scope
+# --------------------------------------------------------------------------- #
+def _agency_scope(value: Any) -> str:
+    """Validate the tenant this queue serves, in one place.
+
+    An ``agency_id`` reaches a WHERE clause, so it is validated exactly like every
+    other reference token — never interpolated, never defaulted silently on garbage.
+    """
+    return require_ref(value, "agency_id")
+
+
+def _ensure_agency(conn: Any, agency_id: str) -> None:
+    """Make sure the agency row exists before its first request is filed.
+
+    ``approval_requests.agency_id`` is a foreign key, so the insert would fail anyway;
+    creating the row here keeps the failure mode at "the queue is empty" instead of a
+    raw IntegrityError on the first write.
+    """
+    if conn.execute(
+        "SELECT 1 FROM agencies WHERE agency_id = ?", (agency_id,)
+    ).fetchone() is not None:
+        return
+    now = to_iso(SystemClock().now())
+    conn.execute(
+        "INSERT INTO agencies (agency_id, name, status, created_at, updated_at)"
+        " VALUES (?, ?, 'ACTIVE', ?, ?)"
+        " ON CONFLICT(agency_id) DO NOTHING",
+        (agency_id, agency_id, now, now),
+    )
+
+
 class ApprovalService:
     """The approval queue: raise requests, record decisions, watch the SLA.
 
@@ -900,11 +933,14 @@ class ApprovalService:
         clock: Optional[Clock] = None,
         ids: Optional[IdFactory] = None,
         *,
+        agency_id: str = "agency_default",
         enforce_append_only: bool = True,
     ) -> None:
         self._conn = conn
         self._clock: Clock = clock if clock is not None else SystemClock()
         self._ids: IdFactory = ids if ids is not None else IdFactory()
+        self.agency_id = _agency_scope(agency_id)
+        _ensure_agency(self._conn, self.agency_id)
         if enforce_append_only:
             guard_append_only(conn)
 
@@ -992,6 +1028,7 @@ class ApprovalService:
         approval_id = self._ids.new("approval")
         values = (
             approval_id,
+            self.agency_id,
             subject_type,
             subject_id,
             action,
@@ -1161,8 +1198,8 @@ class ApprovalService:
         subject_id = require_ref(subject_id, "subject_id")
         rows = self._conn.execute(
             f"SELECT * FROM {REQUEST_TABLE} WHERE subject_type = ? AND subject_id = ? "
-            "ORDER BY requested_at, approval_id",
-            (subject_type, subject_id),
+            "AND agency_id = ? ORDER BY requested_at, approval_id",
+            (subject_type, subject_id, self.agency_id),
         ).fetchall()
         return [self._approval_of(row) for row in rows]
 
@@ -1178,8 +1215,9 @@ class ApprovalService:
         when = _aware(now if now is not None else self._clock.now())
         role = None if required_role is None else _role(required_role, "required_role")
         rows = self._conn.execute(
-            f"SELECT * FROM {REQUEST_TABLE} WHERE status = 'PENDING' "
-            "ORDER BY requested_at, approval_id"
+            f"SELECT * FROM {REQUEST_TABLE} WHERE status = 'PENDING' AND agency_id = ? "
+            "ORDER BY requested_at, approval_id",
+            (self.agency_id,),
         ).fetchall()
         counts = self._aggregate([row["approval_id"] for row in rows])
         items: list[ApprovalQueueItem] = []
@@ -1227,8 +1265,9 @@ class ApprovalService:
         expired: list[str] = []
         with _write_transaction(self._conn):
             rows = self._conn.execute(
-                f"SELECT * FROM {REQUEST_TABLE} WHERE status = 'PENDING' "
-                "ORDER BY requested_at, approval_id"
+                f"SELECT * FROM {REQUEST_TABLE} WHERE status = 'PENDING' AND agency_id = ? "
+                "ORDER BY requested_at, approval_id",
+                (self.agency_id,),
             ).fetchall()
             counts = self._aggregate([row["approval_id"] for row in rows])
             for row in rows:
@@ -1247,7 +1286,8 @@ class ApprovalService:
     # -- internals --------------------------------------------------------- #
     def _row_or_raise(self, approval_id: str) -> Mapping[str, Any]:
         row = self._conn.execute(
-            f"SELECT * FROM {REQUEST_TABLE} WHERE approval_id = ?", (approval_id,)
+            f"SELECT * FROM {REQUEST_TABLE} WHERE approval_id = ? AND agency_id = ?",
+            (approval_id, self.agency_id),
         ).fetchone()
         if row is None:
             raise ApprovalNotFound(
@@ -1257,7 +1297,8 @@ class ApprovalService:
 
     def _row_by_key(self, idempotency_key: str) -> Optional[Mapping[str, Any]]:
         return self._conn.execute(
-            f"SELECT * FROM {REQUEST_TABLE} WHERE idempotency_key = ?", (idempotency_key,)
+            f"SELECT * FROM {REQUEST_TABLE} WHERE idempotency_key = ? AND agency_id = ?",
+            (idempotency_key, self.agency_id),
         ).fetchone()
 
     def _row_fingerprint(self, row: Mapping[str, Any]) -> str:

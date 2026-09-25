@@ -73,6 +73,7 @@ from typing import Any, Iterator, Mapping, Optional, Protocol, Sequence
 import cases as C
 import gates as G
 import intake as I
+import primitives as P
 from primitives import (
     UTC,
     DomainError,
@@ -2286,7 +2287,7 @@ def _cli_email(args: argparse.Namespace) -> int:
     if args.dry_run:
         conn = _open_db_readonly(db_path)
         entries: list[dict[str, Any]] = []
-        agency_scope = getattr(args, "agency", None) or "agency_default"
+        agency_scope = P.resolve_agency_id(getattr(args, "agency", None))
         try:
             for result in results:
                 message = result.message
@@ -2516,7 +2517,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     email.add_argument("--content-class", dest="content_class", default=None, choices=C.CONTENT_CLASSES)
     email.add_argument("--priority", default=C.DEFAULT_PRIORITY, choices=C.PRIORITIES)
     email.add_argument("--sla-policy", dest="sla_policy", default=None, choices=sorted(C.SLA_POLICIES))
-    email.add_argument("--agency", default="agency_default")
+    email.add_argument(
+        "--agency",
+        default=os.environ.get(P.AGENCY_ENV_VAR, P.DEFAULT_AGENCY_ID),
+        help=f"agency this process serves (default: ${P.AGENCY_ENV_VAR})",
+    )
     email.add_argument("--now", default=None, help="ISO timestamp to evaluate the plan at")
 
     outbox = sub.add_parser("outbox", help="deliver approved+grounded drafts")
@@ -2530,7 +2535,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     outbox.add_argument("--content-class", dest="content_class", default="P1", choices=C.CONTENT_CLASSES)
     outbox.add_argument("--actor", default=DEFAULT_OUTBOX_ACTOR)
-    outbox.add_argument("--agency", default="agency_default")
+    outbox.add_argument(
+        "--agency",
+        default=os.environ.get(P.AGENCY_ENV_VAR, P.DEFAULT_AGENCY_ID),
+        help=f"agency this process serves (default: ${P.AGENCY_ENV_VAR})",
+    )
     outbox.add_argument("--limit", type=int, default=None)
     outbox.add_argument("--now", default=None, help="ISO timestamp to record as the send time")
 
