@@ -155,3 +155,57 @@ def test_the_error_page_of_a_scoped_dashboard_still_renders(conn):
     )
     assert response.status == 403
     assert response.body
+
+# --------------------------------------------------------------------------- #
+# 5. ADR-0005 "auditor read-only enforced" — the refusal must hold on the wire
+#    (POST), not only in the rendered menu
+# --------------------------------------------------------------------------- #
+def post(dashboard, path: str, principal, form):
+    return dashboard.dispatch(
+        D._Request(method="POST", path=path, query={}, form=form, principal=principal)
+    )
+
+
+def test_an_auditor_cannot_raise_an_approval(conn):
+    dashboard = app(
+        conn, agency_id="agency_bali",
+        tokens={"tok-auditor": ("agent-audit-1", "auditor", "agency_bali")},
+    )
+    principal = dashboard.tokens["tok-auditor"]
+    assert principal.may_write is False
+    with pytest.raises(D.Forbidden):
+        post(dashboard, "/approvals", principal, {
+            "subject_type": "case", "subject_id": "case_1", "action": "refund.deposit",
+            "reason": "auditor mencoba menulis", "idempotency_key": "idem_audit_0001",
+        })
+    assert conn.execute("SELECT COUNT(*) FROM approval_requests").fetchone()[0] == 0
+
+
+def test_an_auditor_cannot_decide_an_approval(conn):
+    dashboard = app(
+        conn, agency_id="agency_bali",
+        tokens={"tok-auditor": ("agent-audit-1", "auditor", "agency_bali")},
+    )
+    principal = dashboard.tokens["tok-auditor"]
+    with pytest.raises(D.Forbidden):
+        post(dashboard, "/approvals/approval_apa_saja/decide", principal, {
+            "decision": "APPROVE", "note": "auditor mencoba memutuskan",
+            "idempotency_key": "idem_audit_0002",
+        })
+    assert conn.execute("SELECT COUNT(*) FROM approval_decisions").fetchone()[0] == 0
+
+
+def test_a_cross_agency_write_is_refused_before_anything_is_written(conn):
+    """Scope is checked on the write path too: a sibling agency writes nothing."""
+    dashboard = app(
+        conn, agency_id="agency_bali",
+        tokens={"tok-jogja": ("agent-jogja-1", "owner", "agency_jogja")},
+    )
+    principal = dashboard.tokens["tok-jogja"]
+    assert principal.may_write is True, "the role may write — the agency is what stops it"
+    with pytest.raises(D.Forbidden):
+        post(dashboard, "/approvals", principal, {
+            "subject_type": "case", "subject_id": "case_1", "action": "refund.deposit",
+            "reason": "agency lain mencoba menulis", "idempotency_key": "idem_cross_0001",
+        })
+    assert conn.execute("SELECT COUNT(*) FROM approval_requests").fetchone()[0] == 0
