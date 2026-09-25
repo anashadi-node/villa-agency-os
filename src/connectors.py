@@ -1500,23 +1500,37 @@ class WhatsAppWebhookConnector:
 # Baca sisi DB in-bound: idempotency + intake proposals
 # --------------------------------------------------------------------------- #
 def find_message_by_external_ref(
-    conn: sqlite3.Connection, channel: str, external_ref: str
+    conn: sqlite3.Connection,
+    channel: str,
+    external_ref: str,
+    *,
+    agency_id: str = "agency_default",
 ) -> Optional[Mapping[str, Any]]:
     """The stored inbound message for ``(channel, external_ref)``, if any."""
+    agency = require_ref(agency_id, "agency_id")
     return conn.execute(
-        "SELECT case_message_id, case_id, channel, external_ref, body_sha256, content_class, received_at"
-        " FROM case_messages WHERE channel = ? AND external_ref = ? AND direction = 'INBOUND'"
-        " ORDER BY created_at, case_message_id LIMIT 1",
-        (channel, external_ref),
+        "SELECT m.case_message_id, m.case_id, m.channel, m.external_ref, m.body_sha256,"
+        " m.content_class, m.received_at"
+        " FROM case_messages m JOIN cases c ON c.case_id = m.case_id"
+        " WHERE m.channel = ? AND m.external_ref = ? AND m.direction = 'INBOUND'"
+        " AND c.agency_id = ? ORDER BY m.created_at, m.case_message_id LIMIT 1",
+        (channel, external_ref, agency),
     ).fetchone()
 
 
-def find_open_case(conn: sqlite3.Connection, channel: str, guest_ref: str) -> Optional[str]:
+def find_open_case(
+    conn: sqlite3.Connection,
+    channel: str,
+    guest_ref: str,
+    *,
+    agency_id: str = "agency_default",
+) -> Optional[str]:
     """The open case a new message from this guest belongs to (oldest first)."""
+    agency = require_ref(agency_id, "agency_id")
     row = conn.execute(
         "SELECT case_id FROM cases WHERE channel = ? AND guest_ref = ?"
-        " AND status NOT LIKE 'CLOSED_%' ORDER BY created_at, case_id LIMIT 1",
-        (channel, guest_ref),
+        " AND agency_id = ? AND status NOT LIKE 'CLOSED_%' ORDER BY created_at, case_id LIMIT 1",
+        (channel, guest_ref, agency),
     ).fetchone()
     return None if row is None else str(row["case_id"])
 
@@ -1588,6 +1602,7 @@ def intake_message(
     guest_ref: Optional[str] = None,
     priority: str = C.DEFAULT_PRIORITY,
     sla_policy: Optional[str] = None,
+    agency_id: Optional[str] = None,
 ) -> IntakeResult:
     """Store one inbound message as a case (or append it to the guest's case).
 
@@ -1615,7 +1630,10 @@ def intake_message(
     declared = content_class if content_class is not None else message.content_class
     resolved_class = resolve_inbound_content_class(message.body, declared)
 
-    existing = find_message_by_external_ref(conn, message.channel, message.external_ref)
+    agency_scope = agency_id or getattr(service, "agency_id", None) or "agency_default"
+    existing = find_message_by_external_ref(
+        conn, message.channel, message.external_ref, agency_id=agency_scope
+    )
     if existing is not None:
         if str(existing["body_sha256"]) != message.body_sha256:
             raise _fail(
@@ -1629,7 +1647,7 @@ def intake_message(
         return _existing_result(conn, service, message, existing)
 
     guest = guest_ref if guest_ref is not None else message.guest_ref
-    case_id = find_open_case(conn, message.channel, guest)
+    case_id = find_open_case(conn, message.channel, guest, agency_id=agency_scope)
     common = {
         "content_class": resolved_class,
         "body": message.body,
@@ -1656,7 +1674,9 @@ def intake_message(
     except C.DuplicateCase:
         # A racing replay: the case exists, so report the duplicate instead of
         # opening a second one.
-        raced = find_message_by_external_ref(conn, message.channel, message.external_ref)
+        raced = find_message_by_external_ref(
+            conn, message.channel, message.external_ref, agency_id=agency_scope
+        )
         if raced is not None:
             return _existing_result(conn, service, message, raced)
         raise
@@ -1724,10 +1744,20 @@ def _existing_result(
 # --------------------------------------------------------------------------- #
 # Outbound
 # --------------------------------------------------------------------------- #
-def read_draft(conn: sqlite3.Connection, draft_id: str) -> Draft:
-    """One ``message_drafts`` row, or ``DRAFT_NOT_FOUND``."""
+def read_draft(
+    conn: sqlite3.Connection,
+    draft_id: str,
+    *,
+    agency_id: str = "agency_default",
+) -> Draft:
+    """One tenant-scoped ``message_drafts`` row, or ``DRAFT_NOT_FOUND``."""
     ref = require_ref(draft_id, "draft_id")
-    row = conn.execute("SELECT * FROM message_drafts WHERE draft_id = ?", (ref,)).fetchone()
+    agency = require_ref(agency_id, "agency_id")
+    row = conn.execute(
+        "SELECT d.* FROM message_drafts d JOIN cases c ON c.case_id = d.case_id"
+        " WHERE d.draft_id = ? AND c.agency_id = ?",
+        (ref, agency),
+    ).fetchone()
     if row is None:
         raise _fail(CODE_DRAFT_NOT_FOUND, f"draft tidak ditemukan: {ref}", draft_id=ref)
     return Draft.from_row(row)
@@ -1846,6 +1876,7 @@ class OutboundQueue:
         content_class: str = "P1",
         actor_role: Optional[str] = None,
         justification: Optional[str] = None,
+        agency_id: str = "agency_default",
     ) -> None:
         self.transport = (
             FileOutboundTransport(root) if transport is None else transport
@@ -1862,6 +1893,7 @@ class OutboundQueue:
         self.content_class = _require_content_class(content_class)
         self.actor_role = actor_role
         self.justification = justification
+        self.agency_id = require_ref(agency_id, "agency_id")
         self.approvals = approvals
 
     # -- helpers ----------------------------------------------------------- #
@@ -1981,15 +2013,17 @@ class OutboundQueue:
     def pending(self, *, limit: Optional[int] = None) -> tuple[Draft, ...]:
         """Drafts that are approved *and* grounded and not yet sent, oldest first."""
         rows = self.conn.execute(
-            "SELECT * FROM message_drafts WHERE status = 'APPROVED' AND grounding = 'GROUNDED'"
-            " ORDER BY created_at, draft_id"
+            "SELECT d.* FROM message_drafts d JOIN cases c ON c.case_id = d.case_id"
+            " WHERE d.status = 'APPROVED' AND d.grounding = 'GROUNDED' AND c.agency_id = ?"
+            " ORDER BY d.created_at, d.draft_id",
+            (self.agency_id,),
         ).fetchall()
         drafts = tuple(Draft.from_row(row) for row in rows)
         return drafts if limit is None else drafts[: int(limit)]
 
     def plan(self, draft_id: str) -> dict[str, Any]:
         """What a delivery would do — reads only, writes nothing."""
-        draft = read_draft(self.conn, draft_id)
+        draft = read_draft(self.conn, draft_id, agency_id=self.agency_id)
         entry: dict[str, Any] = {
             "draft_id": draft.draft_id,
             "case_id": draft.case_id,
@@ -2036,7 +2070,7 @@ class OutboundQueue:
         ``already_sent=True`` — the file is not rewritten and the recorded
         ``external_ref`` is not changed.
         """
-        draft = read_draft(self.conn, draft_id)
+        draft = read_draft(self.conn, draft_id, agency_id=self.agency_id)
         target = self._transport_path(draft)
         if draft.is_sent:
             if not target.exists():
@@ -2115,16 +2149,18 @@ class OutboundQueue:
         try:
             self.conn.execute(
                 "UPDATE message_drafts SET status = 'SENT', sent_by = ?, sent_at = ?,"
-                " external_ref = ? WHERE draft_id = ? AND status = 'APPROVED'",
-                (self.actor, moment, receipt, draft.draft_id),
+                " external_ref = ? WHERE draft_id = ? AND status = 'APPROVED'"
+                " AND EXISTS (SELECT 1 FROM cases c WHERE c.case_id = message_drafts.case_id AND c.agency_id = ?)",
+                (self.actor, moment, receipt, draft.draft_id, self.agency_id),
             )
         except BaseException:
             self.conn.execute("ROLLBACK")
             raise
         self.conn.execute("COMMIT")
         row = self.conn.execute(
-            "SELECT status, external_ref FROM message_drafts WHERE draft_id = ?",
-            (draft.draft_id,),
+            "SELECT d.status, d.external_ref FROM message_drafts d JOIN cases c ON c.case_id = d.case_id"
+            " WHERE d.draft_id = ? AND c.agency_id = ?",
+            (draft.draft_id, self.agency_id),
         ).fetchone()
         if row is None or str(row["status"]) != "SENT":  # pragma: no cover - defensive
             raise _fail(
@@ -2192,6 +2228,7 @@ def _plan_entry(
     content_class: Optional[str],
     priority: str,
     now: Any,
+    agency_id: Optional[str] = None,
 ) -> dict[str, Any]:
     entry = message.plan()
     declared = content_class if content_class is not None else message.content_class
@@ -2211,7 +2248,10 @@ def _plan_entry(
         entry["would_create_case"] = None
         entry["writes_planned"] = entry["class_refusal"] is None
         return entry
-    existing = find_message_by_external_ref(conn, message.channel, message.external_ref)
+    existing = find_message_by_external_ref(
+        conn, message.channel, message.external_ref,
+        agency_id=agency_id or "agency_default",
+    )
     entry["duplicate"] = existing is not None
     if existing is not None:
         entry["state"] = entry.get("state", "duplicate")
@@ -2220,7 +2260,9 @@ def _plan_entry(
         entry["writes_planned"] = False
         return entry
     entry["state"] = entry.get("state", "planned")
-    open_case_id = find_open_case(conn, message.channel, message.guest_ref)
+    open_case_id = find_open_case(
+        conn, message.channel, message.guest_ref, agency_id=agency_id or "agency_default"
+    )
     entry["would_create_case"] = open_case_id is None
     entry["existing_case_id"] = open_case_id
     entry["writes_planned"] = entry["class_refusal"] is None
@@ -2244,6 +2286,7 @@ def _cli_email(args: argparse.Namespace) -> int:
     if args.dry_run:
         conn = _open_db_readonly(db_path)
         entries: list[dict[str, Any]] = []
+        agency_scope = getattr(args, "agency", None) or "agency_default"
         try:
             for result in results:
                 message = result.message
@@ -2264,6 +2307,7 @@ def _cli_email(args: argparse.Namespace) -> int:
                     content_class=args.content_class,
                     priority=args.priority,
                     now=clock.now(),
+                agency_id=agency_scope,
                 )
                 entry["source"] = result.source
                 entries.append(entry)
@@ -2287,7 +2331,8 @@ def _cli_email(args: argparse.Namespace) -> int:
     conn = _open_db(db_path)
     try:
         ids = IdFactory()
-        service = C.CaseService(conn, clock, ids)
+        agency_value = getattr(args, "agency", None) or "agency_default"
+        service = C.CaseService(conn, clock, ids, agency_id=agency_value)
         intake_service = I.IntakeService(conn, clock=clock, ids=ids)
         outcomes: list[dict[str, Any]] = []
         rejected = 0
@@ -2380,6 +2425,7 @@ def _cli_outbox(args: argparse.Namespace) -> int:
                 clock=clock,
                 content_class=args.content_class,
                 actor=args.actor,
+                agency_id=getattr(args, "agency", None) or "agency_default",
             )
             drafts = [
                 queue.plan(draft.draft_id)
@@ -2470,6 +2516,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     email.add_argument("--content-class", dest="content_class", default=None, choices=C.CONTENT_CLASSES)
     email.add_argument("--priority", default=C.DEFAULT_PRIORITY, choices=C.PRIORITIES)
     email.add_argument("--sla-policy", dest="sla_policy", default=None, choices=sorted(C.SLA_POLICIES))
+    email.add_argument("--agency", default="agency_default")
     email.add_argument("--now", default=None, help="ISO timestamp to evaluate the plan at")
 
     outbox = sub.add_parser("outbox", help="deliver approved+grounded drafts")
@@ -2483,6 +2530,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     outbox.add_argument("--content-class", dest="content_class", default="P1", choices=C.CONTENT_CLASSES)
     outbox.add_argument("--actor", default=DEFAULT_OUTBOX_ACTOR)
+    outbox.add_argument("--agency", default="agency_default")
     outbox.add_argument("--limit", type=int, default=None)
     outbox.add_argument("--now", default=None, help="ISO timestamp to record as the send time")
 

@@ -824,14 +824,32 @@ class IncidentService:
     and ``incident_steps`` tables byte-identical.
     """
 
-    def __init__(self, conn: sqlite3.Connection, clock: Any = None, ids: Optional[IdFactory] = None) -> None:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        clock: Any = None,
+        ids: Optional[IdFactory] = None,
+        *,
+        agency_id: str = "agency_default",
+    ) -> None:
         self.conn = conn
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.clock = clock or SystemClock()
         self.ids = ids or IdFactory()
+        self.agency_id = require_ref(agency_id, "agency_id")
         self._in_tx = False
         self._audit = AuditLog(conn, clock=self.clock, ids=self.ids)
+        self._ensure_agency_scope()
+
+    def _ensure_agency_scope(self) -> None:
+        now = self._stamp()
+        self.conn.execute(
+            "INSERT INTO agencies (agency_id, name, status, created_at, updated_at)"
+            " VALUES (?, ?, 'ACTIVE', ?, ?)"
+            " ON CONFLICT(agency_id) DO UPDATE SET updated_at = excluded.updated_at",
+            (self.agency_id, self.agency_id, now, now),
+        )
 
     # ------------------------------------------------------------------ #
     # Plumbing
@@ -866,7 +884,10 @@ class IncidentService:
     def _require_row(self, incident_id: Any, conn: Optional[sqlite3.Connection] = None) -> sqlite3.Row:
         ref = _bounded_ref(incident_id, "incident_id")
         db = conn if conn is not None else self.conn
-        row = db.execute("SELECT * FROM incidents WHERE incident_id = ?", (ref,)).fetchone()
+        row = db.execute(
+            "SELECT * FROM incidents WHERE incident_id = ? AND agency_id = ?",
+            (ref, self.agency_id),
+        ).fetchone()
         if row is None:
             raise IncidentNotFound(f"insiden tidak ditemukan: {ref}", incident_id=ref)
         return row
@@ -892,8 +913,9 @@ class IncidentService:
         db = conn if conn is not None else self.conn
         return list(
             db.execute(
-                "SELECT * FROM incident_steps WHERE incident_id = ? ORDER BY seq, step_id",
-                (incident_id,),
+                "SELECT s.* FROM incident_steps s JOIN incidents i ON i.incident_id = s.incident_id"
+                " WHERE s.incident_id = ? AND i.agency_id = ? ORDER BY s.seq, s.step_id",
+                (incident_id, self.agency_id),
             ).fetchall()
         )
 
@@ -988,7 +1010,8 @@ class IncidentService:
 
         with self._write() as conn:
             existing = conn.execute(
-                "SELECT incident_id FROM incidents WHERE incident_id = ?", (new_id,)
+                "SELECT incident_id FROM incidents WHERE incident_id = ? AND agency_id = ?",
+                (new_id, self.agency_id),
             ).fetchone()
             if existing is not None:
                 raise StorageConstraint(
@@ -997,14 +1020,15 @@ class IncidentService:
             conn.execute(
                 """
                 INSERT INTO incidents (
-                    incident_id, playbook, title, severity, status, detected_at, detected_by,
+                    incident_id, agency_id, playbook, title, severity, status, detected_at, detected_by,
                     source, affected_refs, personal_data_involved,
                     regulatory_notification_required, notice_due_at, notified_at, summary,
                     resolved_at, postmortem_ref, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     new_id,
+                    self.agency_id,
                     plan.code,
                     title_text,
                     severity,
@@ -1438,8 +1462,8 @@ class IncidentService:
     def open_incidents(self) -> tuple[Incident, ...]:
         """Everything not yet resolved, most severe first."""
         rows = self.conn.execute(
-            "SELECT * FROM incidents WHERE status IN (?, ?)",
-            OPEN_STATUSES,
+            "SELECT * FROM incidents WHERE agency_id = ? AND status IN (?, ?)",
+            (self.agency_id, *OPEN_STATUSES),
         ).fetchall()
         incidents = [Incident.from_row(row) for row in rows]
         incidents.sort(key=lambda item: (SEVERITY_ORDER.get(item.severity, 9), item.detected_at, item.incident_id))
@@ -1449,7 +1473,10 @@ class IncidentService:
         """``by_severity("SEV1")`` → incidents; ``by_severity()`` → counts per severity."""
         if severity is None:
             counts = {name: 0 for name in SEVERITIES}
-            rows = self.conn.execute("SELECT severity, COUNT(*) AS n FROM incidents GROUP BY severity").fetchall()
+            rows = self.conn.execute(
+                "SELECT severity, COUNT(*) AS n FROM incidents WHERE agency_id = ? GROUP BY severity",
+                (self.agency_id,),
+            ).fetchall()
             for row in rows:
                 if row["severity"] in counts:
                     counts[row["severity"]] = int(row["n"])
@@ -1462,12 +1489,13 @@ class IncidentService:
             )
         if open_only:
             rows = self.conn.execute(
-                "SELECT * FROM incidents WHERE severity = ? AND status IN (?, ?)",
-                (severity,) + OPEN_STATUSES,
+                "SELECT * FROM incidents WHERE agency_id = ? AND severity = ? AND status IN (?, ?)",
+                (self.agency_id, severity, *OPEN_STATUSES),
             ).fetchall()
         else:
             rows = self.conn.execute(
-                "SELECT * FROM incidents WHERE severity = ?", (severity,)
+                "SELECT * FROM incidents WHERE agency_id = ? AND severity = ?",
+                (self.agency_id, severity),
             ).fetchall()
         incidents = [Incident.from_row(row) for row in rows]
         incidents.sort(key=lambda item: (item.detected_at, item.incident_id))
@@ -1481,7 +1509,8 @@ class IncidentService:
         """
         moment = self._normalise_now(now)
         rows = self.conn.execute(
-            "SELECT * FROM incidents WHERE regulatory_notification_required = 1 AND notified_at IS NULL"
+            "SELECT * FROM incidents WHERE agency_id = ? AND regulatory_notification_required = 1 AND notified_at IS NULL",
+            (self.agency_id,),
         ).fetchall()
         overdue = []
         for row in rows:
@@ -1496,7 +1525,7 @@ class IncidentService:
 
     def summary_counts(self) -> dict[str, Any]:
         """Dashboard-shaped totals; every key is present even when zero."""
-        rows = self.conn.execute("SELECT * FROM incidents").fetchall()
+        rows = self.conn.execute("SELECT * FROM incidents WHERE agency_id = ?", (self.agency_id,)).fetchall()
         incidents = [Incident.from_row(row) for row in rows]
         status_counts = {name: 0 for name in INCIDENT_STATUSES}
         severity_counts = {name: 0 for name in SEVERITIES}
@@ -1506,12 +1535,16 @@ class IncidentService:
             if incident.severity in severity_counts:
                 severity_counts[incident.severity] += 1
         step_total = int(
-            self.conn.execute("SELECT COUNT(*) AS n FROM incident_steps").fetchone()["n"]
+            self.conn.execute(
+                "SELECT COUNT(*) AS n FROM incident_steps s JOIN incidents i ON i.incident_id = s.incident_id WHERE i.agency_id = ?",
+                (self.agency_id,),
+            ).fetchone()["n"]
         )
         notification_total = int(
             self.conn.execute(
-                "SELECT COUNT(*) AS n FROM incident_steps WHERE UPPER(action) LIKE ?",
-                (NOTIFICATION_PREFIX + "%",),
+                "SELECT COUNT(*) AS n FROM incident_steps s JOIN incidents i ON i.incident_id = s.incident_id"
+                " WHERE i.agency_id = ? AND UPPER(s.action) LIKE ?",
+                (self.agency_id, NOTIFICATION_PREFIX + "%"),
             ).fetchone()["n"]
         )
         return {

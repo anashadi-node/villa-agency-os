@@ -704,6 +704,7 @@ class Dashboard:
         page_roles: Optional[Mapping[str, Sequence[str]]] = None,
         approvals: Optional[ApprovalService] = None,
         enforce_append_only: bool = True,
+        agency_id: str = "agency_default",
     ) -> None:
         if clock is None or not hasattr(clock, "now"):
             raise InvalidInput("clock wajib disuntik (Clock/FrozenClock)")
@@ -711,6 +712,8 @@ class Dashboard:
         self.clock = clock
         self.actor = require_ref(actor, "actor")
         self.actor_role = _validate_role(actor_role)
+        self.agency_id = require_ref(agency_id, "agency_id")
+        self._ensure_agency_scope()
         self.gates = gates
         if gates is not None:
             missing = [name for name in GATE_INTERFACE if not hasattr(gates, name)]
@@ -736,6 +739,23 @@ class Dashboard:
             )
         )
         self._handler_class: Optional[type] = None
+
+    def _ensure_agency_scope(self) -> None:
+        """Fail fast when the configured agency does not exist (read-only check).
+
+        The dashboard is a read-only surface: creating the agency row is the
+        job of the service that owns writes (``cases.CaseService`` and friends),
+        never of this module.
+        """
+        found = self.conn.execute(
+            "SELECT 1 FROM agencies WHERE agency_id = ? LIMIT 1", (self.agency_id,)
+        ).fetchone()
+        if found is None:
+            raise InvalidInput(
+                "agency_id belum terdaftar di tabel agencies",
+                agency_id=self.agency_id,
+                hint="buka lewat service write (mis. CaseService) untuk mendaftarkan agency baru",
+            )
 
     # -- plumbing ---------------------------------------------------------- #
     def handler_class(self) -> type:
@@ -788,8 +808,8 @@ class Dashboard:
         return version or "(belum diterapkan)"
 
     def database_is_empty(self) -> bool:
-        for name in ("cases", "bookings", "invoices", "ops_tasks", "incidents", "audit_events"):
-            if self._count(f"SELECT COUNT(*) FROM {name}"):
+        for name in ("cases", "bookings", "invoices", "ops_tasks", "incidents"):
+            if self._count(f"SELECT COUNT(*) FROM {name} WHERE agency_id = ?", (self.agency_id,)):
                 return False
         return True
 
@@ -799,7 +819,10 @@ class Dashboard:
         now = to_iso(self.clock.now())
         by_status = {
             str(row["status"]): _as_int(row["n"])
-            for row in self._rows("SELECT status, COUNT(*) AS n FROM cases GROUP BY status")
+            for row in self._rows(
+                "SELECT status, COUNT(*) AS n FROM cases WHERE agency_id = ? GROUP BY status",
+                (self.agency_id,),
+            )
         }
         return {
             "cases_by_status": by_status,
@@ -812,25 +835,28 @@ class Dashboard:
                 (PENDING_APPROVAL_STATUS,),
             ),
             "holds_expiring_today": self._count(
-                "SELECT COUNT(*) FROM holds WHERE status = 'ACTIVE' AND substr(expires_at, 1, 10) = ?",
-                (today,),
+                "SELECT COUNT(*) FROM holds WHERE agency_id = ? AND status = 'ACTIVE' AND substr(expires_at, 1, 10) = ?",
+                (self.agency_id, today),
             ),
             "unpaid_invoices": self._count(
-                "SELECT COUNT(*) FROM invoices WHERE status = 'ISSUED' "
-                "AND payment_status IN ('UNPAID','PARTIAL')"
+                "SELECT COUNT(*) FROM invoices WHERE agency_id = ? AND status = 'ISSUED' "
+                "AND payment_status IN ('UNPAID','PARTIAL')",
+                (self.agency_id,)
             ),
             "unmatched_payments": self._count(
-                "SELECT COUNT(*) FROM payments p WHERE p.status = 'SUCCEEDED' "
+                "SELECT COUNT(*) FROM payments p WHERE p.agency_id = ? AND p.status = 'SUCCEEDED' "
                 "AND NOT EXISTS (SELECT 1 FROM payment_events e "
-                "WHERE e.payment_id = p.payment_id AND e.applied = 1)"
+                "WHERE e.payment_id = p.payment_id AND e.applied = 1)",
+                (self.agency_id,)
             ),
             "late_ops_tasks": self._count(
-                "SELECT COUNT(*) FROM ops_tasks WHERE status IN ('OPEN','IN_PROGRESS','BLOCKED') "
+                "SELECT COUNT(*) FROM ops_tasks WHERE agency_id = ? AND status IN ('OPEN','IN_PROGRESS','BLOCKED') "
                 "AND substr(due_at, 1, 19) < substr(?, 1, 19)",
-                (now,),
+                (self.agency_id, now),
             ),
             "open_incidents": self._count(
-                "SELECT COUNT(*) FROM incidents WHERE status IN ('OPEN','MITIGATING')"
+                "SELECT COUNT(*) FROM incidents WHERE agency_id = ? AND status IN ('OPEN','MITIGATING')",
+                (self.agency_id,)
             ),
             "audit_chain": self.chain_health(),
             "today": today,
@@ -1141,7 +1167,10 @@ class Dashboard:
             )
         status_rows = [
             (str(row["status"]), _as_int(row["n"]))
-            for row in self._rows("SELECT status, COUNT(*) AS n FROM cases GROUP BY status")
+            for row in self._rows(
+                "SELECT status, COUNT(*) AS n FROM cases WHERE agency_id = ? GROUP BY status",
+                (self.agency_id,),
+            )
         ]
         return {
             "cases_table": table(
@@ -1164,7 +1193,7 @@ class Dashboard:
 
     def view_case_detail(self, case_id: str, principal: Principal) -> dict[str, Any]:
         clean = self._case_id_or_404(case_id)
-        rows = self._rows("SELECT * FROM cases WHERE case_id = ?", (clean,))
+        rows = self._rows("SELECT * FROM cases WHERE case_id = ? AND agency_id = ?", (clean, self.agency_id))
         if not rows:
             raise NotFound("kasus tidak ditemukan", case_id=clean)
         case = rows[0]
@@ -1516,9 +1545,9 @@ class Dashboard:
         ]
         return {
             "late_tasks": self._count(
-                "SELECT COUNT(*) FROM ops_tasks WHERE status IN ('OPEN','IN_PROGRESS','BLOCKED') "
+                "SELECT COUNT(*) FROM ops_tasks WHERE agency_id = ? AND status IN ('OPEN','IN_PROGRESS','BLOCKED') "
                 "AND substr(due_at, 1, 19) < substr(?, 1, 19)",
-                (now,),
+                (self.agency_id, now),
             ),
             "ops_table": table(
                 [
@@ -1687,7 +1716,7 @@ class Dashboard:
                 row["contract_pack_evaluated_at"] or "—",
                 row["created_at"],
             )
-            for row in self._rows("SELECT * FROM properties ORDER BY name LIMIT 200")
+            for row in self._rows("SELECT * FROM properties WHERE agency_id = ? ORDER BY name LIMIT 200", (self.agency_id,))
         ]
         units = [
             (
@@ -1701,7 +1730,7 @@ class Dashboard:
                 row["max_guests"],
                 row["status"],
             )
-            for row in self._rows("SELECT * FROM units ORDER BY name LIMIT 500")
+            for row in self._rows("SELECT * FROM units WHERE agency_id = ? ORDER BY name LIMIT 500", (self.agency_id,))
         ]
         holds = [
             (
@@ -1713,7 +1742,7 @@ class Dashboard:
                 row["expires_at"],
                 row["guest_ref"],
             )
-            for row in self._rows("SELECT * FROM holds ORDER BY created_at DESC LIMIT 200")
+            for row in self._rows("SELECT * FROM holds WHERE agency_id = ? ORDER BY created_at DESC LIMIT 200", (self.agency_id,))
         ]
         return {
             "property_table": table(

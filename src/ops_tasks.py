@@ -832,10 +832,22 @@ class OpsTaskService:
         *,
         clock: Optional[Any] = None,
         ids: Optional[Any] = None,
+        agency_id: str = "agency_default",
     ) -> None:
         self.conn = conn
         self.clock = clock or SystemClock()
         self.ids = ids or IdFactory(seed="task")
+        self.agency_id = require_ref(agency_id, "agency_id")
+        self._ensure_agency_scope()
+
+    def _ensure_agency_scope(self) -> None:
+        now = self._stamp()
+        self.conn.execute(
+            "INSERT INTO agencies (agency_id, name, status, created_at, updated_at)"
+            " VALUES (?, ?, 'ACTIVE', ?, ?)"
+            " ON CONFLICT(agency_id) DO UPDATE SET updated_at = excluded.updated_at",
+            (self.agency_id, self.agency_id, now, now),
+        )
 
     # -- internals ----------------------------------------------------------
     def _now(self) -> datetime:
@@ -856,7 +868,10 @@ class OpsTaskService:
         self.conn.commit()
 
     def _row(self, task_id: str) -> sqlite3.Row:
-        row = self.conn.execute("SELECT * FROM ops_tasks WHERE task_id = ?", (task_id,)).fetchone()
+        row = self.conn.execute(
+            "SELECT * FROM ops_tasks WHERE task_id = ? AND agency_id = ?",
+            (task_id, self.agency_id),
+        ).fetchone()
         if row is None:
             raise TaskNotFound(
                 f"no such ops task: {task_id}",
@@ -867,14 +882,16 @@ class OpsTaskService:
 
     def _row_by_key(self, conn: sqlite3.Connection, key: str) -> Optional[sqlite3.Row]:
         return conn.execute(
-            "SELECT * FROM ops_tasks WHERE idempotency_key = ?", (key,)
+            "SELECT * FROM ops_tasks WHERE agency_id = ? AND idempotency_key = ?",
+            (self.agency_id, key),
         ).fetchone()
 
     def _require_refs_exist(self, conn: sqlite3.Connection, refs: Mapping[str, str]) -> None:
         for field_name, value in refs.items():
             table, column = _REF_TABLES[field_name]
             found = conn.execute(
-                f"SELECT 1 FROM {table} WHERE {column} = ? LIMIT 1", (value,)
+                f"SELECT 1 FROM {table} WHERE {column} = ? AND agency_id = ? LIMIT 1",
+                (value, self.agency_id),
             ).fetchone()
             if found is None:
                 raise TaskRefNotFound(
@@ -885,7 +902,10 @@ class OpsTaskService:
                 )
 
     def _require_active_row(self, conn: sqlite3.Connection, task_id: str) -> sqlite3.Row:
-        row = conn.execute("SELECT * FROM ops_tasks WHERE task_id = ?", (task_id,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM ops_tasks WHERE task_id = ? AND agency_id = ?",
+            (task_id, self.agency_id),
+        ).fetchone()
         if row is None:
             raise TaskNotFound(
                 f"no such ops task: {task_id}",
@@ -946,11 +966,12 @@ class OpsTaskService:
             self._require_refs_exist(conn, refs)
             conn.execute(
                 "INSERT INTO ops_tasks ("
-                "task_id, kind, booking_id, unit_id, case_id, due_at, priority, assignee, "
+                "task_id, agency_id, kind, booking_id, unit_id, case_id, due_at, priority, assignee, "
                 "status, checklist, idempotency_key, created_at, updated_at, completed_at, blocked_reason"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)",
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)",
                 (
                     task_id,
+                    self.agency_id,
                     kind_value,
                     refs.get("booking_id"),
                     refs.get("unit_id"),
@@ -1043,7 +1064,8 @@ class OpsTaskService:
     def find_by_idempotency_key(self, idempotency_key: Any) -> Optional[Task]:
         key = _require_idempotency_key(idempotency_key)
         row = self.conn.execute(
-            "SELECT * FROM ops_tasks WHERE idempotency_key = ?", (key,)
+            "SELECT * FROM ops_tasks WHERE agency_id = ? AND idempotency_key = ?",
+            (self.agency_id, key),
         ).fetchone()
         return None if row is None else Task.from_row(row)
 
@@ -1066,8 +1088,8 @@ class OpsTaskService:
         the canonical UTC stamps this module writes, so the ordering and the
         comparison agree with each other.
         """
-        clauses: list[str] = []
-        params: list[Any] = []
+        clauses: list[str] = ["agency_id = ?"]
+        params: list[Any] = [self.agency_id]
         if statuses is not None:
             wanted = [_require_status(status) for status in statuses]
             if not wanted:
@@ -1190,7 +1212,8 @@ class OpsTaskService:
 
     def _counts(self, column: str, vocabulary: Sequence[str]) -> dict[str, int]:
         rows = self.conn.execute(
-            f"SELECT {column} AS value, COUNT(*) AS total FROM ops_tasks GROUP BY {column}"
+            f"SELECT {column} AS value, COUNT(*) AS total FROM ops_tasks WHERE agency_id = ? GROUP BY {column}",
+            (self.agency_id,),
         ).fetchall()
         found = {str(row["value"]): int(row["total"]) for row in rows}
         return {name: found.get(name, 0) for name in vocabulary}
