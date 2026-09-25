@@ -1234,8 +1234,8 @@ class InvoiceService:
     def _idempotent_lookup(self, key: str, operation: str, request_hash: str) -> Optional[str]:
         row = self._conn.execute(
             "SELECT operation, request_hash, result_ref FROM idempotency_keys"
-            " WHERE idempotency_key = ?",
-            (key,),
+            " WHERE idempotency_key = ? AND agency_id = ?",
+            (key, self.agency_id),
         ).fetchone()
         if row is None:
             return None
@@ -1252,10 +1252,11 @@ class InvoiceService:
         self, key: str, operation: str, request_hash: str, result_ref: str, result: Any
     ) -> None:
         self._conn.execute(
-            "INSERT INTO idempotency_keys (idempotency_key, operation, request_hash, result_ref,"
-            " result_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO idempotency_keys (idempotency_key, agency_id, operation, request_hash,"
+            " result_ref, result_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 key,
+                self.agency_id,
                 operation,
                 request_hash,
                 result_ref,

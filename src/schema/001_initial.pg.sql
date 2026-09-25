@@ -341,7 +341,7 @@ CREATE TABLE holds (
     CONSTRAINT fk_holds_property FOREIGN KEY (property_id) REFERENCES properties (property_id),
     CONSTRAINT fk_holds_policy FOREIGN KEY (policy_version_id) REFERENCES policy_versions (policy_version_id),
     CONSTRAINT fk_holds_evidence FOREIGN KEY (evidence_id) REFERENCES availability_evidence (evidence_id),
-    CONSTRAINT uq_holds_idempotency UNIQUE (idempotency_key),
+    CONSTRAINT uq_holds_idempotency UNIQUE (agency_id, idempotency_key),
     CONSTRAINT ck_holds_stay CHECK (check_in < check_out),
     CONSTRAINT ck_holds_expiry CHECK (created_at < expires_at),
     CONSTRAINT ck_holds_closed CHECK ((status = 'ACTIVE') OR (closed_at IS NOT NULL))
@@ -398,7 +398,7 @@ CREATE TABLE bookings (
     CONSTRAINT fk_bookings_property FOREIGN KEY (property_id) REFERENCES properties (property_id),
     CONSTRAINT fk_bookings_unit FOREIGN KEY (unit_id) REFERENCES units (unit_id),
     CONSTRAINT fk_bookings_policy FOREIGN KEY (policy_version_id) REFERENCES policy_versions (policy_version_id),
-    CONSTRAINT uq_bookings_idempotency UNIQUE (idempotency_key),
+    CONSTRAINT uq_bookings_idempotency UNIQUE (agency_id, idempotency_key),
     CONSTRAINT ck_bookings_stay CHECK (check_in < check_out),
     CONSTRAINT ck_booking_paid_le_total CHECK (amount_paid_minor <= total_minor)
 );
@@ -464,17 +464,21 @@ CREATE TABLE audit_events (
 
 CREATE INDEX ix_audit_entity ON audit_events (entity_type, entity_id, seq);
 
--- Idempotency ledger: the primary key is the key alone, so keys are globally
--- unique across operations — a caller that reuses one key for a different
--- operation gets a conflict instead of a silent double-write.
+-- Idempotency ledger. The key is unique *within an agency*, not across the whole
+-- platform: two agencies are separate businesses and picking the same string
+-- ("hold-2026-10-01") is not a conflict they caused. Within one agency the
+-- guarantee is unchanged — reusing a key for a different operation or payload
+-- raises IDEMPOTENCY_CONFLICT instead of silently double-writing.
 CREATE TABLE idempotency_keys (
     idempotency_key TEXT    NOT NULL,
+    agency_id       TEXT    NOT NULL DEFAULT 'agency_default',
     operation       TEXT    NOT NULL,
     request_hash    TEXT    NOT NULL CHECK (length(request_hash) = 64),
     result_ref      TEXT,
     result_hash     TEXT,
     created_at      TEXT    NOT NULL,
-    CONSTRAINT pk_idempotency_keys PRIMARY KEY (idempotency_key)
+    CONSTRAINT pk_idempotency_keys PRIMARY KEY (agency_id, idempotency_key),
+    CONSTRAINT fk_idempotency_keys_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id)
 );
 
 -- --------------------------------------------------------------------------
@@ -515,7 +519,7 @@ CREATE TABLE cases (
     CONSTRAINT pk_cases PRIMARY KEY (case_id),
     CONSTRAINT fk_cases_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
     CONSTRAINT fk_cases_booking FOREIGN KEY (booking_id) REFERENCES bookings (booking_id),
-    CONSTRAINT uq_cases_idempotency UNIQUE (idempotency_key),
+    CONSTRAINT uq_cases_idempotency UNIQUE (agency_id, idempotency_key),
     CONSTRAINT ck_cases_sla_window CHECK (created_at < first_response_due_at AND first_response_due_at <= quote_due_at),
     CONSTRAINT ck_cases_closed CHECK (status NOT LIKE 'CLOSED_%' OR closed_at IS NOT NULL),
     CONSTRAINT ck_cases_close_reason CHECK (status NOT LIKE 'CLOSED_%' OR (close_reason IS NOT NULL AND length(close_reason) >= 3))
@@ -985,7 +989,7 @@ CREATE TABLE ops_tasks (
     CONSTRAINT fk_ops_tasks_booking FOREIGN KEY (booking_id) REFERENCES bookings (booking_id),
     CONSTRAINT fk_ops_tasks_unit FOREIGN KEY (unit_id) REFERENCES units (unit_id),
     CONSTRAINT fk_ops_tasks_case FOREIGN KEY (case_id) REFERENCES cases (case_id),
-    CONSTRAINT uq_ops_tasks_idempotency UNIQUE (idempotency_key),
+    CONSTRAINT uq_ops_tasks_idempotency UNIQUE (agency_id, idempotency_key),
     CONSTRAINT ck_ops_tasks_done CHECK (status NOT IN ('DONE','CANCELLED') OR completed_at IS NOT NULL),
     CONSTRAINT ck_ops_tasks_blocked CHECK (status <> 'BLOCKED' OR (blocked_reason IS NOT NULL AND length(blocked_reason) >= 3))
 );

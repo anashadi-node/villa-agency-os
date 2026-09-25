@@ -1422,7 +1422,8 @@ class ReservationKernel:
         request_hash: str,
     ) -> Optional[str]:
         row = conn.execute(
-            "SELECT * FROM idempotency_keys WHERE idempotency_key = ?", (idempotency_key,)
+            "SELECT * FROM idempotency_keys WHERE idempotency_key = ? AND agency_id = ?",
+            (idempotency_key, self.agency_id),
         ).fetchone()
         if row is None:
             return None
@@ -1447,11 +1448,13 @@ class ReservationKernel:
         conn.execute(
             """
             INSERT INTO idempotency_keys (
-                idempotency_key, operation, request_hash, result_ref, result_hash, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                idempotency_key, agency_id, operation, request_hash, result_ref,
+                result_hash, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 idempotency_key,
+                self.agency_id,
                 operation,
                 request_hash,
                 result_ref,
