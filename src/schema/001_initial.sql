@@ -662,6 +662,8 @@ CREATE TABLE approval_decisions (
     request_hash   TEXT    NOT NULL CHECK (length(request_hash) = 64),
     signature_hash TEXT    NOT NULL CHECK (length(signature_hash) = 64),
     CONSTRAINT pk_approval_decisions PRIMARY KEY (decision_id),
+    CONSTRAINT fk_approval_decisions_request FOREIGN KEY (approval_id)
+        REFERENCES approval_requests (approval_id),
     CONSTRAINT uq_approval_decision_once UNIQUE (approval_id, approver),
     CONSTRAINT ck_approval_decision_self CHECK (approver <> '')
 );
@@ -690,6 +692,8 @@ CREATE TABLE message_drafts (
     sent_at        TEXT,
     external_ref   TEXT,
     CONSTRAINT pk_message_drafts PRIMARY KEY (draft_id),
+    CONSTRAINT fk_drafts_approval FOREIGN KEY (approval_id)
+        REFERENCES approval_requests (approval_id),
     CONSTRAINT fk_drafts_case FOREIGN KEY (case_id) REFERENCES cases (case_id),
     CONSTRAINT fk_drafts_booking FOREIGN KEY (booking_id) REFERENCES bookings (booking_id),
     CONSTRAINT ck_drafts_grounded_before_approval CHECK (grounding = 'GROUNDED' OR status NOT IN ('APPROVED','SENT')),

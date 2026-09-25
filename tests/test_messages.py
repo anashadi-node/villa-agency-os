@@ -1071,9 +1071,19 @@ class QueryTests(MessageTestCase):
         self.assertEqual("APPROVED", self.svc.verify(self.approved().draft_id).approval_status)
 
     def test_verify_reports_a_missing_approval_row(self):
-        draft = self.approved()
-        self.conn.execute("DELETE FROM approval_requests WHERE subject_id = ?",
-                          (draft.draft_id,))
+        """An APPROVED draft with nothing behind the claim is reported, not trusted.
+
+        Wave 1-F-C added the foreign key that makes a *dangling* ``approval_id``
+        impossible, so the reachable form of this lie is now a draft stored
+        APPROVED with no approval at all. Both states hit the same branch, and
+        ``verify`` must still refuse to believe the status column.
+        """
+        draft = self.make()
+        self.conn.execute(
+            "UPDATE message_drafts SET status = 'APPROVED', approved_by = 'owner_1',"
+            " approved_at = ?, approval_id = NULL WHERE draft_id = ?",
+            (NOW.isoformat(), draft.draft_id),
+        )
         self.assertIn("APPROVAL_MISSING", self.svc.verify(draft.draft_id).mismatches)
 
     def test_draft_ids_are_unique_and_prefixed(self):
