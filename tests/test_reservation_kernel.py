@@ -198,9 +198,11 @@ class TestSchemaAndFixtures(KernelTestCase):
 
 
 class TestHoldLifecycle(KernelTestCase):
-    def test_hold_is_created_active_with_the_policy_ttl(self):
+    def test_hold_is_created_confirmed_with_the_policy_ttl(self):
         outcome = self.hold()
-        self.assertEqual(outcome.status, RK.HOLD_ACTIVE)
+        self.assertEqual(outcome.status, RK.HOLD_CONFIRMED)
+        # §7: the expiry carries the zone it was agreed in.
+        self.assertEqual(self.kernel.get_hold(outcome.hold_id)["expires_timezone"], "Asia/Makassar")
         self.assertEqual(outcome.nights, 2)
         self.assertFalse(outcome.replayed)
         self.assertEqual(outcome.expires_at, "2026-09-21T12:00:00+00:00")  # 720 minutes
@@ -222,7 +224,7 @@ class TestHoldLifecycle(KernelTestCase):
         hold = self.hold()
         self.kernel.release_hold(hold.hold_id, reason="guest changed dates")
         second = self.hold(key="idem_hold_0002")
-        self.assertEqual(second.status, RK.HOLD_ACTIVE)
+        self.assertEqual(second.status, RK.HOLD_CONFIRMED)
 
     def test_releasing_twice_is_idempotent(self):
         hold = self.hold()
@@ -235,11 +237,14 @@ class TestHoldLifecycle(KernelTestCase):
             self.kernel.release_hold(hold.hold_id, reason="   ")
 
     def test_expired_hold_can_no_longer_be_released(self):
+        """§7: only an authoritative source may close an unverified expiry."""
         hold = self.hold()
         self.kernel.expire_hold(hold.hold_id)
         with self.assertRaises(DomainError) as ctx:
             self.kernel.release_hold(hold.hold_id, reason="too late")
-        self.assertEqual(ctx.exception.code, "HOLD_NOT_ACTIVE")
+        self.assertEqual(
+            ctx.exception.code, "HOLD_VERIFICATION_REQUIRES_AUTHORITATIVE_EVIDENCE"
+        )
 
     def test_sweep_expires_only_holds_past_their_ttl(self):
         first = self.hold(check_in="2026-10-01", check_out="2026-10-03", key="idem_a_0001")
@@ -248,43 +253,56 @@ class TestHoldLifecycle(KernelTestCase):
         self.assertEqual(self.kernel.sweep_expired_holds(), ())
         self.kernel.clock.set("2026-09-21T13:00:00+00:00")
         self.assertEqual(self.kernel.sweep_expired_holds(), (first.hold_id, second.hold_id))
-        self.assertEqual(self.kernel.get_hold(first.hold_id)["status"], RK.HOLD_EXPIRED)
+        self.assertEqual(
+            self.kernel.get_hold(first.hold_id)["status"],
+            RK.HOLD_EXPIRED_PENDING_VERIFICATION,
+        )
         self.assertEqual(self.kernel.get_hold(first.hold_id)["close_reason"], "ttl_expired")
 
-    def test_swept_hold_frees_the_slot_for_a_new_hold(self):
+    def test_swept_hold_keeps_the_slot_until_it_is_verified(self):
+        """§7: an expiry the platform has not verified is not a release."""
         first = self.hold()
         self.kernel.clock.set("2026-09-21T13:00:00+00:00")
         self.kernel.sweep_expired_holds()
-        second = self.hold(key="idem_hold_0002")
-        self.assertNotEqual(second.hold_id, first.hold_id)
+        with self.assertRaises(DomainError) as ctx:
+            self.hold(key="idem_hold_0002")
+        self.assertEqual(ctx.exception.code, "SLOT_ALREADY_HELD")
+        self.assertEqual(
+            self.kernel.get_hold(first.hold_id)["status"],
+            RK.HOLD_EXPIRED_PENDING_VERIFICATION,
+        )
 
     def test_extension_extends_the_expiry_and_counts(self):
+        """§7: the request moves nothing; the confirmation moves the expiry."""
         hold = self.hold()
-        new_expiry = self.kernel.extend_hold(hold.hold_id)
+        before = self.kernel.get_hold(hold.hold_id)["expires_at"]
+        extension_id = self.kernel.request_extension(hold.hold_id)
+        self.assertEqual(self.kernel.get_hold(hold.hold_id)["expires_at"], before)
+        new_expiry = self.kernel.confirm_extension(extension_id)
         self.assertEqual(new_expiry, "2026-09-22T00:00:00+00:00")
         self.assertEqual(self.kernel.get_hold(hold.hold_id)["extended_count"], 1)
 
     def test_extension_beyond_the_policy_limit_is_refused(self):
         hold = self.hold()
-        self.kernel.extend_hold(hold.hold_id)
-        self.kernel.extend_hold(hold.hold_id)
+        for _ in range(2):
+            self.kernel.confirm_extension(self.kernel.request_extension(hold.hold_id))
         with self.assertRaises(DomainError) as ctx:
-            self.kernel.extend_hold(hold.hold_id)
+            self.kernel.request_extension(hold.hold_id)
         self.assertEqual(ctx.exception.code, "HOLD_EXTENSION_LIMIT")
 
     def test_cannot_extend_an_expired_hold(self):
         hold = self.hold()
         self.kernel.clock.set("2026-09-21T13:00:00+00:00")
         with self.assertRaises(DomainError) as ctx:
-            self.kernel.extend_hold(hold.hold_id)
+            self.kernel.request_extension(hold.hold_id)
         self.assertEqual(ctx.exception.code, "HOLD_ALREADY_EXPIRED")
 
     def test_cannot_extend_a_released_hold(self):
         hold = self.hold()
         self.kernel.release_hold(hold.hold_id, reason="done")
         with self.assertRaises(DomainError) as ctx:
-            self.kernel.extend_hold(hold.hold_id)
-        self.assertEqual(ctx.exception.code, "HOLD_NOT_ACTIVE")
+            self.kernel.request_extension(hold.hold_id)
+        self.assertEqual(ctx.exception.code, "HOLD_ILLEGAL_TRANSITION")
 
 
 class TestNoDoubleBooking(KernelTestCase):
@@ -391,7 +409,10 @@ class TestNoDoubleBooking(KernelTestCase):
             adults=2,
         )
         self.kernel.cancel_booking(booking_id=booking.booking_id, reason="guest cancelled", command_id="cmd_0002")
-        self.assertEqual(self.hold(check_in="2026-10-02", check_out="2026-10-04", key="idem_hold_0009").status, RK.HOLD_ACTIVE)
+        self.assertEqual(
+            self.hold(check_in="2026-10-02", check_out="2026-10-04", key="idem_hold_0009").status,
+            RK.HOLD_CONFIRMED,
+        )
 
     def test_occupancy_reports_holds_and_bookings(self):
         quote = self.persist_quote()

@@ -40,6 +40,7 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from audit import AuditLog  # noqa: E402
+from hold_states import LIVE_HOLD_STATES  # noqa: E402
 from primitives import (  # noqa: E402
     DomainError,
     IdFactory,
@@ -306,9 +307,11 @@ class Scheduler:
     def _sweep_holds(self, *, dry_run: bool) -> SweepOutcome:
         now_iso = self._now_iso()
         due = self._rows(
-            "SELECT hold_id FROM holds WHERE status = 'ACTIVE' AND expires_at <= ? "
-            "AND agency_id = ? ORDER BY hold_id",
-            (now_iso, self.agency_id),
+            "SELECT hold_id FROM holds WHERE status IN ({}) AND expires_at <= ? "
+            "AND agency_id = ? ORDER BY hold_id".format(
+                ", ".join("?" for _ in LIVE_HOLD_STATES)
+            ),
+            (*LIVE_HOLD_STATES, now_iso, self.agency_id),
         )
         if dry_run:
             return SweepOutcome("holds", changed=len(due), examined=len(due))

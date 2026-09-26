@@ -61,6 +61,7 @@ from approvals import (
     ApprovalService,
 )
 from audit import AuditEvent, ChainAnchor, verify_chain
+from hold_states import LIVE_HOLD_STATES, OCCUPYING_HOLD_STATES
 from primitives import (
     DEFAULT_AGENCY_ID,
     resolve_agency_id,
@@ -880,8 +881,11 @@ class Dashboard:
                 (self.agency_id, PENDING_APPROVAL_STATUS),
             ),
             "holds_expiring_today": self._count(
-                "SELECT COUNT(*) FROM holds WHERE agency_id = ? AND status = 'ACTIVE' AND substr(expires_at, 1, 10) = ?",
-                (self.agency_id, today),
+                "SELECT COUNT(*) FROM holds WHERE agency_id = ? AND status IN ({})"
+                " AND substr(expires_at, 1, 10) = ?".format(
+                    ", ".join("?" for _ in LIVE_HOLD_STATES)
+                ),
+                (self.agency_id, *LIVE_HOLD_STATES, today),
             ),
             "unpaid_invoices": self._count(
                 "SELECT COUNT(*) FROM invoices WHERE agency_id = ? AND status = 'ISSUED' "
@@ -1384,7 +1388,10 @@ class Dashboard:
                 booked_index.setdefault(str(row["unit_id"]), []).append(row)
         hold_index: dict[str, list[Any]] = {}
         for row in holds:
-            if str(row["status"]) == "ACTIVE" and str(row["expires_at"]) > now:
+            # A hold marks its cells for as long as it blocks the slot — including the
+            # ones pending verification (§7). Showing those as free would contradict
+            # what the kernel does with the next request for the same dates.
+            if str(row["status"]) in OCCUPYING_HOLD_STATES:
                 hold_index.setdefault(str(row["unit_id"]), []).append(row)
 
         rows = []
@@ -1428,7 +1435,8 @@ class Dashboard:
             else empty_note("unit untuk kalender"),
             "legend": Markup(
                 '<p class="muted" data-note="legend">BOOKED = booking aktif pada tanggal itu; '
-                "HOLD = hold ACTIVE yang belum kedaluwarsa; UNKNOWN = tidak ada bukti "
+                "HOLD = hold yang masih memblokir slot (termasuk yang menunggu verifikasi); "
+                "UNKNOWN = tidak ada bukti "
                 "ketersediaan (bukan berarti tersedia).</p>"
             ),
         }

@@ -255,14 +255,23 @@ class TestPostgresOnlyHardening(unittest.TestCase):
         self.assertIn("ex_holds_no_overlap", self.text)
         self.assertIn("ex_bookings_no_overlap", self.text)
 
-    def test_exclusions_are_partial_to_active_rows_only(self):
-        self.assertRegex(self.text, r"WHERE \(status = 'ACTIVE'\)")
-        self.assertRegex(self.text, r"WHERE \(status IN \('CONFIRMED'")
+    def test_exclusions_are_partial_to_the_occupying_rows_only(self):
+        """An expired-but-unverified hold still blocks its slot (§7)."""
+        import hold_states as HS
+
+        holds_match = re.search(
+            r"ex_holds_no_overlap.*?WHERE \(status IN \(([^)]*)\)\)", self.text, re.S
+        )
+        self.assertIsNotNone(holds_match)
+        listed = {value.strip().strip("'") for value in holds_match.group(1).split(",")}
+        self.assertEqual(listed, set(HS.OCCUPYING_HOLD_STATES))
 
     def test_booking_status_list_matches_the_kernel_constant(self):
         import reservation_kernel as RK
 
-        match = re.search(r"WHERE \(status IN \(([^)]*)\)\)", self.text)
+        match = re.search(
+            r"ex_bookings_no_overlap.*?WHERE \(status IN \(([^)]*)\)\)", self.text, re.S
+        )
         self.assertIsNotNone(match)
         listed = {value.strip().strip("'") for value in match.group(1).split(",")}
         self.assertEqual(listed, set(RK.OCCUPYING_BOOKING_STATES))
@@ -362,20 +371,22 @@ class TestLivePostgres(unittest.TestCase):
         first_hold = (
             "INSERT INTO holds (hold_id, unit_id, property_id, check_in, check_out, nights,"
             " status, guest_ref, quote_ref, policy_version_id, evidence_id, idempotency_key,"
-            " created_at, expires_at, closed_at, close_reason, extended_count)"
+            " created_at, expires_at, expires_timezone, closed_at, close_reason,"
+            " extended_count)"
             " VALUES ('hold_pg_1', 'unit_pg_probe', 'prop_pg_probe', '2026-10-01',"
             " '2026-10-03', 2, 'ACTIVE', 'guest_probe', NULL, 'policy_probe',"
             " 'evid_pg_probe', 'idem_pg_0001', '2026-09-21T00:00:00+00:00',"
-            " '2026-09-22T00:00:00+00:00', NULL, NULL, 0)"
+            " '2026-09-22T00:00:00+00:00', 'Asia/Makassar', NULL, NULL, 0)"
         )
         overlapping_hold = (
             "INSERT INTO holds (hold_id, unit_id, property_id, check_in, check_out, nights,"
             " status, guest_ref, quote_ref, policy_version_id, evidence_id, idempotency_key,"
-            " created_at, expires_at, closed_at, close_reason, extended_count)"
+            " created_at, expires_at, expires_timezone, closed_at, close_reason,"
+            " extended_count)"
             " VALUES ('hold_pg_2', 'unit_pg_probe', 'prop_pg_probe', '2026-10-02',"
             " '2026-10-04', 2, 'ACTIVE', 'guest_probe2', NULL, 'policy_probe',"
             " 'evid_pg_probe', 'idem_pg_0002', '2026-09-21T00:00:00+00:00',"
-            " '2026-09-22T00:00:00+00:00', NULL, NULL, 0)"
+            " '2026-09-22T00:00:00+00:00', 'Asia/Makassar', NULL, NULL, 0)"
         )
 
         # The probe runs inside ONE transaction that is rolled back. Several of
@@ -393,11 +404,13 @@ class TestLivePostgres(unittest.TestCase):
                 cur.execute(
                     "INSERT INTO holds (hold_id, unit_id, property_id, check_in, check_out,"
                     " nights, status, guest_ref, quote_ref, policy_version_id, evidence_id,"
-                    " idempotency_key, created_at, expires_at, closed_at, close_reason,"
-                    " extended_count) VALUES ('hold_pg_3', 'unit_pg_probe', 'prop_pg_probe',"
+                    " idempotency_key, created_at, expires_at, expires_timezone, closed_at,"
+                    " close_reason, extended_count) VALUES ('hold_pg_3', 'unit_pg_probe',"
+                    " 'prop_pg_probe',"
                     " '2026-10-03', '2026-10-05', 2, 'ACTIVE', 'guest_probe3', NULL,"
                     " 'policy_probe', 'evid_pg_probe', 'idem_pg_0003',"
-                    " '2026-09-21T00:00:00+00:00', '2026-09-22T00:00:00+00:00', NULL, NULL, 0)"
+                    " '2026-09-21T00:00:00+00:00', '2026-09-22T00:00:00+00:00',"
+                    " 'Asia/Makassar', NULL, NULL, 0)"
                 )
                 with self.assertRaises(psycopg2.errors.ExclusionViolation):
                     cur.execute(overlapping_hold)

@@ -207,7 +207,7 @@ class Probe(SeedMixin):
         self,
         hold_id: str = "hold_0001",
         *,
-        status: str = "ACTIVE",
+        status: str = "CONFIRMED",
         offset: int = 0,
         expires_at: str = DAY,
         close_reason: str = "tamu membatalkan",
@@ -228,6 +228,7 @@ class Probe(SeedMixin):
             idempotency_key=f"idem_{hold_id}",
             created_at=CREATED,
             expires_at=expires_at,
+            expires_timezone="Asia/Makassar",
         )
         if status != "ACTIVE":
             columns["closed_at"] = PAST
@@ -860,7 +861,7 @@ class TestDenyReasonIntegrity:
         """P19: no candidate records an evidence id that is not in the database."""
         probe = Probe(conn)
         probe.add_unit("unit_0002", max_guests=2)
-        probe.hold("hold_busy", status="ACTIVE", offset=0)
+        probe.hold("hold_busy", status="CONFIRMED", offset=0)
         result = run_match(conn)
 
         checked = 0
@@ -981,10 +982,10 @@ class TestOccupancyExclusion:
         stored = conn.execute("SELECT check_in, check_out FROM bookings WHERE booking_id = 'book_later'").fetchone()
         assert stored["check_in"] >= CHECK_OUT
 
-    def test_active_hold_blocks_and_is_named_as_evidence(self, conn):
-        """P26: an ACTIVE hold occupies the slot and its id is recorded."""
+    def test_confirmed_hold_blocks_and_is_named_as_evidence(self, conn):
+        """P26: a CONFIRMED hold occupies the slot and its id is recorded."""
         probe = Probe(conn)
-        probe.hold("hold_busy", status="ACTIVE", offset=0)
+        probe.hold("hold_busy", status="CONFIRMED", offset=0)
         result = run_match(conn)
         row = candidate(conn, result.match_run_id, "unit_0001")
 
@@ -993,12 +994,12 @@ class TestOccupancyExclusion:
         assert json.loads(row["evidence_refs"]) == ["hold_busy"]
         assert conn.execute("SELECT status FROM holds WHERE hold_id = 'hold_busy'").fetchone()[
             "status"
-        ] == K.HOLD_ACTIVE
+        ] == K.HOLD_CONFIRMED
 
     def test_released_hold_does_not_block(self, conn):
-        """P27: a hold that is not ACTIVE does not occupy the slot."""
+        """P27: a hold that is not in force does not occupy the slot."""
         probe = Probe(conn)
-        probe.add_hold("hold_done", status="RELEASED", offset=0)
+        probe.add_hold("hold_done", status="RELEASE_CONFIRMED", offset=0)
         result = run_match(conn)
         row = candidate(conn, result.match_run_id, "unit_0001")
 

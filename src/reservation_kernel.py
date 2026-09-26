@@ -46,6 +46,24 @@ from availability import (
     RESTRICTION_KEYS,
     SOURCE_RESULTS,
 )
+from gates import (
+    CODE_EVIDENCE_STALE,
+    AvailabilityEvidence,
+    PURPOSE_CONFIRM,
+    gate_availability,
+)
+from hold_states import (
+    CLOSED_HOLD_STATES,
+    HOLD_CONFIRMED,
+    HOLD_CONVERTED,
+    HOLD_EXPIRED_PENDING_VERIFICATION,
+    HOLD_EXTENSION_REQUESTED,
+    HOLD_RELEASE_CONFIRMED,
+    LIVE_HOLD_STATES,
+    OCCUPYING_HOLD_STATES,
+    can_transition,
+    resolve_timezone,
+)
 from primitives import (
     DomainError,
     IdFactory,
@@ -67,19 +85,18 @@ __all__ = [
     "ReservationKernel",
     "HoldOutcome",
     "BookingOutcome",
-    "HOLD_ACTIVE",
-    "HOLD_RELEASED",
+    "HOLD_CONFIRMED",
+    "HOLD_RELEASE_CONFIRMED",
     "HOLD_CONVERTED",
-    "HOLD_EXPIRED",
+    "HOLD_EXPIRED_PENDING_VERIFICATION",
     "BOOKING_STATES",
     "OCCUPYING_BOOKING_STATES",
     "DEFAULT_ROLE",
 ]
 
-HOLD_ACTIVE = "ACTIVE"
-HOLD_RELEASED = "RELEASED"
-HOLD_CONVERTED = "CONVERTED"
-HOLD_EXPIRED = "EXPIRED"
+# The hold vocabulary lives in one place (``hold_states``, imported above): the
+# schema CHECK, the partial unique index and the PG exclusion constraint each
+# restate it, and ``tests/test_wave4b_hold_lifecycle.py`` pins them together.
 
 #: Statuses that make a booking occupy its slot. Must match the partial unique
 #: index ``uq_bookings_active_slot`` in the schema — the two are a pair.
@@ -794,18 +811,29 @@ class ReservationKernel:
                 raise DomainError("ttl_minutes must be positive", code="HOLD_INVALID_TTL")
             hold_id = self.ids.new("hold")
             expires_at = to_iso(parse_iso(now) + timedelta(minutes=ttl))
+            # §7: an expiry without the zone it was agreed in is half a fact.
+            property_row = conn.execute(
+                "SELECT timezone FROM properties WHERE property_id = ?", (property_id,)
+            ).fetchone()
+            if property_row is None:  # pragma: no cover - FK guarantees this
+                raise DomainError(
+                    f"unknown property: {property_id}", code="PROPERTY_NOT_FOUND"
+                )
+            expires_timezone = resolve_timezone(property_row["timezone"])
             conn.execute(
                 """
                 INSERT INTO holds (
                     hold_id, agency_id, unit_id, property_id, check_in, check_out, nights, status,
                     guest_ref, quote_ref, policy_version_id, evidence_id, idempotency_key,
-                    created_at, expires_at, closed_at, close_reason, extended_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0)
+                    created_at, expires_at, expires_timezone, closed_at, close_reason,
+                    extended_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0)
                 """,
                 (
-                    hold_id, self.agency_id, unit_id, property_id, check_in, check_out, nights, HOLD_ACTIVE,
+                    hold_id, self.agency_id, unit_id, property_id, check_in, check_out, nights,
+                    HOLD_CONFIRMED,
                     guest_ref, quote_ref, policy_version_id, evidence_id, idempotency_key,
-                    now, expires_at,
+                    now, expires_at, expires_timezone,
                 ),
             )
             self._record_idempotency(conn, "request_hold", idempotency_key, request_hash, hold_id)
@@ -814,7 +842,12 @@ class ReservationKernel:
                 action="hold.requested",
                 entity_type="hold",
                 entity_id=hold_id,
-                after={"status": HOLD_ACTIVE, "unit_id": unit_id, "expires_at": expires_at},
+                after={
+                    "status": HOLD_CONFIRMED,
+                    "unit_id": unit_id,
+                    "expires_at": expires_at,
+                    "expires_timezone": expires_timezone,
+                },
                 reason=None,
                 policy_version_id=policy_version_id,
                 evidence_ref=evidence_id,
@@ -822,7 +855,7 @@ class ReservationKernel:
             return HoldOutcome(
                 hold_id=hold_id,
                 unit_id=unit_id,
-                status=HOLD_ACTIVE,
+                status=HOLD_CONFIRMED,
                 check_in=check_in,
                 check_out=check_out,
                 nights=nights,
@@ -831,39 +864,70 @@ class ReservationKernel:
             )
 
     def release_hold(self, hold_id: str, *, reason: str, actor: Optional[str] = None) -> str:
-        """Release an active hold so the slot can be sold again."""
-        return self._close_hold(hold_id, status=HOLD_RELEASED, reason=reason, actor=actor)
+        """Release a hold so the slot can be sold again."""
+        hold_id = require_ref(hold_id, "hold_id")
+        reason = require_text(reason, "reason", max_len=200)
+        with self.transaction() as conn:
+            return self._transition_hold(
+                conn,
+                hold_id,
+                HOLD_RELEASE_CONFIRMED,
+                reason=reason,
+                actor=actor,
+                action="hold.released",
+            )
 
     def expire_hold(self, hold_id: str, *, actor: Optional[str] = None) -> str:
-        """Mark a hold expired (normally called by :meth:`sweep_expired_holds`)."""
-        return self._close_hold(hold_id, status=HOLD_EXPIRED, reason="ttl_expired", actor=actor)
+        """Record a TTL expiry as pending verification (§7), never as a release.
 
-    def extend_hold(self, hold_id: str, *, minutes: Optional[int] = None, actor: Optional[str] = None) -> str:
-        """Extend an active hold, bounded by the policy's extension limit."""
+        Normally called by :meth:`sweep_expired_holds`. A hold whose TTL ran out is
+        only *believed* to be over until an authoritative source says so.
+        """
         hold_id = require_ref(hold_id, "hold_id")
-        now = self._now()
+        with self.transaction() as conn:
+            return self._transition_hold(
+                conn,
+                hold_id,
+                HOLD_EXPIRED_PENDING_VERIFICATION,
+                reason="ttl_expired",
+                actor=actor,
+                action="hold.expired",
+            )
+
+    def request_extension(
+        self,
+        hold_id: str,
+        *,
+        minutes: Optional[int] = None,
+        timezone: Optional[str] = None,
+        actor: Optional[str] = None,
+    ) -> str:
+        """Ask for more time on a hold, without moving its expiry (§7).
+
+        "EXTENSION_REQUESTED tidak memperpanjang expiry sampai supplier
+        mengonfirmasi": the request is a row of its own, and the expiry moves only
+        in :meth:`confirm_extension`. Returns the extension request id.
+        """
+        hold_id = require_ref(hold_id, "hold_id")
         with self.transaction() as conn:
             hold = self._require_hold(conn, hold_id)
-            if hold["status"] != HOLD_ACTIVE:
+            if not can_transition(hold["status"], HOLD_EXTENSION_REQUESTED):
                 raise DomainError(
-                    "only an active hold can be extended",
-                    code="HOLD_NOT_ACTIVE",
+                    f"a hold in {hold['status']} cannot be extended",
+                    code="HOLD_ILLEGAL_TRANSITION",
                     hold_id=hold_id,
                     status=hold["status"],
                 )
-            if hold["expires_at"] <= now:
+            if hold["expires_at"] <= self._now():
+                # The TTL is already gone; asking for more time on a lapsed hold is a
+                # request to revive it, and §7 has no edge for that.
                 raise DomainError(
                     "hold already expired; release and re-request instead",
                     code="HOLD_ALREADY_EXPIRED",
                     hold_id=hold_id,
                     expires_at=hold["expires_at"],
                 )
-            policy = conn.execute(
-                "SELECT * FROM policy_versions WHERE policy_version_id = ?",
-                (hold["policy_version_id"],),
-            ).fetchone()
-            if policy is None:  # pragma: no cover - FK guarantees this
-                raise DomainError("hold references an unknown policy", code="POLICY_NOT_FOUND")
+            policy = self._require_policy(conn, hold["policy_version_id"])
             limit = int(policy["max_hold_extensions"])
             if hold["extended_count"] >= limit:
                 raise DomainError(
@@ -875,52 +939,211 @@ class ReservationKernel:
             step = minutes if minutes is not None else int(policy["hold_ttl_minutes"])
             if step <= 0:
                 raise DomainError("minutes must be positive", code="HOLD_INVALID_TTL")
-            new_expiry = to_iso(parse_iso(hold["expires_at"]) + timedelta(minutes=step))
+            agreed_zone = resolve_timezone(timezone or hold["expires_timezone"])
+            extension_id = self.ids.new("hext")
+            next_seq = conn.execute(
+                "SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM hold_extension_requests"
+                " WHERE hold_id = ?",
+                (hold_id,),
+            ).fetchone()["next_seq"]
             conn.execute(
-                "UPDATE holds SET expires_at = ?, extended_count = extended_count + 1 WHERE hold_id = ?",
-                (new_expiry, hold_id),
+                """
+                INSERT INTO hold_extension_requests (
+                    extension_id, agency_id, hold_id, seq, requested_minutes,
+                    requested_timezone, requested_at, requested_by, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'REQUESTED')
+                """,
+                (
+                    extension_id,
+                    self.agency_id,
+                    hold_id,
+                    next_seq,
+                    step,
+                    agreed_zone,
+                    self._now(),
+                    actor,
+                ),
+            )
+            self._transition_hold(
+                conn,
+                hold_id,
+                HOLD_EXTENSION_REQUESTED,
+                reason="extension_requested",
+                actor=actor,
+                action="hold.extension_requested",
+            )
+        return extension_id
+
+    def confirm_extension(self, extension_id: str, *, actor: Optional[str] = None) -> str:
+        """Confirm a requested extension: only now does the expiry move (§7)."""
+        extension_id = require_ref(extension_id, "extension_id")
+        with self.transaction() as conn:
+            request = self._require_extension(conn, extension_id)
+            if request["status"] != "REQUESTED":
+                raise DomainError(
+                    "only a requested extension can be confirmed",
+                    code="EXTENSION_ALREADY_DECIDED",
+                    extension_id=extension_id,
+                    status=request["status"],
+                )
+            hold = self._require_hold(conn, request["hold_id"])
+            if hold["status"] != HOLD_EXTENSION_REQUESTED:
+                raise DomainError(
+                    f"a hold in {hold['status']} has no extension to confirm",
+                    code="HOLD_ILLEGAL_TRANSITION",
+                    hold_id=hold["hold_id"],
+                    status=hold["status"],
+                )
+            if hold["expires_at"] <= self._now():
+                raise DomainError(
+                    "hold expired before the extension was confirmed",
+                    code="HOLD_ALREADY_EXPIRED",
+                    hold_id=hold["hold_id"],
+                    expires_at=hold["expires_at"],
+                )
+            policy = self._require_policy(conn, hold["policy_version_id"])
+            limit = int(policy["max_hold_extensions"])
+            if hold["extended_count"] >= limit:
+                raise DomainError(
+                    "hold extension limit reached",
+                    code="HOLD_EXTENSION_LIMIT",
+                    hold_id=hold["hold_id"],
+                    max_hold_extensions=limit,
+                )
+            step = int(request["requested_minutes"])
+            new_expiry = to_iso(parse_iso(hold["expires_at"]) + timedelta(minutes=step))
+            now = self._now()
+            conn.execute(
+                "UPDATE holds SET expires_at = ?, expires_timezone = ?,"
+                " extended_count = extended_count + 1 WHERE hold_id = ?",
+                (new_expiry, request["requested_timezone"], hold["hold_id"]),
+            )
+            conn.execute(
+                "UPDATE hold_extension_requests SET status = 'CONFIRMED', decided_at = ?,"
+                " decided_by = ?, decided_timezone = ? WHERE extension_id = ?",
+                (now, actor, request["requested_timezone"], extension_id),
             )
             self._audit(
                 conn,
-                action="hold.extended",
+                action="hold.extension_confirmed",
                 entity_type="hold",
-                entity_id=hold_id,
-                before={"expires_at": hold["expires_at"]},
-                after={"expires_at": new_expiry, "extended_count": hold["extended_count"] + 1},
-                reason=None,
+                entity_id=hold["hold_id"],
+                before={"expires_at": hold["expires_at"], "status": HOLD_EXTENSION_REQUESTED},
+                after={
+                    "expires_at": new_expiry,
+                    "expires_timezone": request["requested_timezone"],
+                    "extended_count": hold["extended_count"] + 1,
+                    "extension_id": extension_id,
+                },
+                reason="extension_confirmed",
                 policy_version_id=hold["policy_version_id"],
                 evidence_ref=hold["evidence_id"],
                 actor=actor,
             )
+            self._transition_hold(
+                conn,
+                hold["hold_id"],
+                HOLD_CONFIRMED,
+                reason="extension_confirmed",
+                actor=actor,
+                action="hold.extension_answered",
+            )
         return new_expiry
 
+    def reject_extension(
+        self, extension_id: str, *, reason: str, actor: Optional[str] = None
+    ) -> str:
+        """Refuse a requested extension: the expiry stays exactly where it was (§7)."""
+        extension_id = require_ref(extension_id, "extension_id")
+        reason = require_text(reason, "reason", max_len=200)
+        with self.transaction() as conn:
+            request = self._require_extension(conn, extension_id)
+            if request["status"] != "REQUESTED":
+                raise DomainError(
+                    "only a requested extension can be rejected",
+                    code="EXTENSION_ALREADY_DECIDED",
+                    extension_id=extension_id,
+                    status=request["status"],
+                )
+            hold = self._require_hold(conn, request["hold_id"])
+            conn.execute(
+                "UPDATE hold_extension_requests SET status = 'REJECTED', decided_at = ?,"
+                " decided_by = ?, reason = ? WHERE extension_id = ?",
+                (self._now(), actor, reason, extension_id),
+            )
+            self._audit(
+                conn,
+                action="hold.extension_rejected",
+                entity_type="hold",
+                entity_id=hold["hold_id"],
+                before={"expires_at": hold["expires_at"], "status": hold["status"]},
+                after={"expires_at": hold["expires_at"], "extension_id": extension_id},
+                reason=reason,
+                policy_version_id=hold["policy_version_id"],
+                evidence_ref=hold["evidence_id"],
+                actor=actor,
+            )
+            if hold["status"] == HOLD_EXTENSION_REQUESTED:
+                self._transition_hold(
+                    conn,
+                    hold["hold_id"],
+                    HOLD_CONFIRMED,
+                    reason="extension_rejected",
+                    actor=actor,
+                    action="hold.extension_answered",
+                )
+        return hold["expires_at"]
+
+    def verify_expired_hold(
+        self, hold_id: str, *, evidence_id: str, actor: Optional[str] = None
+    ) -> str:
+        """Close an unverified expiry once an authoritative source confirms it (§7)."""
+        hold_id = require_ref(hold_id, "hold_id")
+        evidence_id = require_ref(evidence_id, "evidence_id")
+        with self.transaction() as conn:
+            hold = self._require_hold(conn, hold_id)
+            if hold["status"] != HOLD_EXPIRED_PENDING_VERIFICATION:
+                raise DomainError(
+                    "hold is not pending verification",
+                    code="HOLD_NOT_PENDING_VERIFICATION",
+                    hold_id=hold_id,
+                    status=hold["status"],
+                )
+            return self._transition_hold(
+                conn,
+                hold_id,
+                HOLD_RELEASE_CONFIRMED,
+                reason="expiry_verified",
+                actor=actor,
+                evidence_ref=evidence_id,
+                action="hold.release_confirmed",
+            )
+
     def sweep_expired_holds(self, *, now: Optional[str] = None) -> tuple[str, ...]:
-        """Expire every hold whose TTL has passed; returns the affected ids."""
+        """Move every hold whose TTL has passed to EXPIRED_PENDING_VERIFICATION (§7).
+
+        The target state is deliberately not a release: only an authoritative source
+        may say the supplier's hold is really gone, so the slot stays blocked until
+        :meth:`verify_expired_hold` is satisfied. A hold that is already pending
+        verification is left alone, which is what makes the sweep idempotent.
+        """
         moment = now or self._now()
+        placeholders = ", ".join("?" for _ in LIVE_HOLD_STATES)
         with self.transaction() as conn:
             rows = conn.execute(
-                "SELECT hold_id FROM holds WHERE status = ? AND expires_at <= ? ORDER BY hold_id",
-                (HOLD_ACTIVE, moment),
+                f"SELECT hold_id FROM holds WHERE status IN ({placeholders})"
+                " AND expires_at <= ? ORDER BY hold_id",
+                (*LIVE_HOLD_STATES, moment),
             ).fetchall()
             for row in rows:
-                hold = self._require_hold(conn, row["hold_id"])
-                conn.execute(
-                    """
-                    UPDATE holds SET status = ?, closed_at = ?, close_reason = ?
-                    WHERE hold_id = ?
-                    """,
-                    (HOLD_EXPIRED, moment, "ttl_expired", row["hold_id"]),
-                )
-                self._audit(
+                self._transition_hold(
                     conn,
-                    action="hold.expired",
-                    entity_type="hold",
-                    entity_id=row["hold_id"],
-                    before={"status": HOLD_ACTIVE},
-                    after={"status": HOLD_EXPIRED, "closed_at": moment},
+                    row["hold_id"],
+                    HOLD_EXPIRED_PENDING_VERIFICATION,
                     reason="ttl_expired",
-                    policy_version_id=hold["policy_version_id"],
-                    evidence_ref=hold["evidence_id"],
+                    actor=None,
+                    action="hold.expired",
+                    at=moment,
                 )
         return tuple(row["hold_id"] for row in rows)
 
@@ -982,9 +1205,9 @@ class ReservationKernel:
                 ).fetchone()
                 if existing is not None:
                     return self._booking_outcome(conn, existing, replayed=True)
-            if hold["status"] != HOLD_ACTIVE:
+            if hold["status"] != HOLD_CONFIRMED:
                 raise DomainError(
-                    "only an active hold can be confirmed",
+                    "only a confirmed hold can be confirmed into a booking",
                     code="HOLD_NOT_ACTIVE",
                     hold_id=hold_id,
                     status=hold["status"],
@@ -1227,15 +1450,29 @@ class ReservationKernel:
             """
             SELECT 'hold' AS kind, hold_id AS id, status, check_in, check_out
             FROM holds
-            WHERE agency_id = ? AND unit_id = ? AND status = ? AND check_in < ? AND ? < check_out
+            WHERE agency_id = ? AND unit_id = ? AND status IN ({}) AND check_in < ? AND ? < check_out
             UNION ALL
             SELECT 'booking' AS kind, booking_id AS id, status, check_in, check_out
             FROM bookings
             WHERE agency_id = ? AND unit_id = ? AND status IN ({})
               AND check_in < ? AND ? < check_out
             ORDER BY check_in, id
-            """.format(", ".join("?" for _ in OCCUPYING_BOOKING_STATES)),
-            (self.agency_id, unit_id, HOLD_ACTIVE, end, start, self.agency_id, unit_id, *OCCUPYING_BOOKING_STATES, end, start),
+            """.format(
+                ", ".join("?" for _ in OCCUPYING_HOLD_STATES),
+                ", ".join("?" for _ in OCCUPYING_BOOKING_STATES),
+            ),
+            (
+                self.agency_id,
+                unit_id,
+                *OCCUPYING_HOLD_STATES,
+                end,
+                start,
+                self.agency_id,
+                unit_id,
+                *OCCUPYING_BOOKING_STATES,
+                end,
+                start,
+            ),
         ).fetchall()
         return tuple(dict(row) for row in rows)
 
@@ -1280,6 +1517,142 @@ class ReservationKernel:
         if row is None:
             raise DomainError(f"unknown hold: {hold_id}", code="HOLD_NOT_FOUND", hold_id=hold_id)
         return row
+
+    def _require_policy(self, conn: sqlite3.Connection, policy_version_id: str) -> sqlite3.Row:
+        row = conn.execute(
+            "SELECT * FROM policy_versions WHERE policy_version_id = ?", (policy_version_id,)
+        ).fetchone()
+        if row is None:  # pragma: no cover - the FK guarantees this
+            raise DomainError("hold references an unknown policy", code="POLICY_NOT_FOUND")
+        return row
+
+    def _require_extension(self, conn: sqlite3.Connection, extension_id: str) -> sqlite3.Row:
+        row = conn.execute(
+            "SELECT * FROM hold_extension_requests WHERE extension_id = ? AND agency_id = ?",
+            (extension_id, self.agency_id),
+        ).fetchone()
+        if row is None:
+            raise DomainError(
+                f"unknown extension request: {extension_id}",
+                code="EXTENSION_NOT_FOUND",
+                extension_id=extension_id,
+            )
+        return row
+
+    def _authoritative_evidence(
+        self, conn: sqlite3.Connection, hold: sqlite3.Row, evidence_id: str
+    ) -> sqlite3.Row:
+        """The evidence §7 demands before an expiry may be treated as a release.
+
+        "Authoritative integration" is level A (``property_api``/``booking_engine``);
+        a written note or an iCal feed is not. The row must also be about the same
+        unit, carry the confirm capability and still be fresh for its level — all of
+        which the availability gate already decides, so this asks the gate rather
+        than restating its rules in a second place.
+        """
+        row = conn.execute(
+            "SELECT * FROM availability_evidence WHERE evidence_id = ? AND agency_id = ?",
+            (evidence_id, self.agency_id),
+        ).fetchone()
+        if row is None:
+            raise DomainError(
+                f"unknown availability evidence: {evidence_id}",
+                code="EVIDENCE_NOT_FOUND",
+                evidence_id=evidence_id,
+            )
+        if row["unit_id"] != hold["unit_id"]:
+            raise DomainError(
+                "the verification evidence is about a different unit",
+                code="HOLD_VERIFICATION_UNIT_MISMATCH",
+                evidence_unit=row["unit_id"],
+                unit_id=hold["unit_id"],
+            )
+        if row["evidence_level"] != "A":
+            raise DomainError(
+                "an expiry may only be verified by an authoritative source",
+                code="HOLD_VERIFICATION_REQUIRES_AUTHORITATIVE_EVIDENCE",
+                evidence_level=row["evidence_level"],
+            )
+        decision = gate_availability(
+            # ``from_row`` takes a mapping; a sqlite3.Row is not one.
+            AvailabilityEvidence.from_row(dict(row)),
+            purpose=PURPOSE_CONFIRM,
+            now=self._now(),
+        )
+        if decision.denied:
+            raise DomainError(
+                "the verification evidence is not usable",
+                code=(
+                    "HOLD_VERIFICATION_EVIDENCE_STALE"
+                    if decision.code == CODE_EVIDENCE_STALE
+                    else "HOLD_VERIFICATION_EVIDENCE_UNUSABLE"
+                ),
+                gate_code=decision.code,
+                gate_message=decision.message,
+            )
+        return row
+
+    def _transition_hold(
+        self,
+        conn: sqlite3.Connection,
+        hold_id: str,
+        to_state: str,
+        *,
+        reason: Optional[str] = None,
+        actor: Optional[str] = None,
+        evidence_ref: Optional[str] = None,
+        action: Optional[str] = None,
+        at: Optional[str] = None,
+    ) -> str:
+        """Move a hold to ``to_state``, refusing any edge §7 does not allow.
+
+        The single writer for hold state changes: it validates the edge against the
+        canonical vocabulary, sets ``closed_at`` exactly for the closed states, and
+        records the before/after pair in the same transaction. Leaving an unverified
+        expiry is the one edge that additionally needs its evidence (§7).
+        """
+        hold = self._require_hold(conn, hold_id)
+        current = hold["status"]
+        if current == to_state:
+            return hold_id  # already in the requested state: idempotent
+        if not can_transition(current, to_state):
+            raise DomainError(
+                f"a hold cannot go from {current} to {to_state}",
+                code="HOLD_ILLEGAL_TRANSITION",
+                hold_id=hold_id,
+                status=current,
+                target=to_state,
+            )
+        if current == HOLD_EXPIRED_PENDING_VERIFICATION:
+            if not evidence_ref:
+                raise DomainError(
+                    "closing an unverified expiry needs the evidence that verifies it",
+                    code="HOLD_VERIFICATION_REQUIRES_AUTHORITATIVE_EVIDENCE",
+                    hold_id=hold_id,
+                    status=current,
+                )
+            self._authoritative_evidence(conn, hold, evidence_ref)
+        moment = at or self._now()
+        closed = to_state in CLOSED_HOLD_STATES
+        closed_at = moment if closed else None
+        close_reason = reason if closed else None
+        conn.execute(
+            "UPDATE holds SET status = ?, closed_at = ?, close_reason = ? WHERE hold_id = ?",
+            (to_state, closed_at, close_reason, hold_id),
+        )
+        self._audit(
+            conn,
+            action=action or f"hold.{to_state.lower()}",
+            entity_type="hold",
+            entity_id=hold_id,
+            before={"status": current, "expires_at": hold["expires_at"]},
+            after={"status": to_state, "closed_at": closed_at, "close_reason": close_reason},
+            reason=reason,
+            policy_version_id=hold["policy_version_id"],
+            evidence_ref=evidence_ref or hold["evidence_id"],
+            actor=actor,
+        )
+        return hold_id
 
     def _require_booking(self, conn: sqlite3.Connection, booking_id: str) -> sqlite3.Row:
         row = conn.execute(
@@ -1354,10 +1727,12 @@ class ReservationKernel:
         not count *that same hold* as a conflict — it is being retired in the same
         transaction.
         """
-        params: list[Any] = [self.agency_id, unit_id, HOLD_ACTIVE, check_out, check_in]
-        sql = """
+        hold_placeholders = ", ".join("?" for _ in OCCUPYING_HOLD_STATES)
+        params: list[Any] = [self.agency_id, unit_id, *OCCUPYING_HOLD_STATES, check_out, check_in]
+        sql = f"""
             SELECT hold_id, check_in, check_out FROM holds
-            WHERE agency_id = ? AND unit_id = ? AND status = ? AND check_in < ? AND ? < check_out
+            WHERE agency_id = ? AND unit_id = ? AND status IN ({hold_placeholders})
+              AND check_in < ? AND ? < check_out
         """
         if exclude_hold_id is not None:
             sql += " AND hold_id <> ?"
@@ -1391,41 +1766,6 @@ class ReservationKernel:
                 conflicting_window=(booking["check_in"], booking["check_out"]),
                 requested_window=(check_in, check_out),
             )
-
-    def _close_hold(
-        self, hold_id: str, *, status: str, reason: str, actor: Optional[str] = None
-    ) -> str:
-        hold_id = require_ref(hold_id, "hold_id")
-        reason = require_text(reason, "reason", max_len=200)
-        now = self._now()
-        with self.transaction() as conn:
-            hold = self._require_hold(conn, hold_id)
-            if hold["status"] != HOLD_ACTIVE:
-                if hold["status"] == status:
-                    return hold_id  # already in the requested end state: idempotent
-                raise DomainError(
-                    "hold is already closed",
-                    code="HOLD_NOT_ACTIVE",
-                    hold_id=hold_id,
-                    status=hold["status"],
-                )
-            conn.execute(
-                "UPDATE holds SET status = ?, closed_at = ?, close_reason = ? WHERE hold_id = ?",
-                (status, now, reason, hold_id),
-            )
-            self._audit(
-                conn,
-                action=f"hold.{status.lower()}",
-                entity_type="hold",
-                entity_id=hold_id,
-                before={"status": HOLD_ACTIVE},
-                after={"status": status, "closed_at": now, "close_reason": reason},
-                reason=reason,
-                policy_version_id=hold["policy_version_id"],
-                evidence_ref=hold["evidence_id"],
-                actor=actor,
-            )
-        return hold_id
 
     def _append_state_event(
         self,

@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from anchors import AnchorError, verify_published_anchors  # noqa: E402
 from audit import AuditLog  # noqa: E402
+from hold_states import LIVE_HOLD_STATES, OCCUPYING_HOLD_STATES
 from primitives import (  # noqa: E402
     DomainError,
     FrozenClock,
@@ -57,7 +58,11 @@ OPEN_CASE_STATUSES = (
     "QUOTED", "HOLD_PENDING", "BOOKED", "ESCALATED",
 )
 TERMINAL_CASE_STATUSES = ("CLOSED_WON", "CLOSED_LOST", "CLOSED_DUPLICATE")
-OCCUPYING_HOLD_STATUSES = ("ACTIVE",)
+LIVE_HOLD_STATUSES = LIVE_HOLD_STATES
+# The hold vocabulary has one home (``hold_states``); this is a re-export, not a
+# second copy. A hold the platform believes is over but has not verified still
+# blocks its slot, so it is in the occupying set (§7).
+OCCUPYING_HOLD_STATUSES = OCCUPYING_HOLD_STATES
 UNPAID_INVOICE_STATUSES = ("UNPAID", "PARTIAL")
 
 
@@ -218,20 +223,44 @@ def collect_metrics(
             ),
         ),
         "holds_active": _scalar(
-            conn, *q("SELECT COUNT(*) FROM holds WHERE status = 'ACTIVE'")
+            conn,
+            *q(
+                "SELECT COUNT(*) FROM holds WHERE status IN ({})".format(
+                    ", ".join("?" for _ in LIVE_HOLD_STATUSES)
+                ),
+                LIVE_HOLD_STATUSES,
+            ),
+        ),
+        "holds_occupying_slots": _scalar(
+            conn,
+            *q(
+                "SELECT COUNT(*) FROM holds WHERE status IN ({})".format(
+                    ", ".join("?" for _ in OCCUPYING_HOLD_STATUSES)
+                ),
+                OCCUPYING_HOLD_STATUSES,
+            ),
         ),
         "holds_expiring_soon": _scalar(
             conn,
             *q(
-                "SELECT COUNT(*) FROM holds WHERE status = 'ACTIVE' AND expires_at <= ?",
-                (_plus_hours(now, 24),),
+                "SELECT COUNT(*) FROM holds WHERE status IN ({}) AND expires_at <= ?".format(
+                    ", ".join("?" for _ in LIVE_HOLD_STATUSES)
+                ),
+                (*LIVE_HOLD_STATUSES, _plus_hours(now, 24)),
             ),
         ),
         "holds_expired_but_open": _scalar(
             conn,
             *q(
-                "SELECT COUNT(*) FROM holds WHERE status = 'ACTIVE' AND expires_at <= ?",
-                (now_iso,),
+                # An expiry the platform has not verified: it still occupies the
+                # slot, and §7 forbids treating it as released.
+                # Every hold past its TTL that still blocks a slot: the ones the
+                # sweep has marked pending verification, and the ones it has not
+                # reached yet. Both are the same operational problem.
+                "SELECT COUNT(*) FROM holds WHERE status IN ({}) AND expires_at <= ?".format(
+                    ", ".join("?" for _ in OCCUPYING_HOLD_STATUSES)
+                ),
+                (*OCCUPYING_HOLD_STATUSES, now_iso),
             ),
         ),
         "cases_total": _scalar(conn, *q("SELECT COUNT(*) FROM cases")),

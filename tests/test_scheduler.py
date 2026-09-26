@@ -253,7 +253,7 @@ class SchedulerCase(unittest.TestCase, SeedMixin):
         self.hold(expires_at=PAST)
         report = self.tick()
         status = self.conn.execute("SELECT status, closed_at FROM holds").fetchone()
-        self.assertEqual(status["status"], "EXPIRED")
+        self.assertEqual(status["status"], "EXPIRED_PENDING_VERIFICATION")
         self.assertIsNotNone(status["closed_at"])
         self.assertEqual(self.count("sla_breaches"), 0)
         self.assertGreater(report.changed_total, 0)
@@ -261,7 +261,9 @@ class SchedulerCase(unittest.TestCase, SeedMixin):
     def test_an_active_hold_inside_its_ttl_is_left_alone(self):
         self.hold(expires_at=DAY)
         self.tick()
-        self.assertEqual(self.conn.execute("SELECT status FROM holds").fetchone()["status"], "ACTIVE")
+        self.assertEqual(self.conn.execute("SELECT status FROM holds").fetchone()["status"],
+            "CONFIRMED",
+        )
 
     def test_an_expired_approval_is_closed_by_the_approval_service(self):
         self.approval(expires_at=PAST)
@@ -291,7 +293,9 @@ class SchedulerCase(unittest.TestCase, SeedMixin):
         outcome = {o.name: o for o in report.outcomes}["holds"]
         self.assertFalse(outcome.ran)
         self.assertIn("kernel", outcome.skipped)
-        self.assertEqual(self.conn.execute("SELECT status FROM holds").fetchone()["status"], "ACTIVE")
+        self.assertEqual(self.conn.execute("SELECT status FROM holds").fetchone()["status"],
+            "CONFIRMED",
+        )
 
     def test_a_missing_approval_service_is_reported_not_hidden(self):
         self.approval(expires_at=PAST)
@@ -311,7 +315,9 @@ class SchedulerCase(unittest.TestCase, SeedMixin):
         outcomes = {o.name: o for o in report.outcomes}
         self.assertEqual(outcomes["holds"].changed, 1)
         self.assertEqual(outcomes["approvals"].changed, 1)
-        self.assertEqual(self.conn.execute("SELECT status FROM holds").fetchone()["status"], "ACTIVE")
+        self.assertEqual(self.conn.execute("SELECT status FROM holds").fetchone()["status"],
+            "CONFIRMED",
+        )
 
     # -- report shape ------------------------------------------------------
     def test_report_serialises_and_renders(self):

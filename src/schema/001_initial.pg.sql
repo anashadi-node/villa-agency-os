@@ -373,7 +373,7 @@ CREATE TABLE holds (
     check_in           TEXT    NOT NULL,
     check_out          TEXT    NOT NULL,
     nights             BIGINT NOT NULL CHECK (nights >= 1),
-    status             TEXT    NOT NULL CHECK (status IN ('ACTIVE','RELEASED','CONVERTED','EXPIRED')),
+    status             TEXT    NOT NULL CHECK (status IN ('REQUESTED','AWAITING_SUPPLIER','CONFIRMED','REJECTED','EXTENSION_REQUESTED','RELEASE_REQUESTED','RELEASE_CONFIRMED','EXPIRED_PENDING_VERIFICATION','CONVERTED')),
     guest_ref          TEXT    NOT NULL CHECK (length(guest_ref) >= 3),
     quote_ref          TEXT,
     policy_version_id  TEXT    NOT NULL,
@@ -381,6 +381,7 @@ CREATE TABLE holds (
     idempotency_key    TEXT    NOT NULL CHECK (length(idempotency_key) >= 8),
     created_at         TEXT    NOT NULL,
     expires_at         TEXT    NOT NULL,
+    expires_timezone   TEXT    NOT NULL CHECK (length(expires_timezone) >= 3),
     closed_at          TEXT,
     close_reason       TEXT,
     extended_count     BIGINT NOT NULL DEFAULT 0 CHECK (extended_count >= 0),
@@ -393,13 +394,34 @@ CREATE TABLE holds (
     CONSTRAINT uq_holds_idempotency UNIQUE (agency_id, idempotency_key),
     CONSTRAINT ck_holds_stay CHECK (check_in < check_out),
     CONSTRAINT ck_holds_expiry CHECK (created_at < expires_at),
-    CONSTRAINT ck_holds_closed CHECK ((status = 'ACTIVE') OR (closed_at IS NOT NULL))
+    CONSTRAINT ck_holds_closed CHECK ((status IN ('REQUESTED','AWAITING_SUPPLIER','CONFIRMED','EXTENSION_REQUESTED','RELEASE_REQUESTED')) OR (closed_at IS NOT NULL))
 );
 
 -- Defence in depth: two ACTIVE holds may never share a unit + arrival date.
 -- The full overlap test (partial days) is done inside the write transaction;
 -- this index makes the most common collision impossible even if that fails.
-CREATE UNIQUE INDEX uq_holds_active_slot ON holds (unit_id, check_in) WHERE status = 'ACTIVE';
+CREATE UNIQUE INDEX uq_holds_active_slot ON holds (unit_id, check_in) WHERE status IN ('REQUESTED','AWAITING_SUPPLIER','CONFIRMED','EXTENSION_REQUESTED','RELEASE_REQUESTED','EXPIRED_PENDING_VERIFICATION');
+
+CREATE TABLE hold_extension_requests (
+    extension_id       TEXT    NOT NULL,
+    agency_id          TEXT    NOT NULL DEFAULT 'agency_default',
+    hold_id            TEXT    NOT NULL,
+    seq                BIGINT NOT NULL CHECK (seq >= 1),
+    requested_minutes  BIGINT NOT NULL CHECK (requested_minutes > 0),
+    requested_timezone TEXT    NOT NULL CHECK (length(requested_timezone) >= 3),
+    requested_at       TEXT    NOT NULL,
+    requested_by       TEXT,
+    status             TEXT    NOT NULL CHECK (status IN ('REQUESTED','CONFIRMED','REJECTED')),
+    decided_at         TEXT,
+    decided_by         TEXT,
+    decided_timezone   TEXT,
+    reason             TEXT,
+    CONSTRAINT pk_hold_extension_requests PRIMARY KEY (extension_id),
+    CONSTRAINT fk_hold_ext_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    CONSTRAINT fk_hold_ext_hold FOREIGN KEY (hold_id) REFERENCES holds (hold_id),
+    CONSTRAINT ck_hold_ext_decided CHECK ((status = 'REQUESTED') OR (decided_at IS NOT NULL)),
+    CONSTRAINT uq_hold_ext_sequence UNIQUE (hold_id, seq)
+);
 
 -- --------------------------------------------------------------------------
 -- Bookings

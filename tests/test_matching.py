@@ -314,7 +314,7 @@ def seed_hold(
     property_id: str = "prop_1",
     check_in: str = CHECK_IN,
     check_out: str = CHECK_OUT,
-    status: str = "ACTIVE",
+    status: str = "CONFIRMED",
     policy_version_id: str = "pol_1",
     evidence_id: str = "ev_1",
     guest_ref: str = "guest_003",
@@ -327,8 +327,8 @@ def seed_hold(
     conn.execute(
         "INSERT INTO holds (hold_id, unit_id, property_id, check_in, check_out, nights, status,"
         " guest_ref, quote_ref, policy_version_id, evidence_id, idempotency_key, created_at,"
-        " expires_at, closed_at, close_reason, extended_count)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, NULL, 0)",
+        " expires_at, expires_timezone, closed_at, close_reason, extended_count)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL, 0)",
         (
             hold_id,
             unit_id,
@@ -343,7 +343,8 @@ def seed_hold(
             f"idem-{hold_id}",
             NOW,
             "2026-09-22T08:00:00Z",
-            None if status == "ACTIVE" else "2026-09-21T09:00:00Z",
+            "Asia/Makassar",
+            None if status == "CONFIRMED" else "2026-09-21T09:00:00Z",
         ),
     )
     return hold_id
@@ -955,7 +956,7 @@ class TestDateAvailability:
         assert "DATES_UNAVAILABLE" in candidate.deny_reasons
         assert candidate.evidence_refs == ("hold_real",)
         row = conn.execute("SELECT * FROM holds WHERE hold_id = 'hold_real'").fetchone()
-        assert row["status"] == "ACTIVE"
+        assert row["status"] == "CONFIRMED"
 
     def test_evidence_ids_must_exist_in_the_database(self, conn):
         seed_base(conn)
@@ -995,7 +996,7 @@ class TestDateAvailability:
 
     def test_released_hold_does_not_block(self, conn):
         seed_base(conn)
-        seed_hold(conn, "hold_released", status="RELEASED")
+        seed_hold(conn, "hold_released", status="RELEASE_CONFIRMED")
         result = run_match(conn)
         assert result.candidates[0].eligible is True
         assert result.candidates[0].evidence_refs == ()

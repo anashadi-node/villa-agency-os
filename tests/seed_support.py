@@ -98,13 +98,14 @@ class SeedMixin:
         )
 
     def hold(self, hold_id: str = "hold_0001", expires_at: str = DAY,
-             status: str = "ACTIVE", offset: int = 0) -> None:
+             status: str = "CONFIRMED", offset: int = 0) -> None:
         check_in, check_out = stay(offset)
         self._insert(
             "holds", hold_id=hold_id, unit_id="unit_0001", property_id="prop_0001",
             check_in=check_in, check_out=check_out, nights=4, status=status,
             guest_ref="guest_0001", policy_version_id="policy_v1", evidence_id="ev_0001",
             idempotency_key=f"idem_{hold_id}", created_at=CREATED, expires_at=expires_at,
+            expires_timezone="Asia/Makassar",
         )
 
     def booking(self, booking_id: str = "book_0001", status: str = "CONFIRMED",

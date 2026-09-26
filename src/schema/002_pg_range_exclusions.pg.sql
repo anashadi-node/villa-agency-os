@@ -54,7 +54,7 @@ ALTER TABLE holds
         unit_id WITH =,
         daterange(villa_iso_date(check_in), villa_iso_date(check_out), '[)') WITH &&
     )
-    WHERE (status = 'ACTIVE');
+    WHERE (status IN ('REQUESTED','AWAITING_SUPPLIER','CONFIRMED','EXTENSION_REQUESTED','RELEASE_REQUESTED','EXPIRED_PENDING_VERIFICATION'));
 
 -- One occupying booking per unit per range. The status list must stay identical
 -- to ``OCCUPYING_BOOKING_STATES`` in src/reservation_kernel.py and to the partial

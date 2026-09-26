@@ -22,6 +22,7 @@ proceeded wave by wave, each recorded in an ADR rather than by editing these row
 | WAVE 1-H | governance policy engine (§16): catalogue + versioned revisions, fail-closed resolution | `docs/adr/0017-*`, `src/policy_engine.py` |
 | WAVE 1-I | AI service identity (§18/§56): principal + kill switch, §56 tool tiers, deny registry as policy | `docs/adr/0018-*`, `src/ai_service.py` |
 | WAVE 4-A | availability state vocabulary (§7/§11, Appendix A): canonical results, derived state, explicit restricted state | `docs/adr/0019-*`, `src/availability.py` |
+| WAVE 4-B | hold lifecycle (§7): one vocabulary + one transition writer, timezone on the expiry, two-step extension, expiry as `EXPIRED_PENDING_VERIFICATION` that keeps occupying until an authoritative source verifies it | `docs/adr/0020-*`, `src/hold_states.py`, `src/reservation_kernel.py` |
 
 Read a row's classification as "what the baseline found", and the ADRs as "what was decided".
 

@@ -337,17 +337,17 @@ def seed(conn, clock) -> None:
             booking[:19] + (1,) + booking[19:],
         )
     holds = [
-        ("hold-1", "unit-2", "prop-1", "2026-09-22", "2026-09-25", 3, "ACTIVE", "guest-ref-2",
+        ("hold-1", "unit-2", "prop-1", "2026-09-22", "2026-09-25", 3, "CONFIRMED", "guest-ref-2",
          "idem-hold-1", iso(hours=-1), iso(hours=12)),
-        ("hold-2", "unit-3", "prop-2", "2026-09-23", "2026-09-27", 4, "ACTIVE", "guest-ref-3",
+        ("hold-2", "unit-3", "prop-2", "2026-09-23", "2026-09-27", 4, "CONFIRMED", "guest-ref-3",
          "idem-hold-2", iso(hours=-1), iso(days=1, hours=2)),
     ]
     for hold in holds:
         conn.execute(
             "INSERT INTO holds (hold_id, unit_id, property_id, check_in, check_out, nights,"
             " status, guest_ref, policy_version_id, evidence_id, idempotency_key, created_at,"
-            " expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            hold[:8] + ("policy-1", "evidence-1") + hold[8:],
+            " expires_at, expires_timezone) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            hold[:8] + ("policy-1", "evidence-1") + hold[8:] + ("Asia/Makassar",),
         )
 
     cases = [
@@ -611,11 +611,11 @@ def test_kpi_seeded_holds_expiring_today_uses_the_injected_clock(seeded_app, see
     # a hold that expired yesterday must not be counted as "today"
     seeded.execute(
         "INSERT INTO holds (hold_id, unit_id, property_id, check_in, check_out, nights, status,"
-        " guest_ref, policy_version_id, evidence_id, idempotency_key, created_at, expires_at)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        ("hold-3", "unit-1", "prop-1", "2026-09-21", "2026-09-24", 3, "ACTIVE", "guest-ref-9",
-         "policy-1", "evidence-1", "idem-hold-3", "2026-09-20T07:00:00+00:00",
-         "2026-09-20T12:00:00+00:00"),
+        " guest_ref, policy_version_id, evidence_id, idempotency_key, created_at, expires_at,"
+        " expires_timezone) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        ("hold-3", "unit-1", "prop-1", "2026-09-21", "2026-09-24", 3, "CONFIRMED",
+         "guest-ref-9", "policy-1", "evidence-1", "idem-hold-3",
+         "2026-09-20T07:00:00+00:00", "2026-09-20T12:00:00+00:00", "Asia/Makassar"),
     )
     assert kpi(render(seeded_app, "command_center", "owner"), "holds_expiring_today") == "1"
 

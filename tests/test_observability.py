@@ -96,14 +96,14 @@ class ObsCase(unittest.TestCase):
             idempotency_key=f"idem_{case_id}", created_at=CREATED, updated_at=CREATED,
         )
 
-    def seed_hold(self, hold_id="hold_0001", expires_at=DAY, status="ACTIVE"):
+    def seed_hold(self, hold_id="hold_0001", expires_at=DAY, status="CONFIRMED"):
         check_in, check_out = _stay(int(hold_id[-1]))
         self._insert(
             "holds", hold_id=hold_id, unit_id="unit_0001", property_id="prop_0001",
             check_in=check_in, check_out=check_out, nights=4, status=status,
             guest_ref="guest_0001", policy_version_id="policy_v1",
             evidence_id="ev_0001", idempotency_key=f"idem_{hold_id}",
-            created_at=CREATED, expires_at=expires_at,
+            created_at=CREATED, expires_at=expires_at, expires_timezone="Asia/Makassar",
         )
 
     def seed_booking(self, booking_id="book_0001", status="CONFIRMED"):
