@@ -54,6 +54,8 @@ villa-agency-os/
 │   ├── policy_engine.py      # policy versioning, snapshot, deposit & cancellation rules
 │   ├── quote_calculator.py   # aritmetika quote (deterministik, reproducible)
 │   ├── quotation.py          # versi quotation V1/V2/V3 + 3 snapshot + penerimaan (§11)
+│   ├── discounts.py          # mesin diskon: dua pihak pendana dipisah, authority + margin floor
+│   │                         #   (persen DAN absolut) dari policy, eskalasi ke manusia (§11)
 │   ├── reservation_kernel.py # hold/booking + proteksi overlap (anti double booking)
 │   ├── booking_states.py     # state machine + command contract
 │   ├── cases.py              # case management, SLA, timeline kasus
