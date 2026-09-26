@@ -17,7 +17,8 @@ and the module suites), not here.
     python3 scripts/seed_demo.py --db /tmp/demo/villa.db --dry-run
 
 Exit codes: 0 = seeded (or reported, with ``--dry-run``), 1 = refused because the
-database already holds non-demo rows, 2 = bad arguments / unreadable database.
+database already holds rows — a real dataset or a previous demo one, 2 = bad
+arguments / unreadable database.
 """
 
 from __future__ import annotations
@@ -48,26 +49,38 @@ COUNTED_TABLES = (
     "incidents", "incident_steps", "approval_requests", "audit_events",
 )
 GUARD_TABLES = ("properties", "units", "bookings", "cases")
+IDENTITY_COLUMNS = {"properties": "property_id", "units": "unit_id",
+                    "bookings": "booking_id", "cases": "case_id"}
 
 
 class SeedRefused(Exception):
     """The database is not a demo database; the script must not touch it."""
 
 
-def _has_real_rows(conn) -> list[str]:
-    """Tables holding rows whose identity is not prefixed with ``demo_``."""
+def _identity_rows(conn, *, demo: bool) -> list[str]:
+    """Guarded tables already holding rows, counted as a demo or a real dataset."""
 
     offenders: list[str] = []
     for table in GUARD_TABLES:
-        column = {"properties": "property_id", "units": "unit_id",
-                  "bookings": "booking_id", "cases": "case_id"}[table]
+        column = IDENTITY_COLUMNS[table]
+        operator = "LIKE" if demo else "NOT LIKE"
         row = conn.execute(
-            f"SELECT COUNT(*) AS n FROM {table} WHERE {column} NOT LIKE ?",
+            f"SELECT COUNT(*) AS n FROM {table} WHERE {column} {operator} ?",
             (f"{DEMO_PREFIX}%",),
         ).fetchone()
         if int(row["n"]):
             offenders.append(f"{table}={int(row['n'])}")
     return offenders
+
+
+def _has_real_rows(conn) -> list[str]:
+    """Tables holding rows whose identity is not prefixed with ``demo_``."""
+    return _identity_rows(conn, demo=False)
+
+
+def _has_demo_rows(conn) -> list[str]:
+    """Tables already holding a demo dataset: seeding again would collide on identity."""
+    return _identity_rows(conn, demo=True)
 
 
 class DemoSeeder:
@@ -199,11 +212,12 @@ class DemoSeeder:
         self.insert(
             "holds", hold_id=f"{DEMO_PREFIX}hold_1", unit_id=f"{DEMO_PREFIX}unit_ubud_1",
             property_id=f"{DEMO_PREFIX}prop_ubud", check_in="2026-10-12",
-            check_out="2026-10-15", nights=3, status="ACTIVE", guest_ref="guest_rahma",
+            check_out="2026-10-15", nights=3, status="CONFIRMED", guest_ref="guest_rahma",
             policy_version_id=f"{DEMO_PREFIX}policy_unit_ubud_1",
             evidence_id=f"{DEMO_PREFIX}ev_unit_ubud_1",
             idempotency_key=f"{DEMO_PREFIX}idem_hold_1", created_at=LAST_WEEK,
             expires_at="2026-09-21T14:00:00+00:00",
+            expires_timezone="Asia/Makassar",
         )
 
         # A confirmed booking with a paid invoice and a receipt.
@@ -337,6 +351,14 @@ def seed(db: Path, *, dry_run: bool = False) -> dict[str, int]:
                 + ", ".join(offenders)
                 + "); seeding demo data into it would mix example guests with real ones"
             )
+        demo = _has_demo_rows(conn)
+        if demo:
+            raise SeedRefused(
+                "database already holds a demo dataset ("
+                + ", ".join(demo)
+                + "); seeding again would collide on identity — use a fresh path, or "
+                "delete this demo database first"
+            )
         conn.execute("BEGIN IMMEDIATE")
         seeder = DemoSeeder(conn)
         before = {table: _count(conn, table) for table in COUNTED_TABLES}
@@ -376,6 +398,9 @@ def main(argv: list[str] | None = None) -> int:
     if db.exists() and not db.is_file():
         print(f"not a database file: {db}", file=sys.stderr)
         return 2
+    # ``data/`` is not in git, so on a fresh checkout the documented command would fail
+    # with "unable to open database file" before it wrote anything.
+    db.parent.mkdir(parents=True, exist_ok=True)
     try:
         created = seed(db, dry_run=args.dry_run)
     except SeedRefused as exc:
