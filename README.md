@@ -143,6 +143,11 @@ VILLA_DB=data/villa.db python3 scripts/publish_ai_allowance.py withdraw \
 # policy store. Lihat dulu key mana yang masih menunggu keputusan:
 make policy-status VILLA_DB=data/villa.db
 
+# PENTING: VILLA_DB harus database yang dibuat dari skema TERKINI. Skema hanya diterapkan
+# saat berkasnya dibuat — membuka DB lama TIDAK menambah key baru, jadi DB lama akan menolak
+# key yang ditambahkan belakangan (mis. commercial.margin_floor_minor) seolah key itu tidak
+# pernah ada. `policy-status` menunjukkan key apa saja yang benar-benar ada di DB itu.
+#
 # Menyetujui satu nilai. WAJIB: dokumen asal nilainya, siapa yang memutuskan, dan VILLA_DB
 # eksplisit (nilai yang jatuh ke data/villa.db mana pun yang kebetulan ada di direktori
 # kerja adalah keputusan yang tak dibuat siapa pun). `set` sengaja BUKAN target make:
