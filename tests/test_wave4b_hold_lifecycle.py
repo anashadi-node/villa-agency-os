@@ -149,6 +149,8 @@ class HoldTestCase(unittest.TestCase):
             policy_version_id="policy_v1",
             idempotency_key=key,
             evidence_id=self.evidence() if evidence_id is None else evidence_id,
+            actor="user:owner-1",
+            actor_role="owner",
         )
 
     def status_of(self, hold_id):

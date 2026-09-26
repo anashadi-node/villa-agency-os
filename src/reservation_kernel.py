@@ -185,6 +185,9 @@ CHECK_REQUEST_STATES: tuple[str, ...] = CHECK_STATES
 #: publishes ``security.ai.medium_tool_allowance``: §56 names "availability requests"
 #: among the actions an AI may take only under policy control.
 AVAILABILITY_REQUEST_TOOL = "availability.request"
+#: §56 lists "tentative-hold requests" beside availability requests, so the hold
+#: path is gated by the same policy value family.
+HOLD_REQUEST_TOOL = "hold.request_tentative"
 
 #: The chain's starting value. 64 zeros rather than a word, because the schema
 #: requires every ``prev_hash`` to look like a SHA-256 hex digest.
@@ -724,7 +727,9 @@ class ReservationKernel:
         actor_role = require_ref(actor_role, "actor_role", max_len=64)
         if notes is not None:
             notes = require_text(notes, "notes", max_len=500)
-        self._require_availability_request_authority(actor, actor_role, principal_id)
+        self._require_tool_authority(
+            actor, actor_role, principal_id, tool=AVAILABILITY_REQUEST_TOOL
+        )
 
         request_hash = sha256_hex(
             "availability_check",
@@ -923,21 +928,38 @@ class ReservationKernel:
         guest_ref: str,
         policy_version_id: str,
         idempotency_key: str,
+        actor: str,
+        actor_role: str,
+        principal_id: Optional[str] = None,
         quote_ref: Optional[str] = None,
         evidence_id: Optional[str] = None,
         ttl_minutes: Optional[int] = None,
     ) -> HoldOutcome:
         """Lock inventory for a short window, or fail with a reason.
 
-        The order matters: check idempotency, then evidence, then overlap, all
-        inside one write transaction so nothing can change underneath.
+        Taking a slot out of sale is an action the platform has to attribute, so the
+        caller's identity is a required argument rather than an optional one: a gate
+        that a caller can skip by omitting an argument is not a gate.
+
+        The order matters: identity first (§56 — a machine actor needs the owner to
+        publish ``hold.request_tentative``, a human actor is admitted directly), then
+        idempotency, then evidence, then overlap, all inside one write transaction so
+        nothing can change underneath.
         """
         unit_id = require_ref(unit_id, "unit_id")
         guest_ref = require_ref(guest_ref, "guest_ref")
         policy_version_id = require_ref(policy_version_id, "policy_version_id")
         idempotency_key = require_ref(idempotency_key, "idempotency_key")
         _require_min_length(idempotency_key, "idempotency_key", 8)
+        actor = require_ref(actor, "actor", max_len=64)
+        actor_role = require_ref(actor_role, "actor_role", max_len=64)
         nights = nights_between(parse_iso_date(check_in), parse_iso_date(check_out))
+        # Outside the transaction, and before the idempotency lookup, for the reason
+        # ADR-0021 gives: the permission is about taking the slot, so a replay of a
+        # refused request is refused too. AiService writes its own audit row.
+        self._require_tool_authority(
+            actor, actor_role, principal_id, tool=HOLD_REQUEST_TOOL
+        )
 
         request_hash = sha256_hex("hold", unit_id, check_in, check_out, guest_ref, policy_version_id)
         now = self._now()
@@ -1112,6 +1134,7 @@ class ReservationKernel:
                 reason=None,
                 policy_version_id=policy_version_id,
                 evidence_ref=evidence_id,
+                actor=actor,
             )
             return HoldOutcome(
                 hold_id=hold_id,
@@ -2029,17 +2052,19 @@ class ReservationKernel:
             )
 
     # -- availability checks: internals ------------------------------------- #
-    def _require_availability_request_authority(
-        self, actor: str, actor_role: str, principal_id: Optional[str]
+    def _require_tool_authority(
+        self, actor: str, actor_role: str, principal_id: Optional[str], *, tool: str
     ) -> None:
-        """§56: a machine actor may ask a source only under policy control.
+        """§56: a machine actor may act on a medium-risk tool only under policy control.
 
-        A human actor is admitted directly. A machine actor has to clear
-        ``availability.request`` through the AI service, which is deny-first: until the
-        owner publishes ``security.ai.medium_tool_allowance`` the answer is no. That
-        refusal is the intended behaviour, not a stub — §56 classes availability
-        requests as policy-controlled, so they open by publishing a policy value rather
-        than by changing code.
+        A human actor is admitted directly. A machine actor has to clear ``tool``
+        through the AI service, which is deny-first: until the owner publishes
+        ``security.ai.medium_tool_allowance`` the answer is no. That refusal is the
+        intended behaviour, not a stub — §56 classes these actions as policy-controlled,
+        so they open by publishing a policy value rather than by changing code.
+
+        One implementation for every §56 gate: a second gated path cannot inherit a
+        weaker copy of this rule, and cannot forget the principal requirement.
         """
         if not is_machine_actor(actor, actor_role):
             return
@@ -2056,7 +2081,7 @@ class ReservationKernel:
             clock=self.clock,
             ids=self.ids,
             agency_id=self.agency_id,
-        ).authorize(require_ref(principal_id, "principal_id"), AVAILABILITY_REQUEST_TOOL)
+        ).authorize(require_ref(principal_id, "principal_id"), tool)
 
     def _move_check(
         self,

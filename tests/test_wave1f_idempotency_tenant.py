@@ -65,6 +65,8 @@ def request_hold(k: RK.ReservationKernel, suffix: str, key: str = SHARED_KEY, gu
         guest_ref=guest or f"guest_{suffix}",
         policy_version_id=f"policy_{suffix}",
         idempotency_key=key,
+        actor="user:owner-1",
+        actor_role="owner",
     )
 
 
@@ -190,6 +192,8 @@ def test_a_key_reused_for_a_different_request_still_conflicts(tmp_path):
                 guest_ref="guest_other",
                 policy_version_id="policy_a",
                 idempotency_key=SHARED_KEY,
+                actor="user:owner-1",
+                actor_role="owner",
             )
         assert ctx.value.code == "IDEMPOTENCY_CONFLICT"
     finally:

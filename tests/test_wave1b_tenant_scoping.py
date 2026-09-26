@@ -90,6 +90,8 @@ def test_cross_agency_hold_request_cannot_see_or_lock_other_agency_unit(tmp_path
                 guest_ref="guest_b",
                 policy_version_id="policy_missing",
                 idempotency_key="idem_b_hold_1",
+                actor="user:owner-1",
+                actor_role="owner",
             )
         assert ctx.value.code == "UNIT_NOT_FOUND"
     finally:
@@ -112,6 +114,8 @@ def test_occupancy_query_does_not_leak_other_agency_rows(tmp_path):
             guest_ref="guest_a",
             policy_version_id="policy_v1",
             idempotency_key="idem_hold_a",
+            actor="user:owner-1",
+            actor_role="owner",
         )
         assert b.occupancy("unit_a", start="2026-10-01", end="2026-10-03") == ()
     finally:

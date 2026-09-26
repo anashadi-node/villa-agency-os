@@ -169,6 +169,8 @@ class KernelTestCase(unittest.TestCase):
             policy_version_id=policy_version_id,
             idempotency_key=key,
             quote_ref=quote_ref,
+            actor="user:owner-1",
+            actor_role="owner",
             **kwargs,
         )
 
@@ -710,6 +712,8 @@ class TestHoldInputValidation(KernelTestCase):
                 unit_id="unit_1", check_in="2026-10-01", check_out="2026-10-03",
                 guest_ref="guest_abc123", policy_version_id="policy_missing",
                 idempotency_key="idem_hold_0001",
+                actor="user:owner-1",
+                actor_role="owner",
             )
         self.assertEqual(ctx.exception.code, "POLICY_NOT_FOUND")
 
@@ -723,6 +727,8 @@ class TestHoldInputValidation(KernelTestCase):
                 unit_id="unit_1", check_in="2026-10-01", check_out="2026-10-03",
                 guest_ref="guest_abc123", policy_version_id="policy_v9",
                 idempotency_key="idem_hold_0001",
+                actor="user:owner-1",
+                actor_role="owner",
             )
         self.assertEqual(ctx.exception.code, "POLICY_PROPERTY_MISMATCH")
 
@@ -735,6 +741,8 @@ class TestHoldInputValidation(KernelTestCase):
                 unit_id="unit_1", check_in="2026-10-01", check_out="2026-10-03",
                 guest_ref="guest_abc123", policy_version_id="policy_v2",
                 idempotency_key="idem_hold_0001", quote_ref=quote.quote_id,
+                actor="user:owner-1",
+                actor_role="owner",
             )
         self.assertEqual(ctx.exception.code, "QUOTE_POLICY_MISMATCH")
 
