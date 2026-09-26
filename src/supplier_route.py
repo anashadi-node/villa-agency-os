@@ -236,6 +236,31 @@ class SupplierRouteService:
                                     effective_from=start, effective_to=end)
         return start, end
 
+    def _require_citable_evidence(self, evidence_id: Any) -> str:
+        """Provenance must point at evidence that completed the quarantine pipeline.
+
+        §12 puts a document at the head of the provenance chain, so citing a file still
+        in quarantine — or one belonging to another agency — is refused here and not
+        merely discouraged in a form.
+        """
+        evidence = require_ref(evidence_id, "source_evidence_id")
+        row = self.conn.execute(
+            "SELECT status FROM evidence_objects WHERE evidence_id = ? AND agency_id = ?",
+            (evidence, self.agency_id),
+        ).fetchone()
+        if row is None:
+            raise SupplierRouteError(
+                f"source evidence not found in this agency: {evidence}",
+                code="RESOURCE_NOT_FOUND", source_evidence_id=evidence,
+            )
+        if str(row["status"]) != "STORED":
+            raise VerificationRequired(
+                "source evidence has not completed the quarantine pipeline",
+                code="VERIFICATION_REQUIRED",
+                source_evidence_id=evidence, evidence_status=str(row["status"]),
+            )
+        return evidence
+
     def _next_version(self, table: str, route_id: str) -> int:
         row = self.conn.execute(
             f"SELECT COALESCE(MAX(version), 0) AS top FROM {table}"
@@ -340,9 +365,13 @@ class SupplierRouteService:
         effective_from: Any,
         effective_to: Any,
         extraction_method: str = "HUMAN",
+        source_evidence_id: Any = None,
     ) -> str:
         """Open a new contract version as a DRAFT, with its provenance attached."""
         route = self._route_row(route_id)
+        evidence = (
+            None if source_evidence_id is None else self._require_citable_evidence(source_evidence_id)
+        )
         method = self._require_status(extraction_method, EXTRACTION_METHODS, "extraction_method")
         doc = require_text(source_doc_ref, "source_doc_ref", max_len=300)
         reference = require_text(source_reference, "source_reference", max_len=300)
@@ -352,11 +381,12 @@ class SupplierRouteService:
         self.conn.execute(
             "INSERT INTO contract_versions (contract_version_id, agency_id,"
             " villa_supplier_relationship_id, version, status, effective_from, effective_to,"
-            " source_doc_ref, source_reference, extraction_method, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?)",
+            " source_doc_ref, source_reference, source_evidence_id, extraction_method,"
+            " created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?)",
             (contract_version_id, self.agency_id, str(route["villa_supplier_relationship_id"]),
              self._next_version("contract_versions", str(route["villa_supplier_relationship_id"])),
-             start, end, doc, reference, method, stamp, stamp),
+             start, end, doc, reference, evidence, method, stamp, stamp),
         )
         return contract_version_id
 
@@ -427,9 +457,13 @@ class SupplierRouteService:
         contract_version_id: Any = None,
         min_stay: int = 1,
         extraction_method: str = "HUMAN",
+        source_evidence_id: Any = None,
     ) -> str:
         """Open a new rate version as a DRAFT. Money is integer minor units."""
         route = self._route_row(route_id)
+        evidence = (
+            None if source_evidence_id is None else self._require_citable_evidence(source_evidence_id)
+        )
         method = self._require_status(extraction_method, EXTRACTION_METHODS, "extraction_method")
         code = require_text(currency, "currency", max_len=3).upper()
         if len(code) != 3:
@@ -462,12 +496,13 @@ class SupplierRouteService:
             "INSERT INTO rate_versions (rate_version_id, agency_id,"
             " villa_supplier_relationship_id, contract_version_id, version, status, currency,"
             " nightly_minor, min_stay, effective_from, effective_to, source_doc_ref,"
-            " source_reference, extraction_method, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " source_reference, source_evidence_id, extraction_method, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (rate_version_id, self.agency_id, route_key, contract,
              self._next_version("rate_versions", route_key), code, nightly_minor, min_stay,
              start, end, require_text(source_doc_ref, "source_doc_ref", max_len=300),
-             require_text(source_reference, "source_reference", max_len=300), method, stamp, stamp),
+             require_text(source_reference, "source_reference", max_len=300), evidence,
+             method, stamp, stamp),
         )
         return rate_version_id
 

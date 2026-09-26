@@ -36,6 +36,10 @@ JUSTIFIED_GLOBAL_UNIQUE = {
     # A 256-bit token hash must resolve to exactly one session *platform-wide*:
     # scoping it per agency would only weaken the lookup, not add information.
     ("auth_sessions", "uq_auth_session_token"): "session token hash is global by design",
+    # Same reasoning for an evidence access token: the digest *is* the bearer
+    # credential, so it must identify one grant across the whole platform. A tenant
+    # collision would make resolution ambiguous, which is strictly worse.
+    ("evidence_access_grants", "uq_grant_token"): "access token digest is global by design",
 }
 
 CONSTRAINT_RE = re.compile(
@@ -222,6 +226,11 @@ CREATE TABLE suppliers_bad (
 );
 """
     offenders = unjustified_global_uniques(mutated)
-    assert offenders == ["suppliers_bad.uq_bad_external_ref(external_ref)"], (
+    assert "suppliers_bad.uq_bad_external_ref(external_ref)" in offenders, (
         f"the guard failed to flag a tenant-data key that ignores agency_id: {offenders}"
+    )
+    # ...and the injection is the only reason anything is flagged: the real schema must
+    # stay clean, otherwise "justified" would be doing the work instead of the rule.
+    assert unjustified_global_uniques(ddl_statements()) == [], (
+        "the live schema has an unjustified global unique key"
     )

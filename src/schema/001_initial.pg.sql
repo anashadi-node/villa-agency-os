@@ -132,6 +132,7 @@ CREATE TABLE contract_versions (
     effective_to   TEXT NOT NULL,
     source_doc_ref TEXT NOT NULL CHECK (length(source_doc_ref) >= 1),
     source_reference TEXT NOT NULL CHECK (length(source_reference) >= 1),
+    source_evidence_id TEXT,
     extraction_method TEXT NOT NULL DEFAULT 'HUMAN' CHECK (extraction_method IN ('HUMAN','AI_EXTRACTED')),
     verified_by TEXT,
     verified_at TEXT,
@@ -140,6 +141,7 @@ CREATE TABLE contract_versions (
     created_at   TEXT    NOT NULL,
     updated_at   TEXT    NOT NULL,
     CONSTRAINT pk_contract_versions PRIMARY KEY (contract_version_id),
+    CONSTRAINT fk_contract_evidence FOREIGN KEY (source_evidence_id) REFERENCES evidence_objects (evidence_id),
     CONSTRAINT fk_contract_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
     CONSTRAINT fk_contract_route FOREIGN KEY (villa_supplier_relationship_id) REFERENCES villa_supplier_relationships (villa_supplier_relationship_id),
     CONSTRAINT uq_contract_version UNIQUE (villa_supplier_relationship_id, version),
@@ -171,6 +173,7 @@ CREATE TABLE rate_versions (
     effective_to   TEXT NOT NULL,
     source_doc_ref TEXT NOT NULL CHECK (length(source_doc_ref) >= 1),
     source_reference TEXT NOT NULL CHECK (length(source_reference) >= 1),
+    source_evidence_id TEXT,
     extraction_method TEXT NOT NULL DEFAULT 'HUMAN' CHECK (extraction_method IN ('HUMAN','AI_EXTRACTED')),
     verified_by TEXT,
     verified_at TEXT,
@@ -179,6 +182,7 @@ CREATE TABLE rate_versions (
     created_at   TEXT    NOT NULL,
     updated_at   TEXT    NOT NULL,
     CONSTRAINT pk_rate_versions PRIMARY KEY (rate_version_id),
+    CONSTRAINT fk_rate_evidence FOREIGN KEY (source_evidence_id) REFERENCES evidence_objects (evidence_id),
     CONSTRAINT fk_rate_version_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
     CONSTRAINT fk_rate_version_route FOREIGN KEY (villa_supplier_relationship_id) REFERENCES villa_supplier_relationships (villa_supplier_relationship_id),
     CONSTRAINT fk_rate_version_contract FOREIGN KEY (contract_version_id) REFERENCES contract_versions (contract_version_id),
@@ -1208,6 +1212,130 @@ CREATE TRIGGER trg_incident_steps_no_delete
     FOR EACH ROW EXECUTE FUNCTION villa_reject_mutation();
 
 -- --------------------------------------------------------------------------
+-- --------------------------------------------------------------------------
+-- Evidence objects — the document attack surface (Master Spec v1.1 §27, §12, §19)
+--
+-- `documents` (above) holds documents this system *generates*. This section holds
+-- files that arrive from outside — supplier contracts, payment proofs, screenshots,
+-- bank references — the surface §53(8) names as an attack vector.
+--
+-- The pipeline is a database invariant, not a convention:
+--   UPLOAD → QUARANTINE → TYPE/SIZE VALIDATION → MALWARE SCAN → CLASSIFICATION →
+--   SAFE STORAGE → AUTHORIZED ACCESS
+-- `ck_evidence_stored_requires_clean_scan` refuses STORED without a named scanner and
+-- a CLEAN verdict, so "quarantine was skipped" is not a state any code path can write.
+-- Files are never hard-deleted (§39): deletion is a status with an audit event.
+-- --------------------------------------------------------------------------
+CREATE TABLE evidence_objects (
+    evidence_id      TEXT NOT NULL,
+    agency_id        TEXT NOT NULL DEFAULT 'agency_default',
+    kind             TEXT NOT NULL CHECK (kind IN (
+                         'EMAIL','WHATSAPP','PDF','SCREENSHOT','PORTAL_REFERENCE',
+                         'PHONE_CONFIRMATION_NOTE','BANK_REFERENCE','OTHER')),
+    status           TEXT NOT NULL CHECK (status IN (
+                         'QUARANTINED','VALIDATED','SCAN_PENDING','SCANNED','CLASSIFIED',
+                         'STORED','REJECTED','SCAN_FAILED','DELETED')),
+    classification   TEXT CHECK (classification IS NULL OR classification IN ('L1','L2','L3','L4')),
+    access_policy    TEXT NOT NULL CHECK (access_policy IN ('AGENCY_SCOPED','NEED_TO_KNOW','RESTRICTED_VAULT')),
+    original_filename TEXT NOT NULL CHECK (length(original_filename) >= 1),
+    content_type     TEXT NOT NULL CHECK (length(content_type) >= 3),
+    byte_size        BIGINT NOT NULL CHECK (byte_size >= 0),
+    sha256           TEXT NOT NULL CHECK (length(sha256) = 64),
+    uploaded_by      TEXT NOT NULL CHECK (length(uploaded_by) >= 1),
+    quarantine_ref   TEXT NOT NULL CHECK (length(quarantine_ref) >= 1),
+    storage_backend  TEXT,
+    storage_key      TEXT,
+    scan_provider    TEXT,
+    scan_verdict     TEXT CHECK (scan_verdict IS NULL OR scan_verdict IN ('CLEAN','INFECTED','UNKNOWN')),
+    scanned_at       TEXT,
+    rejection_reason TEXT,
+    retention_until  TEXT,
+    version          BIGINT NOT NULL DEFAULT 1 CHECK (version >= 1),
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL,
+    CONSTRAINT pk_evidence_objects PRIMARY KEY (evidence_id),
+    CONSTRAINT fk_evidence_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    CONSTRAINT ck_evidence_classified CHECK (
+        status NOT IN ('CLASSIFIED','STORED') OR classification IS NOT NULL
+    ),
+    CONSTRAINT ck_evidence_stored_requires_clean_scan CHECK (
+        status <> 'STORED'
+        OR (storage_key IS NOT NULL AND storage_backend IS NOT NULL
+            AND scan_provider IS NOT NULL AND scan_verdict = 'CLEAN' AND scanned_at IS NOT NULL)
+    ),
+    CONSTRAINT ck_evidence_restricted_vault CHECK (
+        classification IS NULL OR classification <> 'L4' OR access_policy = 'RESTRICTED_VAULT'
+    ),
+    CONSTRAINT ck_evidence_rejection CHECK (
+        status <> 'REJECTED' OR (rejection_reason IS NOT NULL AND length(rejection_reason) >= 3)
+    )
+);
+
+CREATE INDEX ix_evidence_scope ON evidence_objects (agency_id, status, classification);
+
+-- Temporary authorized access (§27: "temporary signed/authorized URLs"; no permanent
+-- public links for confidential/restricted files). The raw token is never stored —
+-- only its digest — and a grant is always bounded in time and purpose.
+CREATE TABLE evidence_access_grants (
+    grant_id       TEXT NOT NULL,
+    agency_id      TEXT NOT NULL DEFAULT 'agency_default',
+    evidence_id    TEXT NOT NULL,
+    granted_to     TEXT NOT NULL CHECK (length(granted_to) >= 1),
+    purpose        TEXT NOT NULL CHECK (length(purpose) >= 3),
+    issued_at      TEXT NOT NULL,
+    expires_at     TEXT NOT NULL,
+    single_use     BIGINT NOT NULL DEFAULT 1 CHECK (single_use IN (0,1)),
+    used_at        TEXT,
+    revoked_at     TEXT,
+    revoked_reason TEXT,
+    token_sha256   TEXT NOT NULL CHECK (length(token_sha256) = 64),
+    CONSTRAINT pk_evidence_access_grants PRIMARY KEY (grant_id),
+    CONSTRAINT fk_grant_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    CONSTRAINT fk_grant_evidence FOREIGN KEY (evidence_id) REFERENCES evidence_objects (evidence_id),
+    CONSTRAINT uq_grant_token UNIQUE (token_sha256),
+    CONSTRAINT ck_grant_window CHECK (issued_at < expires_at),
+    CONSTRAINT ck_grant_single_use CHECK (single_use = 1 OR used_at IS NULL),
+    CONSTRAINT ck_grant_revoked CHECK (
+        revoked_at IS NULL OR (revoked_reason IS NOT NULL AND length(revoked_reason) >= 3)
+    )
+);
+
+CREATE INDEX ix_grant_evidence ON evidence_access_grants (agency_id, evidence_id, expires_at);
+
+-- Append-only trail: every step of the pipeline leaves a row nobody can rewrite.
+-- `evidence_id` is nullable for exactly one reason: an access attempt against an
+-- unknown or forged grant has no valid target, and a security signal that cannot be
+-- written is a signal that does not exist. Only ACCESS_DENIED may omit the target.
+CREATE TABLE evidence_events (
+    event_id     TEXT NOT NULL,
+    agency_id    TEXT NOT NULL DEFAULT 'agency_default',
+    evidence_id  TEXT,
+    kind         TEXT NOT NULL CHECK (kind IN (
+                    'UPLOADED','VALIDATED','VALIDATION_REJECTED','SCAN_REQUESTED','SCAN_PASSED',
+                    'SCAN_FAILED','CLASSIFIED','STORED','ACCESS_GRANTED','ACCESS_USED',
+                    'ACCESS_DENIED','ACCESS_REVOKED','SOFT_DELETED')),
+    actor        TEXT NOT NULL CHECK (length(actor) >= 1),
+    actor_role   TEXT NOT NULL CHECK (length(actor_role) >= 1),
+    detail       TEXT NOT NULL DEFAULT '{}',
+    occurred_at  TEXT NOT NULL,
+    CONSTRAINT pk_evidence_events PRIMARY KEY (event_id),
+    CONSTRAINT fk_evidence_events_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    CONSTRAINT fk_evidence_events_object FOREIGN KEY (evidence_id) REFERENCES evidence_objects (evidence_id),
+    CONSTRAINT ck_evidence_event_target CHECK (
+        evidence_id IS NOT NULL OR kind = 'ACCESS_DENIED'
+    )
+);
+
+CREATE INDEX ix_evidence_events_object ON evidence_events (agency_id, evidence_id, occurred_at);
+
+CREATE TRIGGER trg_evidence_events_no_update
+    BEFORE UPDATE ON evidence_events
+    FOR EACH ROW EXECUTE FUNCTION villa_reject_mutation();
+
+CREATE TRIGGER trg_evidence_events_no_delete
+    BEFORE DELETE ON evidence_events
+    FOR EACH ROW EXECUTE FUNCTION villa_reject_mutation();
+
 -- Identitas & akses (ADR-0005, diterima 2026-09-26 — MFA faktor: TOTP)
 --
 -- Prinsip yang membentuk bentuk tabel di bawah:
