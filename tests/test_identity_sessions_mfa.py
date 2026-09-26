@@ -313,3 +313,19 @@ def test_timeouts_must_be_sane(conn):
 
 def test_at_least_one_domain_error_type_is_a_domain_error(conn):
     assert issubclass(ID.IdentityError, DomainError)
+
+def test_every_generated_session_token_is_accepted_by_the_reference_rule(conn):
+    """The token generator must satisfy the validator *by construction*.
+
+    ``secrets.token_urlsafe`` can start with "-" or "_", and the platform's opaque
+    reference rule requires an alphanumeric first character — so a url-safe token was
+    refused roughly 3% of the time, which is a login that fails at random. This test
+    generates many tokens (high n, because a 3% defect hides from a single draw) and
+    proves each one passes the same validator the request path uses.
+    """
+    from primitives import require_ref
+
+    svc = service(conn, "agency_bali")
+    for _ in range(500):
+        token = svc.open_session("agent-1", "reservation", at=START).token
+        assert require_ref(token, "token") == token

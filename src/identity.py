@@ -468,7 +468,12 @@ class SessionService:
             self.verify_factor_code(who, mfa_code, at=at)
             mfa_satisfied_at = to_iso(moment)
 
-        token = secrets.token_urlsafe(TOKEN_BYTES)
+        # token_hex, not token_urlsafe: urlsafe base64 can start with "-" or "_",
+        # which the platform's own opaque-reference rule (`primitives._REF_TOKEN`,
+        # first character must be alphanumeric) rejects. A token that the system
+        # refuses to accept 3% of the time is a login that fails at random, so the
+        # generator must satisfy the validator by construction — 256 bits either way.
+        token = secrets.token_hex(TOKEN_BYTES)
         session_id = self.ids.new("sess")
         issued = to_iso(moment)
         idle_until = to_iso(moment + self.idle_timeout)
