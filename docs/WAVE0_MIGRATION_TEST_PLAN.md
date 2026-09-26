@@ -122,3 +122,55 @@ AI cannot approve payment
 - Traceability matrix reviewed.
 - Migration test plan accepted.
 - No source-code refactor started before approval of the first implementation wave.
+
+---
+
+## V1.1 additions (2026-09-26)
+
+New test categories the migration plan must carry, from `docs/MASTER_SPEC_V1_1_DELTA.md`.
+Each entry names the failure it catches, not just the happy path.
+
+### 1. Language standard (ADR-0011)
+- Ratchet guard: no production surface (`templates/*.html`, `src/` string literals) may gain new
+  Indonesian text; the legacy set can only shrink.
+- Error `code` values are unchanged by translation (the machine contract must not move).
+
+### 2. Payment rails (ADR-0012, §61)
+- Duplicate card webhook and duplicate PayPal webhook → exactly one financial entry.
+- Unallocated bank receipt; partial payment; overpayment is not automatic revenue.
+- Provider/browser success without verified settlement → **no** `FUNDS_RECEIVED`.
+- Rail outage → payment pending/failed while the booking business transaction survives
+  (`SOURCE_UNAVAILABLE` must not become `PAYMENT_FAILED` or `NOT_AVAILABLE`).
+- Card data through any write path → refused, nothing persisted, logs clean.
+- Adapter isolation: no provider SDK import inside `payments.py` or any domain module.
+
+### 3. Stablecoin (ADR-0013, §60)
+- Wrong network / wrong token / wrong amount → exception row, no settlement.
+- Destination change after approval → approval invalidated, no silent redirect.
+- Duplicate on-chain transaction → one financial entry.
+- Screenshot as evidence → not accepted.
+- AI sign/transfer/withdraw capability → absent (adversarial suite), not merely refused.
+
+### 4. AI autonomy and knowledge layer (ADR-0009 amendment, §56/§57)
+- Conversation instructions cannot raise privilege.
+- Human takeover pauses conflicting autonomous outbound actions and preserves case context.
+- Unverified villa fact → agent clarifies/verifies instead of asserting.
+- AI outage → booking, payment recording and approval keep working.
+
+### 5. Identifiers, references, concurrency (ADR-0014)
+- Reference format per entity (`INQ-/QT-/RSV-/INV-/PR-/INC-/APR-YYYY-NNNNN`), unique per agency
+  per year, independent sequences between agencies.
+- Stale write → `409 CONCURRENT_MODIFICATION`, stored row unchanged.
+- Money round-trip decimal string ↔ integer minor units, lossless, multi-currency.
+
+### 6. Foundations v1.1 promotes to blocking (§16, §25, §39)
+- Policy version pinned into every decision; historical approval keeps its `policy_version_id`.
+- Outbox event written in the same transaction as the business state change; consumer replay is
+  idempotent.
+- L4 fields (bank details, identity documents) unreadable without authorization and absent from
+  logs, URLs and analytics payloads.
+
+### Evidence format (unchanged)
+
+Every one of these must be demonstrated by a test that fails when the control is removed —
+`REQUIREMENT → THREAT/FAILURE → CONTROL → TEST → OBSERVABLE EVIDENCE` (§47).

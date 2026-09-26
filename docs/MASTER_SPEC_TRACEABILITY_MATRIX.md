@@ -95,3 +95,52 @@ Existing project is a strong deterministic reservation/finance/audit kernel, but
 ## Reuse-first migration principle
 
 Reuse current modules when they enforce a real invariant. Refactor only where the Master Spec requires a stronger domain model, state split, tenant scope, or production security boundary.
+
+---
+
+## V1.1 delta integration (2026-09-26)
+
+**Authoritative document changed.** `villa-agency-os-hermes-master-specification-v1.1.html`
+(sha256 `0751dfdc89968495c4707505a575ea077456fb72437cf1d0262d145339388da3`) now supersedes v1.0
+for every decision in this repository (see ADR-0003 amendment).
+
+The 12 findings v1.1 adds or changes are registered in **`docs/MASTER_SPEC_V1_1_DELTA.md`** with
+the required format (requirement → existing condition → gap → change → test). This section only
+records the *matrix consequence*; it deliberately does not repeat the audit already done.
+
+### Classification changes caused by v1.1
+
+| Area | Was (v1.0 audit) | Now (v1.1) | Why |
+|---|---|---|---|
+| Identity / MFA / sessions | MISSING | **KEEP** (built, ADR-0005 accepted) | WAVE 1 work landed: TOTP, dual-deadline sessions, step-up, append-only auth trail |
+| Approval engine + audit chain | KEEP | KEEP | unchanged by v1.1 |
+| RBAC role model | PARTIAL | **REFACTOR** | v1.1 §18 defines 12 roles; repo has 5 (`reservation`/`finance` merge Manager+Staff, which breaks maker-checker) |
+| Production UI/validation language | not assessed | **REPLACE** | v1.1 §55 LOCKED en-US; 306 Indonesian literals + 11 templates to translate (ADR-0011, ratchet guard) |
+| Payment model | PARTIAL | **REFACTOR** | v1.1 §58/§61 add CARD/PAYPAL/STABLECOIN + provider-neutral adapters + canonical fields (ADR-0012) |
+| Card handling | KEEP (`assert_no_card_data`) | KEEP + extend | §59 minimum PCI; extend guard to logs/error payloads |
+| Stablecoin | MISSING | **MISSING (gated)** | §60 asset+network allowlist, verification sources, exception catalogue (ADR-0013); activation gated on compliance |
+| Policy Engine | MISSING | **MISSING (now foundational)** | §16 + §50: WAVE 1 prerequisite for finance |
+| Exception Engine | PARTIAL (`scheduler.py` sweeps are not it) | MISSING | §17: rules → task/alert/approval → role queue |
+| Transactional outbox | MISSING | **MISSING (now foundational)** | §25 + §50 |
+| AI Service identity + autonomy | MISSING | MISSING | §18/§56/§57; ADR-0009 amended with tiers, knowledge layer, extended deny registry |
+| Reference patterns | PARTIAL (`INV-` only) | **REFACTOR** | Appendix B: INQ/QT/RSV/PR/INC/APR missing (ADR-0014) |
+| Optimistic concurrency | PARTIAL | PARTIAL | §39/§23: `version` columns only on 5 tables + `bookings.version_lock`; 409 semantics absent |
+| Internal id format | KEEP | KEEP with **recorded deviation** | prefixed tokens, not UUID/ULID (ADR-0014 §1) — cheap to reverse now, expensive later |
+| Booking confirm/closure gates | PARTIAL | PARTIAL | §9/§30 gates + blocker lists not enforced |
+| CI/CD quality gates | PARTIAL | PARTIAL | §42: lint/type/API-contract/migration/vuln/E2E/visual + restore drill missing |
+| L4 field encryption | MISSING | MISSING | §19/§40 bank details/passport |
+| Finance Lockdown + AI Kill Switch | MISSING | MISSING | §40 |
+
+### Wave-order consequence
+
+v1.1 §50 + the closing instruction ("security, audit, policy, authorization are foundational —
+do not assume they will be added later") means: **Policy Engine, AI Service identity, the 12-role
+RBAC model and the transactional outbox are prerequisites for WAVE 6 (Finance)**, and the
+planned supplier-route work (WAVE 2) must incorporate the §12 provenance pipeline and §27
+document quarantine rather than only the relationship/contract/rate skeleton.
+
+### Wave 0 status
+
+**CONDITIONAL GO** (unchanged in kind). Conditions: ADR-0011…0014 accepted; WAVE 1 foundational
+items complete before WAVE 6; explicit owner approval for any payment/stablecoin/reference schema
+change; and the en-US migration scheduled (a locked requirement currently unmet).
