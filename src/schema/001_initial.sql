@@ -425,6 +425,85 @@ CREATE TABLE quotes (
 CREATE INDEX ix_quotes_unit_window ON quotes (unit_id, check_in, check_out);
 
 -- --------------------------------------------------------------------------
+-- Quotation versions, snapshots and acceptance (§11). §11 requires immutable
+-- versioning (V1/V2/V3) and forbids overwriting a version that was sent or
+-- accepted, so the chain is append-only and the priced content freezes at the
+-- moment of sending. An acceptance records the exact snapshots the guest agreed
+-- to — quotation_version_id, price_snapshot_id, terms_snapshot_id,
+-- policy_snapshot_id, accepted_at — because a price that can be re-derived
+-- later is not the same thing as a price that was accepted. The lineage of a
+-- quotation is the stay it covers (unit + window), which is the identity the
+-- ``quotes`` table already uses.
+-- --------------------------------------------------------------------------
+CREATE TABLE quotation_versions (
+    quotation_version_id TEXT    NOT NULL,
+    agency_id            TEXT    NOT NULL DEFAULT 'agency_default',
+    property_id          TEXT    NOT NULL,
+    unit_id              TEXT    NOT NULL,
+    check_in             TEXT    NOT NULL,
+    check_out            TEXT    NOT NULL,
+    version              INTEGER NOT NULL CHECK (version >= 1),
+    quote_id             TEXT    NOT NULL,
+    status               TEXT    NOT NULL CHECK (status IN ('DRAFT','SENT','ACCEPTED','SUPERSEDED','VOID')),
+    supersedes_id        TEXT,
+    created_by           TEXT    NOT NULL CHECK (length(created_by) >= 3),
+    created_at           TEXT    NOT NULL,
+    sent_at              TEXT,
+    CONSTRAINT pk_quotation_versions PRIMARY KEY (quotation_version_id),
+    CONSTRAINT fk_quotation_versions_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    CONSTRAINT fk_quotation_versions_property FOREIGN KEY (property_id) REFERENCES properties (property_id),
+    CONSTRAINT fk_quotation_versions_unit FOREIGN KEY (unit_id) REFERENCES units (unit_id),
+    CONSTRAINT fk_quotation_versions_quote FOREIGN KEY (quote_id) REFERENCES quotes (quote_id),
+    CONSTRAINT fk_quotation_versions_supersedes FOREIGN KEY (supersedes_id) REFERENCES quotation_versions (quotation_version_id),
+    CONSTRAINT uq_quotation_versions_version UNIQUE (agency_id, unit_id, check_in, check_out, version),
+    CONSTRAINT ck_quotation_versions_stay CHECK (check_in < check_out),
+    CONSTRAINT ck_quotation_versions_supersedes CHECK (supersedes_id IS NULL OR supersedes_id <> quotation_version_id),
+    -- A draft has never been sent; a version that was sent carries the timestamp of
+    -- that send. A version voided before it was sent stays in the first group.
+    CONSTRAINT ck_quotation_versions_sent CHECK (
+        (sent_at IS NULL AND status IN ('DRAFT','VOID'))
+        OR (sent_at IS NOT NULL AND status IN ('SENT','ACCEPTED','SUPERSEDED'))
+    )
+);
+CREATE INDEX ix_quotation_versions_stay ON quotation_versions (agency_id, unit_id, check_in, check_out);
+
+CREATE TABLE quotation_snapshots (
+    snapshot_id          TEXT NOT NULL,
+    agency_id            TEXT NOT NULL DEFAULT 'agency_default',
+    quotation_version_id TEXT NOT NULL,
+    kind                 TEXT NOT NULL CHECK (kind IN ('PRICE','TERMS','POLICY')),
+    source_ref           TEXT,
+    payload              TEXT NOT NULL,
+    fingerprint          TEXT NOT NULL CHECK (length(fingerprint) = 64),
+    created_at           TEXT NOT NULL,
+    CONSTRAINT pk_quotation_snapshots PRIMARY KEY (snapshot_id),
+    CONSTRAINT fk_quotation_snapshots_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    CONSTRAINT fk_quotation_snapshots_version FOREIGN KEY (quotation_version_id) REFERENCES quotation_versions (quotation_version_id),
+    -- Exactly one snapshot of each kind per version: two price snapshots for one
+    -- version would leave "what the guest agreed to" ambiguous.
+    CONSTRAINT uq_quotation_snapshots_kind UNIQUE (quotation_version_id, kind)
+);
+
+CREATE TABLE quotation_acceptances (
+    acceptance_id        TEXT NOT NULL,
+    agency_id            TEXT NOT NULL DEFAULT 'agency_default',
+    quotation_version_id TEXT NOT NULL,
+    price_snapshot_id    TEXT NOT NULL,
+    terms_snapshot_id    TEXT NOT NULL,
+    policy_snapshot_id   TEXT NOT NULL,
+    accepted_at          TEXT NOT NULL,
+    recorded_by          TEXT NOT NULL CHECK (length(recorded_by) >= 3),
+    created_at           TEXT NOT NULL,
+    CONSTRAINT pk_quotation_acceptances PRIMARY KEY (acceptance_id),
+    CONSTRAINT fk_quotation_acceptances_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    CONSTRAINT fk_quotation_acceptances_version FOREIGN KEY (quotation_version_id) REFERENCES quotation_versions (quotation_version_id),
+    CONSTRAINT fk_quotation_acceptances_price FOREIGN KEY (price_snapshot_id) REFERENCES quotation_snapshots (snapshot_id),
+    CONSTRAINT fk_quotation_acceptances_terms FOREIGN KEY (terms_snapshot_id) REFERENCES quotation_snapshots (snapshot_id),
+    CONSTRAINT fk_quotation_acceptances_policy FOREIGN KEY (policy_snapshot_id) REFERENCES quotation_snapshots (snapshot_id),
+    CONSTRAINT uq_quotation_acceptances_version UNIQUE (quotation_version_id)
+);
+
+-- --------------------------------------------------------------------------
 -- Holds (short-lived inventory lock)
 -- --------------------------------------------------------------------------
 CREATE TABLE holds (
@@ -1855,6 +1934,73 @@ CREATE TRIGGER trg_option_set_presentations_no_delete
 BEFORE DELETE ON option_set_presentations
 BEGIN
     SELECT RAISE(ABORT, 'option_set_presentations is append-only (DELETE rejected)');
+END;
+
+-- §11 immutability for quotations. A version that was sent or accepted is never
+-- overwritten: its status may still move forward (SENT -> ACCEPTED/SUPERSEDED),
+-- but the priced content — the quote it points at, the stay it covers, the
+-- version number and who made it — is frozen from the moment it is sent. The
+-- guarantee lives here so it does not depend on a module remembering to be
+-- careful, exactly as the option-set versions above.
+CREATE TRIGGER trg_quotation_versions_frozen_content
+BEFORE UPDATE ON quotation_versions
+WHEN OLD.status IN ('SENT','ACCEPTED')
+    AND (
+        NEW.quotation_version_id <> OLD.quotation_version_id
+        OR NEW.agency_id <> OLD.agency_id
+        OR NEW.property_id <> OLD.property_id
+        OR NEW.unit_id <> OLD.unit_id
+        OR NEW.check_in <> OLD.check_in
+        OR NEW.check_out <> OLD.check_out
+        OR NEW.version <> OLD.version
+        OR NEW.quote_id <> OLD.quote_id
+        OR NEW.supersedes_id IS NOT OLD.supersedes_id
+        OR NEW.created_by <> OLD.created_by
+        OR NEW.created_at <> OLD.created_at
+        OR NEW.sent_at IS NOT OLD.sent_at
+    )
+BEGIN
+    SELECT RAISE(ABORT, 'a sent or accepted quotation version is immutable (only status may move)');
+END;
+
+CREATE TRIGGER trg_quotation_versions_no_delete
+BEFORE DELETE ON quotation_versions
+BEGIN
+    SELECT RAISE(ABORT, 'quotation_versions is append-only (DELETE rejected)');
+END;
+
+CREATE TRIGGER trg_quotation_snapshots_no_update
+BEFORE UPDATE ON quotation_snapshots
+BEGIN
+    SELECT RAISE(ABORT, 'quotation_snapshots is append-only (UPDATE rejected)');
+END;
+
+CREATE TRIGGER trg_quotation_snapshots_no_delete
+BEFORE DELETE ON quotation_snapshots
+BEGIN
+    SELECT RAISE(ABORT, 'quotation_snapshots is append-only (DELETE rejected)');
+END;
+
+-- The three snapshots are written when the version is sent. Accepting the version
+-- must not be able to add or replace one afterwards: the acceptance has to name the
+-- record that was already complete, not assemble one after the guest agreed.
+CREATE TRIGGER trg_quotation_snapshots_after_accept
+BEFORE INSERT ON quotation_snapshots
+WHEN (SELECT status FROM quotation_versions WHERE quotation_version_id = NEW.quotation_version_id) = 'ACCEPTED'
+BEGIN
+    SELECT RAISE(ABORT, 'an accepted quotation version cannot gain a new snapshot');
+END;
+
+CREATE TRIGGER trg_quotation_acceptances_no_update
+BEFORE UPDATE ON quotation_acceptances
+BEGIN
+    SELECT RAISE(ABORT, 'quotation_acceptances is append-only (UPDATE rejected)');
+END;
+
+CREATE TRIGGER trg_quotation_acceptances_no_delete
+BEFORE DELETE ON quotation_acceptances
+BEGIN
+    SELECT RAISE(ABORT, 'quotation_acceptances is append-only (DELETE rejected)');
 END;
 
 -- §16 governance policy catalogue (WAVE 1-H). The vocabulary is data: every
