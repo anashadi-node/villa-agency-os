@@ -51,7 +51,7 @@ RECORDED_SRC = {
     "identity.py": 26,
     "incidents.py": 74,
     "intake.py": 40,
-    "matching.py": 26,
+    "matching.py": 23,
     "messages.py": 19,
     "scheduler.py": 2,
 }

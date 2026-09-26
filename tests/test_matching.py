@@ -574,7 +574,15 @@ class TestFailClosedCriteria:
     def test_signature_is_keyword_only_after_conn(self):
         params = list(inspect.signature(M.match).parameters.values())
         assert params[0].name == "conn"
-        assert [p.name for p in params[1:]] == ["case_id", "facts", "kernel", "now", "clock", "ids"]
+        assert [p.name for p in params[1:]] == [
+            "case_id",
+            "facts",
+            "kernel",
+            "now",
+            "clock",
+            "ids",
+            "agency_id",
+        ]
         assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params[1:])
 
     def test_clock_can_supply_now(self, conn):

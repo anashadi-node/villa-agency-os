@@ -22,7 +22,15 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping, Optional
 
-from primitives import DomainError, FrozenClock, IdFactory, parse_iso, require_ref, require_text, to_iso
+from primitives import (
+    DomainError,
+    IdFactory,
+    SystemClock,
+    parse_iso,
+    require_ref,
+    require_text,
+    to_iso,
+)
 from references import REFERENCE_PREFIXES, ReferenceAllocator, parse_reference
 
 VALUE_TYPES = ("date", "integer", "text", "money", "boolean", "enum")
@@ -147,13 +155,39 @@ def _coerce(field_name: str, value: Any, value_type: str) -> str:
     return text
 
 
+def _typed_value(field_name: str, stored: str, value_type: str) -> Any:
+    """The consumer-facing value of a stored requirement.
+
+    Requirements are stored as text so one column can hold every type while the
+    database still checks the shape. Consumers need the type back: a matcher that
+    compares ``adults`` as the string ``"4"`` or treats a budget as
+    ``"1500000.5"`` minor units ranks a stay on a comparison nobody intended.
+    """
+    if value_type == "integer":
+        return int(stored)
+    if value_type == "money":
+        amount = Decimal(stored)
+        if amount != amount.to_integral_value():
+            raise RequirementRejected(
+                f"{field_name} must be a whole number of minor units: {stored!r}",
+                code="MONEY_NOT_INTEGRAL",
+                field_name=field_name,
+            )
+        return int(amount)
+    if value_type == "boolean":
+        return stored.lower() == "true"
+    return stored
+
+
 class CrmService:
     """Guest master + inquiry + requirements, all scoped to one agency."""
 
     def __init__(self, conn: Any, *, clock: Optional[Any] = None, ids: Optional[Any] = None,
                  agency_id: str = "agency_default", case_service: Any = None) -> None:
         self.conn = conn
-        self.clock = clock or FrozenClock()
+        # SystemClock, not FrozenClock: a service default must be a working clock
+        # (the repository injects FrozenClock in tests and never relies on this).
+        self.clock = clock or SystemClock()
         self.ids = ids or IdFactory()
         self.agency_id = require_ref(agency_id, "agency_id")
         self._case_service = case_service
@@ -399,6 +433,20 @@ class CrmService:
             (self.agency_id, str(inquiry["case_id"])),
         ).fetchall()
         return tuple(dict(row) for row in rows)
+
+    def confirmed_facts(self, inquiry_id: Any) -> Mapping[str, Any]:
+        """Current trip requirements in typed form — the §6 authority for a stay.
+
+        Read this, not the proposal layer: ``intake_fields`` holds extractions
+        awaiting review, while these rows are what a human confirmed for the guest.
+        Superseded and withdrawn values are already excluded, so what comes back is
+        the current truth rather than a history.
+        """
+        facts: dict[str, Any] = {}
+        for row in self.requirements(inquiry_id):
+            name = str(row["field_name"])
+            facts[name] = _typed_value(name, str(row["field_value"]), str(row["value_type"]))
+        return facts
 
     def withdraw_requirement(self, requirement_id: Any, *, actor: Any) -> None:
         """Withdraw a requirement without deleting it: history is the audit trail."""

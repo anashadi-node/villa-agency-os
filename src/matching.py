@@ -50,8 +50,10 @@ from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
-from intake import IntakeService, validate_facts
+import crm as C
+from intake import validate_facts
 from primitives import (
+    DEFAULT_AGENCY_ID,
     DomainError,
     IdFactory,
     canonical_json,
@@ -76,13 +78,17 @@ __all__ = [
     "CODE_INVALID_CRITERIA",
     "CODE_NO_INVENTORY",
     "CODE_MATCH_RUN_NOT_FOUND",
+    "CODE_MATCH_CASE_NOT_FOUND",
     "CODE_KERNEL_REQUIRED",
     "CODE_DANGLING_EVIDENCE",
+    "FACT_SOURCE_CALLER",
+    "FACT_SOURCE_REQUIREMENTS",
     "MatchingError",
     "MissingFacts",
     "InvalidCriteria",
     "NoInventory",
     "MatchRunNotFound",
+    "CaseNotFound",
     "MatchCandidate",
     "MatchResult",
     "MatchExplanation",
@@ -140,14 +146,20 @@ CODE_MISSING_FACTS = "MISSING_FACTS"
 CODE_INVALID_CRITERIA = "INVALID_CRITERIA"
 CODE_NO_INVENTORY = "NO_INVENTORY"
 CODE_MATCH_RUN_NOT_FOUND = "MATCH_RUN_NOT_FOUND"
+CODE_MATCH_CASE_NOT_FOUND = "MATCH_CASE_NOT_FOUND"
 CODE_KERNEL_REQUIRED = "MATCH_KERNEL_REQUIRED"
 CODE_DANGLING_EVIDENCE = "MATCH_EVIDENCE_MISSING"
 CODE_SCORE_INVARIANT = "MATCH_SCORE_INVARIANT"
 
 #: Where each input came from — recorded in ``criteria`` so a run is auditable.
+#: The fact source a run started from. Recorded per run, because the ledger must
+#: never describe caller-supplied criteria as if a human had confirmed them.
+FACT_SOURCE_CALLER = "caller"
+FACT_SOURCE_REQUIREMENTS = "crm.inquiry_requirements"
+
 PROVENANCE: Mapping[str, str] = {
     "availability": "reservation_kernel.occupancy",
-    "facts": "intake.accepted_facts",
+    "facts": FACT_SOURCE_CALLER,
     "inventory": "units",
     "policy": "policy_versions",
     "rate": "rate_cards+rate_seasons",
@@ -185,6 +197,12 @@ class MatchRunNotFound(MatchingError):
     """``explain`` was asked about a run that does not exist."""
 
     code = CODE_MATCH_RUN_NOT_FOUND
+
+
+class CaseNotFound(MatchingError):
+    """The case does not exist in the calling agency. Nothing is written."""
+
+    code = CODE_MATCH_CASE_NOT_FOUND
 
 
 # --------------------------------------------------------------------------- #
@@ -478,19 +496,31 @@ def _jsonable(value: Any, *, field_name: str) -> Any:
     )
 
 
-def _coerce_facts(conn: sqlite3.Connection, case_id: str, facts: Any, *, clock: Any, ids: Any) -> dict[str, Any]:
-    """Normalise the caller's facts into a plain dict.
+def _coerce_facts(
+    conn: sqlite3.Connection,
+    case_id: str,
+    facts: Any,
+    *,
+    clock: Any,
+    ids: Any,
+    agency_id: str,
+) -> tuple[dict[str, Any], str]:
+    """Normalise the facts of a run, and say truthfully where they came from.
 
-    Accepts a mapping, an iterable of ``{field_name, value}`` rows/objects, or
-    ``None`` — in which case the ACCEPTED intake facts of the case are loaded
-    (``intake.IntakeService.accepted_facts``), which is the production path.
+    ``None`` loads the **confirmed requirements** of the inquiry. Master Spec v1.1
+    §6 puts *current trip requirements* in the inquiry, so the proposal layer
+    (``intake_fields``, extractions awaiting review) is deliberately not read here:
+    ranking a stay on unconfirmed text is the failure this signature prevents.
     """
     if facts is None:
-        return dict(IntakeService(conn, clock=clock, ids=ids).accepted_facts(case_id))
+        return (
+            dict(C.CrmService(conn, clock=clock, ids=ids, agency_id=agency_id).confirmed_facts(case_id)),
+            FACT_SOURCE_REQUIREMENTS,
+        )
     if isinstance(facts, Mapping):
-        return {str(k): v for k, v in facts.items()}
+        return {str(k): v for k, v in facts.items()}, FACT_SOURCE_CALLER
     if hasattr(facts, "facts") and isinstance(getattr(facts, "facts"), Mapping):
-        return {str(k): v for k, v in getattr(facts, "facts").items()}
+        return {str(k): v for k, v in getattr(facts, "facts").items()}, FACT_SOURCE_CALLER
     if isinstance(facts, Iterable):
         collected: dict[str, Any] = {}
         for item in facts:
@@ -506,13 +536,32 @@ def _coerce_facts(conn: sqlite3.Connection, case_id: str, facts: Any, *, clock: 
                     got=type(item).__name__,
                 )
             collected[str(name)] = value
-        return collected
+        return collected, FACT_SOURCE_CALLER
     raise InvalidCriteria(
-        "facts harus Mapping (atau None untuk membaca fakta intake)",
+        "facts must be a Mapping, or None to load the confirmed requirements",
         code=CODE_INVALID_CRITERIA,
         field="facts",
         got=type(facts).__name__,
     )
+
+
+def _require_case(conn: sqlite3.Connection, case_id: str, agency_id: str) -> None:
+    """The case must exist **in the calling agency** — a run is written against it.
+
+    Checked before anything else so a foreign case cannot become a ledger row, and
+    so the failure names the real problem instead of surfacing as a foreign-key
+    error on insert.
+    """
+    row = conn.execute(
+        "SELECT 1 FROM cases WHERE case_id = ? AND agency_id = ?", (case_id, agency_id)
+    ).fetchone()
+    if row is None:
+        raise CaseNotFound(
+            f"case {case_id!r} not found in this agency",
+            code=CODE_MATCH_CASE_NOT_FOUND,
+            case_id=case_id,
+            agency_id=agency_id,
+        )
 
 
 def _present(facts: Mapping[str, Any], key: str) -> bool:
@@ -689,13 +738,19 @@ _INVENTORY_SQL = """
            p.contract_pack_status AS contract_pack_status
     FROM units u
     JOIN properties p ON p.property_id = u.property_id
+    WHERE u.agency_id = ? AND p.agency_id = ?
     ORDER BY u.unit_id
 """
 
 
-def _load_inventory(conn: sqlite3.Connection) -> tuple[dict[str, Any], ...]:
-    """Every unit that exists, in ascending ``unit_id`` (deterministic order)."""
-    rows = conn.execute(_INVENTORY_SQL).fetchall()
+def _load_inventory(conn: sqlite3.Connection, agency_id: str) -> tuple[dict[str, Any], ...]:
+    """This agency's units, in ascending ``unit_id`` (deterministic order).
+
+    Both the unit and its property must belong to the agency: a row claiming one
+    agency's unit under another agency's property is incoherent, and narrowing the
+    result is the safe reading of it.
+    """
+    rows = conn.execute(_INVENTORY_SQL, (agency_id, agency_id)).fetchall()
     return tuple(dict(row) for row in rows)
 
 
@@ -1161,11 +1216,16 @@ def match(
     now: Any,
     clock: Any = None,
     ids: Optional[IdFactory] = None,
+    agency_id: str = DEFAULT_AGENCY_ID,
 ) -> MatchResult:
     """Rank the units for ``case_id`` and write the run to the ledger.
 
-    ``facts`` are the ACCEPTED intake facts (``intake.accepted_facts``); pass
-    ``None`` to have them loaded from ``intake_fields``. ``kernel`` is the
+    ``facts`` are the criteria to rank against; pass ``None`` to load the
+    **confirmed requirements** of the inquiry (``crm.confirmed_facts``), which
+    Master Spec v1.1 §6 makes the authority for current trip requirements. The
+    run records which source it used, so the ledger never calls a caller's claim
+    a confirmed fact. ``agency_id`` scopes both the case and the inventory.
+    ``kernel`` is the
     :class:`reservation_kernel.ReservationKernel` that owns availability — the
     only thing allowed to answer "are these dates free?". ``now`` dates the run
     (``clock`` is the fallback); ``ids`` is the injected
@@ -1178,6 +1238,8 @@ def match(
     ``NoInventory`` and writes nothing.
     """
     case_id = require_ref(case_id, "case_id")
+    agency = require_ref(agency_id, "agency_id")
+    _require_case(conn, case_id, agency)
     if kernel is None:
         raise DomainError(
             "kernel is required: availability may only be decided by reservation_kernel",
@@ -1192,7 +1254,9 @@ def match(
     id_factory = ids if ids is not None else IdFactory()
     moment = _resolve_moment(now, clock)
 
-    fact_map = _coerce_facts(conn, case_id, facts, clock=clock, ids=id_factory)
+    fact_map, fact_source = _coerce_facts(
+        conn, case_id, facts, clock=clock, ids=id_factory, agency_id=agency
+    )
     _require_facts(fact_map)
 
     check_in = _as_date(fact_map["check_in"], field_name="check_in")
@@ -1230,7 +1294,7 @@ def match(
             infants=infants,
         )
 
-    inventory = _load_inventory(conn)
+    inventory = _load_inventory(conn, agency)
     if not inventory:
         raise NoInventory(
             "tidak ada unit untuk dicocokkan",
@@ -1254,7 +1318,7 @@ def match(
         "bedrooms": _optional_int(fact_map, "bedrooms"),
         "amenities": _amenities(fact_map),
         "purpose": _optional_text(fact_map, "purpose"),
-        "provenance": dict(PROVENANCE),
+        "provenance": {**PROVENANCE, "facts": fact_source},
     }
     if criteria["budget_minor"] is not None and criteria["budget_minor"] < 0:
         raise InvalidCriteria(
@@ -1385,7 +1449,13 @@ def _resolve_evidence_ref(conn: sqlite3.Connection, ref: str) -> Optional[dict[s
     return None
 
 
-def explain(conn: sqlite3.Connection, match_run_id: Any = None, *, now: Any = None) -> MatchExplanation:
+def explain(
+    conn: sqlite3.Connection,
+    match_run_id: Any = None,
+    *,
+    now: Any = None,
+    agency_id: str = DEFAULT_AGENCY_ID,
+) -> MatchExplanation:
     """Ordered, human-readable reasons for one run — evidence checked against the DB.
 
     Every ``evidence_ref`` the run recorded must still resolve to a real
@@ -1398,7 +1468,14 @@ def explain(conn: sqlite3.Connection, match_run_id: Any = None, *, now: Any = No
     if isinstance(conn, str) and match_run_id is not None and not isinstance(match_run_id, (str, bytes)):
         conn, match_run_id = match_run_id, conn
     run_id = require_ref(match_run_id, "match_run_id")
-    row = conn.execute("SELECT * FROM match_runs WHERE match_run_id = ?", (run_id,)).fetchone()
+    agency = require_ref(agency_id, "agency_id")
+    # Scoped through the case (match_runs has no agency column of its own): another
+    # agency's run is reported as not found, which is also what a probe should learn.
+    row = conn.execute(
+        "SELECT r.* FROM match_runs r JOIN cases c ON c.case_id = r.case_id"
+        " WHERE r.match_run_id = ? AND c.agency_id = ?",
+        (run_id, agency),
+    ).fetchone()
     if row is None:
         raise MatchRunNotFound(
             f"match run {run_id!r} tidak ditemukan",
