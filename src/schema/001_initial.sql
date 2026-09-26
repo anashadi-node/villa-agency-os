@@ -1184,6 +1184,46 @@ CREATE TABLE option_set_presentations (
     CONSTRAINT uq_option_set_presentations_set UNIQUE (option_set_id)
 );
 
+-- §16 Policy Engine (WAVE 1-H): the governance policy vocabulary. §16 requires
+-- policy to be a first-class component instead of numbers scattered across the
+-- source, so a key is declared in policy_defs and its values live in
+-- policy_revisions. Priced policy (deposit %, tax, quote validity) keeps its own
+-- home in policy_versions; the two stores never hold the same value.
+-- --------------------------------------------------------------------------
+CREATE TABLE policy_defs (
+    policy_key   TEXT NOT NULL,
+    domain       TEXT NOT NULL,
+    value_type   TEXT NOT NULL,
+    risk_level   TEXT NOT NULL,
+    owner_role   TEXT NOT NULL CHECK (length(owner_role) >= 1),
+    spec_ref     TEXT NOT NULL CHECK (length(spec_ref) >= 1),
+    description  TEXT NOT NULL CHECK (length(description) >= 1),
+    created_at   TEXT NOT NULL,
+    CONSTRAINT pk_policy_defs PRIMARY KEY (policy_key),
+    CONSTRAINT ck_policy_defs_domain CHECK (domain IN ('SECURITY','FINANCE','COMMERCIAL','AVAILABILITY','OPERATIONS','RETENTION')),
+    CONSTRAINT ck_policy_defs_value_type CHECK (value_type IN ('MINUTES','HOURS','DAYS','COUNT','PCT','BOOL','JSON','ROLE_SET','TEXT')),
+    CONSTRAINT ck_policy_defs_risk CHECK (risk_level IN ('LOW','MEDIUM','HIGH'))
+);
+
+CREATE TABLE policy_revisions (
+    policy_revision_id TEXT NOT NULL,
+    agency_id          TEXT NOT NULL DEFAULT 'agency_default',
+    policy_key         TEXT NOT NULL,
+    version            INTEGER NOT NULL CHECK (version >= 1),
+    value              TEXT NOT NULL CHECK (length(value) >= 1),
+    effective_from     TEXT NOT NULL,
+    effective_to       TEXT NOT NULL,
+    source_doc_ref     TEXT NOT NULL CHECK (length(source_doc_ref) >= 1),
+    approved_by        TEXT NOT NULL CHECK (length(approved_by) >= 1),
+    fingerprint        TEXT NOT NULL CHECK (length(fingerprint) = 64),
+    created_at         TEXT NOT NULL,
+    CONSTRAINT pk_policy_revisions PRIMARY KEY (policy_revision_id),
+    CONSTRAINT fk_policy_revisions_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    CONSTRAINT fk_policy_revisions_def FOREIGN KEY (policy_key) REFERENCES policy_defs (policy_key),
+    CONSTRAINT uq_policy_revisions_version UNIQUE (agency_id, policy_key, version),
+    CONSTRAINT ck_policy_revisions_dates CHECK (effective_from <= effective_to)
+);
+
 -- Immutability guards: the database itself refuses to rewrite history.
 -- --------------------------------------------------------------------------
 CREATE TRIGGER trg_audit_events_no_update
@@ -1557,6 +1597,30 @@ BEGIN
     SELECT RAISE(ABORT, 'auth_events: riwayat append-only tidak boleh dihapus (no DELETE)');
 END;
 
+CREATE TRIGGER trg_policy_defs_no_update
+BEFORE UPDATE ON policy_defs
+BEGIN
+    SELECT RAISE(ABORT, 'policy_defs is append-only (UPDATE rejected)');
+END;
+
+CREATE TRIGGER trg_policy_defs_no_delete
+BEFORE DELETE ON policy_defs
+BEGIN
+    SELECT RAISE(ABORT, 'policy_defs is append-only (DELETE rejected)');
+END;
+
+CREATE TRIGGER trg_policy_revisions_no_update
+BEFORE UPDATE ON policy_revisions
+BEGIN
+    SELECT RAISE(ABORT, 'policy_revisions is append-only (UPDATE rejected)');
+END;
+
+CREATE TRIGGER trg_policy_revisions_no_delete
+BEFORE DELETE ON policy_revisions
+BEGIN
+    SELECT RAISE(ABORT, 'policy_revisions is append-only (DELETE rejected)');
+END;
+
 INSERT INTO agencies (agency_id, name, status, created_at, updated_at)
 VALUES ('agency_default', 'Default Agency', 'ACTIVE', '2026-09-21T00:00:00+00:00', '2026-09-21T00:00:00+00:00');
 
@@ -1609,3 +1673,45 @@ BEFORE DELETE ON option_set_presentations
 BEGIN
     SELECT RAISE(ABORT, 'option_set_presentations is append-only (DELETE rejected)');
 END;
+
+-- §16 governance policy catalogue (WAVE 1-H). The vocabulary is data: every
+-- key the platform resolves must be declared here first, with the role that
+-- owns it and the clause it comes from.
+-- --------------------------------------------------------------------------
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('commercial.discount.authority_roles', 'COMMERCIAL', 'ROLE_SET', 'MEDIUM', 'owner', '§16', 'Roles allowed to grant a discount without owner approval.', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('commercial.margin_floor_pct', 'COMMERCIAL', 'PCT', 'MEDIUM', 'owner', '§16', 'Lowest gross margin a booking may be sold at.', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('finance.approval.payment_thresholds_minor', 'FINANCE', 'JSON', 'HIGH', 'owner', '§16', 'Payment amounts in minor units that require approval at each level.', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('finance.approval.dual_control_min_approvals', 'FINANCE', 'COUNT', 'HIGH', 'owner', '§16', 'Approvals required for a subject on the dual-control list.', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('finance.approval.max_required_approvals', 'FINANCE', 'COUNT', 'HIGH', 'owner', '§16', 'Upper bound of required approvals the engine will accept.', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('finance.approval.expiry_minutes_by_risk', 'FINANCE', 'JSON', 'MEDIUM', 'owner', '§16', 'How long an approval request stays pending, per risk level.', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('finance.approval.dual_control_subjects', 'FINANCE', 'JSON', 'HIGH', 'owner', '§16', 'Subject types that always need two approvals.', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('finance.booking.financial_gates', 'FINANCE', 'JSON', 'HIGH', 'owner', '§16', 'Financial conditions a booking must satisfy before confirmation.', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('availability.hold.reminder_minutes', 'AVAILABILITY', 'JSON', 'LOW', 'owner', '§16', 'When to remind the team before a hold expires.', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('availability.reconfirmation.freshness_hours', 'AVAILABILITY', 'HOURS', 'MEDIUM', 'owner', '§16', 'Age at which availability must be reconfirmed with the supplier.', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('availability.evidence.freshness_seconds_by_level', 'AVAILABILITY', 'JSON', 'MEDIUM', 'owner', '§16', 'Minimum freshness of evidence for each evidence level.', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('availability.evidence.max_freshness_seconds_by_level', 'AVAILABILITY', 'JSON', 'MEDIUM', 'owner', '§16', 'Maximum freshness an evidence level may claim.', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('operations.incident.escalation_minutes_by_severity', 'OPERATIONS', 'JSON', 'HIGH', 'owner', '§16', 'Escalation deadline for each incident severity.', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('retention.records.retention_days_by_class', 'RETENTION', 'JSON', 'HIGH', 'owner', '§49', 'Retention period per data class. §49 leaves the periods OPEN.', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('security.ai.denied_actions', 'SECURITY', 'JSON', 'HIGH', 'owner', '§18/§56/ADR-0009', 'Capabilities the AI service may never hold, checked before any allowlist.', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('security.mfa.required_roles', 'SECURITY', 'ROLE_SET', 'HIGH', 'owner', '§18', 'Roles that must satisfy MFA before acting.', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('security.session.absolute_timeout_hours', 'SECURITY', 'HOURS', 'HIGH', 'owner', '§18', 'Absolute session lifetime regardless of activity.', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('security.session.idle_timeout_minutes', 'SECURITY', 'MINUTES', 'HIGH', 'owner', '§18', 'Idle time before a session is treated as expired.', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('security.step_up.high_risk_subjects', 'SECURITY', 'JSON', 'HIGH', 'owner', '§18', 'Subject types that require a fresh step-up.', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('security.step_up.window_minutes', 'SECURITY', 'MINUTES', 'HIGH', 'owner', '§16/§18', 'How long a step-up unlock lasts before it must be repeated.', '2026-09-26T00:00:00+00:00');
+
+-- Baseline revisions: only values a document already fixes. The rest stay
+-- unpublished on purpose — §49 retention and the commercial authority numbers
+-- have no agreed value yet, and inventing one would be a fabricated policy.
+-- --------------------------------------------------------------------------
+INSERT INTO policy_revisions (policy_revision_id, agency_id, policy_key, version, value, effective_from, effective_to, source_doc_ref, approved_by, fingerprint, created_at) VALUES ('polrev_baseline_01', 'agency_default', 'finance.approval.dual_control_min_approvals', 1, '2', '2026-01-01', '9999-12-31', 'src/approvals.py DUAL_CONTROL_MIN_APPROVALS migrated to policy (WAVE 1-H)', 'owner_anas', '6772a47637184b2a8de5a5fdf7fea657ab83e6729bdc29b5bc33df3cd43e48ec', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_revisions (policy_revision_id, agency_id, policy_key, version, value, effective_from, effective_to, source_doc_ref, approved_by, fingerprint, created_at) VALUES ('polrev_baseline_02', 'agency_default', 'finance.approval.max_required_approvals', 1, '3', '2026-01-01', '9999-12-31', 'src/approvals.py MAX_REQUIRED_APPROVALS migrated to policy (WAVE 1-H)', 'owner_anas', 'fe7cf878381df9190702c7fd8be8cec62a7e47b761872bbd62773057d8c5d0e7', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_revisions (policy_revision_id, agency_id, policy_key, version, value, effective_from, effective_to, source_doc_ref, approved_by, fingerprint, created_at) VALUES ('polrev_baseline_03', 'agency_default', 'finance.approval.expiry_minutes_by_risk', 1, '{"HIGH":240,"LOW":1440,"MEDIUM":720}', '2026-01-01', '9999-12-31', 'src/approvals.py EXPIRY_MINUTES migrated to policy (WAVE 1-H)', 'owner_anas', '8d27b13dbdc17469a1aa76847face0b6225afb97bb5ccd6714fd7068ccea7783', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_revisions (policy_revision_id, agency_id, policy_key, version, value, effective_from, effective_to, source_doc_ref, approved_by, fingerprint, created_at) VALUES ('polrev_baseline_04', 'agency_default', 'finance.approval.dual_control_subjects', 1, '["refund","payout","bank_change"]', '2026-01-01', '9999-12-31', 'src/approvals.py DUAL_CONTROL_SUBJECTS migrated to policy (WAVE 1-H)', 'owner_anas', 'e4b1a6c769866b6beb904cd26a410ff5e0ed5686e26ccb5811f18907661c2e4b', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_revisions (policy_revision_id, agency_id, policy_key, version, value, effective_from, effective_to, source_doc_ref, approved_by, fingerprint, created_at) VALUES ('polrev_baseline_05', 'agency_default', 'availability.evidence.freshness_seconds_by_level', 1, '{"A":900,"B":86400,"C":172800,"D":0}', '2026-01-01', '9999-12-31', 'src/gates.py LEVEL_FRESHNESS_SECONDS migrated to policy (WAVE 1-H)', 'owner_anas', 'db7e0609993baa75db8de888df022f0c55019513dad9c4bba57c2248a939bc1f', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_revisions (policy_revision_id, agency_id, policy_key, version, value, effective_from, effective_to, source_doc_ref, approved_by, fingerprint, created_at) VALUES ('polrev_baseline_06', 'agency_default', 'availability.evidence.max_freshness_seconds_by_level', 1, '{"A":3600,"B":172800,"C":604800,"D":0}', '2026-01-01', '9999-12-31', 'src/gates.py LEVEL_MAX_FRESHNESS_SECONDS migrated to policy (WAVE 1-H)', 'owner_anas', 'aacfdb9b67ac8203465a80703fde1d92f3cf9712cca934736cbf31138fb464c9', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_revisions (policy_revision_id, agency_id, policy_key, version, value, effective_from, effective_to, source_doc_ref, approved_by, fingerprint, created_at) VALUES ('polrev_baseline_07', 'agency_default', 'security.ai.denied_actions', 1, '["payment.approve","payment.execute","refund.approve","refund.execute","bank.change","bank.approve","discount.approve","margin_override.approve","contract.activate","rate.verify","rate.activate","permission.change","audit.modify","audit.delete","secret.read","passport.read_raw","blockchain.sign","crypto.transfer","withdrawal.approve","treasury.control","key.read_raw","seed_phrase.read"]', '2026-01-01', '9999-12-31', 'ADR-0009 deny registry (base list + 2026-09-26 amendment)', 'owner_anas', 'fde960e1f943507e4b9d9479aa06980c20ff17f290881ea9045f06719f5a4474', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_revisions (policy_revision_id, agency_id, policy_key, version, value, effective_from, effective_to, source_doc_ref, approved_by, fingerprint, created_at) VALUES ('polrev_baseline_08', 'agency_default', 'security.mfa.required_roles', 1, '["owner","finance"]', '2026-01-01', '9999-12-31', 'src/identity.py MFA_REQUIRED_ROLES migrated to policy (WAVE 1-H)', 'owner_anas', 'ab8dcfcd6cd4fb1009aad9343c88721787e34422a266c0e54005da6b621551a3', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_revisions (policy_revision_id, agency_id, policy_key, version, value, effective_from, effective_to, source_doc_ref, approved_by, fingerprint, created_at) VALUES ('polrev_baseline_09', 'agency_default', 'security.session.absolute_timeout_hours', 1, '12', '2026-01-01', '9999-12-31', 'ADR-0005 (identity, auth, session and RBAC)', 'owner_anas', '7f56d92c8d33ce6ba2bb92cab4a0619e7c8fa0c4c88b2802bcf645fedfb4817c', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_revisions (policy_revision_id, agency_id, policy_key, version, value, effective_from, effective_to, source_doc_ref, approved_by, fingerprint, created_at) VALUES ('polrev_baseline_10', 'agency_default', 'security.session.idle_timeout_minutes', 1, '30', '2026-01-01', '9999-12-31', 'ADR-0005 (identity, auth, session and RBAC)', 'owner_anas', 'a3a743be40cd4c3f03bfd1e7714b82b38a65bf2529a13094072e5a21f4cbcd2b', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_revisions (policy_revision_id, agency_id, policy_key, version, value, effective_from, effective_to, source_doc_ref, approved_by, fingerprint, created_at) VALUES ('polrev_baseline_11', 'agency_default', 'security.step_up.high_risk_subjects', 1, '["refund","payout","bank_change"]', '2026-01-01', '9999-12-31', 'src/identity.py HIGH_RISK_SUBJECT_TYPES migrated to policy (WAVE 1-H)', 'owner_anas', '6e15f3f9ca451993b55784b4211f732d8f5d866e787c780c88aea20c1abb12d9', '2026-09-26T00:00:00+00:00');
+INSERT INTO policy_revisions (policy_revision_id, agency_id, policy_key, version, value, effective_from, effective_to, source_doc_ref, approved_by, fingerprint, created_at) VALUES ('polrev_baseline_12', 'agency_default', 'security.step_up.window_minutes', 1, '10', '2026-01-01', '9999-12-31', 'ADR-0005 (identity, auth, session and RBAC)', 'owner_anas', '87206f8ceb50e944f64122ec100de474d0fbd728ca42e51d3e4a022d027302f1', '2026-09-26T00:00:00+00:00');

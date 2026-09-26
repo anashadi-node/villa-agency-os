@@ -20,15 +20,20 @@ kernel can never introduce a rounding difference the database did not see.
 
 from __future__ import annotations
 
+import json
 import re
+import sqlite3
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from typing import Any, Iterable, Mapping, NoReturn, Optional, Sequence
 
 from primitives import (
+    DEFAULT_AGENCY_ID,
     DomainError,
+    IdFactory,
     Money,
+    SystemClock,
     canonical_json,
     decimal_of,
     parse_iso,
@@ -47,6 +52,23 @@ __all__ = [
     "PAYLOAD_MONEY_KEYS",
     "PAYLOAD_REQUIRED_KEYS",
     "parse_pct",
+    # §16 governance half
+    "PolicyDef",
+    "PolicyValue",
+    "PolicyResolver",
+    "POLICY_DOMAINS",
+    "POLICY_VALUE_TYPES",
+    "POLICY_RISK_LEVELS",
+    "POLICY_DEF_TABLE",
+    "POLICY_REVISION_TABLE",
+    "PolicyError",
+    "UnknownPolicyKey",
+    "PolicyValueNotPublished",
+    "InvalidPolicyValue",
+    "InvalidPolicyWindow",
+    "PolicySourceRequired",
+    "PolicyApproverRequired",
+    "PolicyBackdatedRevision",
 ]
 
 #: The only two scopes the schema allows (``ck_policy_scope``).
@@ -544,3 +566,466 @@ class PolicyRegistry:
             if exc.code != "POLICY_NOT_FOUND":
                 raise
         return self.active(property_id, "property", on_date)
+
+
+# --------------------------------------------------------------------------- #
+# §16 Policy Engine — the governance half
+# --------------------------------------------------------------------------- #
+#
+# ``PolicyRegistry`` above answers "what does this villa cost on this date". The
+# governance half answers "what is the platform's rule on this date" for the
+# numbers that are not per-villa: security windows, approval thresholds, evidence
+# freshness, retention. §16 requires those to be first-class and versioned rather
+# than constants scattered across the source, and §5 classes policy as VERSIONED:
+# a change is a new version and the old one is preserved.
+#
+# Supersession differs from ``PolicyRegistry.active`` deliberately. That kernel
+# refuses an overlapping window, because two prices for one night make a quote
+# unreproducible. A governance value is different in kind: it *is* superseded by
+# a later revision that starts while the old one is still nominally open, and the
+# table is append-only, so an old row can never be closed after the fact. So here
+# the covering revision with the highest version wins, publishing may never move
+# a window backwards in time (which would silently rewrite what a past decision
+# was allowed to do), and every decision can cite the revision it obeyed.
+
+#: Domains a policy key may belong to (mirrors ``ck_policy_defs_domain``).
+POLICY_DOMAINS: tuple[str, ...] = (
+    "SECURITY",
+    "FINANCE",
+    "COMMERCIAL",
+    "AVAILABILITY",
+    "OPERATIONS",
+    "RETENTION",
+)
+
+#: Declared value types (mirrors ``ck_policy_defs_value_type``).
+POLICY_VALUE_TYPES: tuple[str, ...] = (
+    "MINUTES",
+    "HOURS",
+    "DAYS",
+    "COUNT",
+    "PCT",
+    "BOOL",
+    "JSON",
+    "ROLE_SET",
+    "TEXT",
+)
+
+#: Risk levels, the same vocabulary §18/§56 use for roles and actions.
+POLICY_RISK_LEVELS: tuple[str, ...] = ("LOW", "MEDIUM", "HIGH")
+
+POLICY_DEF_TABLE = "policy_defs"
+POLICY_REVISION_TABLE = "policy_revisions"
+
+#: Types whose value is a non-negative integer.
+_INT_TYPES: tuple[str, ...] = ("MINUTES", "HOURS", "DAYS", "COUNT")
+
+#: The open end of a policy window: a value that never lapses by itself.
+POLICY_OPEN_END = "9999-12-31"
+
+
+class PolicyError(DomainError):
+    """A deliberate refusal from the policy engine."""
+
+    code = "POLICY_ERROR"
+
+
+class UnknownPolicyKey(PolicyError):
+    """The key is not in the catalogue; policy cannot be invented at call time."""
+
+    code = "POLICY_UNKNOWN_KEY"
+
+
+class PolicyValueNotPublished(PolicyError):
+    """No revision covers this instant — a refusal, never a silent default."""
+
+    code = "POLICY_VALUE_NOT_PUBLISHED"
+
+
+class InvalidPolicyValue(PolicyError):
+    """The value does not fit the type the catalogue declares for this key."""
+
+    code = "POLICY_VALUE_INVALID"
+
+
+class InvalidPolicyWindow(PolicyError):
+    """A window that ends before it starts is not a window."""
+
+    code = "POLICY_WINDOW_INVALID"
+
+
+class PolicySourceRequired(PolicyError):
+    """A value that cannot cite its document is an assumption, not a policy."""
+
+    code = "POLICY_SOURCE_REQUIRED"
+
+
+class PolicyApproverRequired(PolicyError):
+    """Somebody has to own the number; an anonymous policy is not admissible."""
+
+    code = "POLICY_APPROVER_REQUIRED"
+
+
+class PolicyBackdatedRevision(PolicyError):
+    """Versions only move forward, so history cannot be rewritten."""
+
+    code = "POLICY_BACKDATED_REVISION"
+
+
+@dataclass(frozen=True)
+class PolicyDef:
+    """One entry of the policy catalogue: the vocabulary, not the value."""
+
+    policy_key: str
+    domain: str
+    value_type: str
+    risk_level: str
+    owner_role: str
+    spec_ref: str
+    description: str
+    created_at: str
+
+    @classmethod
+    def from_row(cls, row: Mapping[str, Any]) -> "PolicyDef":
+        return cls(
+            policy_key=str(row["policy_key"]),
+            domain=str(row["domain"]),
+            value_type=str(row["value_type"]),
+            risk_level=str(row["risk_level"]),
+            owner_role=str(row["owner_role"]),
+            spec_ref=str(row["spec_ref"]),
+            description=str(row["description"]),
+            created_at=str(row["created_at"]),
+        )
+
+
+@dataclass(frozen=True)
+class PolicyValue:
+    """One published revision, addressable and reproducible.
+
+    ``source_doc_ref`` and ``approved_by`` are required for the same reason
+    ``PolicyVersion`` requires them: a number that cannot cite its document and
+    the human who approved it is not a policy.
+    """
+
+    policy_revision_id: str
+    agency_id: str
+    policy_key: str
+    version: int
+    value: str
+    value_type: str
+    effective_from: str
+    effective_to: str
+    source_doc_ref: str
+    approved_by: str
+    fingerprint: str
+    created_at: str
+
+    @classmethod
+    def from_row(cls, row: Mapping[str, Any], value_type: str) -> "PolicyValue":
+        return cls(
+            policy_revision_id=str(row["policy_revision_id"]),
+            agency_id=str(row["agency_id"]),
+            policy_key=str(row["policy_key"]),
+            version=int(row["version"]),
+            value=str(row["value"]),
+            value_type=value_type,
+            effective_from=str(row["effective_from"]),
+            effective_to=str(row["effective_to"]),
+            source_doc_ref=str(row["source_doc_ref"]),
+            approved_by=str(row["approved_by"]),
+            fingerprint=str(row["fingerprint"]),
+            created_at=str(row["created_at"]),
+        )
+
+    def covers(self, on_date: str) -> bool:
+        """True when ``on_date`` (ISO date) falls inside the inclusive window."""
+        return self.effective_from <= on_date <= self.effective_to
+
+    # -- typed reads ------------------------------------------------------- #
+    def _require_type(self, *kinds: str) -> None:
+        if self.value_type not in kinds:
+            raise InvalidPolicyValue(
+                f"{self.policy_key} is {self.value_type}, not {'/'.join(kinds)}",
+                code="POLICY_VALUE_INVALID",
+                policy_key=self.policy_key,
+                value_type=self.value_type,
+            )
+
+    def as_int(self) -> int:
+        self._require_type(*_INT_TYPES)
+        return int(self.value)
+
+    def as_decimal(self) -> Decimal:
+        self._require_type("PCT")
+        return Decimal(self.value)
+
+    def as_bool(self) -> bool:
+        self._require_type("BOOL")
+        return self.value == "true"
+
+    def as_text(self) -> str:
+        self._require_type("TEXT")
+        return self.value
+
+    def as_json(self) -> Any:
+        self._require_type("JSON", "ROLE_SET")
+        return json.loads(self.value)
+
+    def as_roles(self) -> tuple[str, ...]:
+        self._require_type("ROLE_SET")
+        return tuple(str(role) for role in json.loads(self.value))
+
+
+class PolicyResolver:
+    """Reads and publishes governance policy over one SQLite/PostgreSQL connection.
+
+    Every read is agency-scoped with the platform baseline as the fallback: an
+    agency that has published nothing inherits the baseline rather than silence.
+    """
+
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        clock: Any = None,
+        agency_id: str = DEFAULT_AGENCY_ID,
+        ids: Optional[IdFactory] = None,
+    ) -> None:
+        self.conn = conn
+        self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        self.clock = clock or SystemClock()
+        self.agency_id = require_ref(agency_id, "agency_id")
+        self.ids = ids or IdFactory()
+
+    # -- plumbing ---------------------------------------------------------- #
+    def _on_date(self, at: Any = None) -> str:
+        """Resolve ``at`` to the calendar date a policy window is compared against."""
+        if at is None:
+            return self.clock.now().astimezone(UTC).date().isoformat()
+        if isinstance(at, datetime):
+            if at.tzinfo is None:
+                raise InvalidPolicyWindow(
+                    "at must carry a timezone", code="POLICY_WINDOW_INVALID"
+                )
+            return at.astimezone(UTC).date().isoformat()
+        text = str(at)
+        if "T" in text:
+            return parse_iso(text).astimezone(UTC).date().isoformat()
+        return parse_iso_date(text).isoformat()
+
+    def _revision_rows(self, policy_key: str, *, agency_id: str) -> list[Mapping[str, Any]]:
+        return list(
+            self.conn.execute(
+                f"SELECT * FROM {POLICY_REVISION_TABLE} WHERE policy_key = ? AND agency_id = ?"
+                " ORDER BY version",
+                (policy_key, agency_id),
+            ).fetchall()
+        )
+
+    # -- reads ------------------------------------------------------------- #
+    def catalogue(self) -> tuple[PolicyDef, ...]:
+        rows = self.conn.execute(
+            f"SELECT * FROM {POLICY_DEF_TABLE} ORDER BY domain, policy_key"
+        ).fetchall()
+        return tuple(PolicyDef.from_row(row) for row in rows)
+
+    def definition(self, policy_key: str) -> PolicyDef:
+        row = self.conn.execute(
+            f"SELECT * FROM {POLICY_DEF_TABLE} WHERE policy_key = ?", (policy_key,)
+        ).fetchone()
+        if row is None:
+            raise UnknownPolicyKey(
+                f"unknown policy key: {policy_key}",
+                code="POLICY_UNKNOWN_KEY",
+                policy_key=policy_key,
+            )
+        return PolicyDef.from_row(row)
+
+    def history(self, policy_key: str, *, agency_id: Optional[str] = None) -> tuple[PolicyValue, ...]:
+        """Every revision this scope published for the key, oldest version first."""
+        definition = self.definition(policy_key)
+        scope = self.agency_id if agency_id is None else agency_id
+        return tuple(
+            PolicyValue.from_row(row, definition.value_type)
+            for row in self._revision_rows(policy_key, agency_id=scope)
+        )
+
+    def resolve(self, policy_key: str, *, at: Any = None) -> PolicyValue:
+        """The revision that governs ``at`` — the highest version that covers it."""
+        definition = self.definition(policy_key)
+        on_date = self._on_date(at)
+        for scope in self._scopes():
+            covering = [
+                row
+                for row in self._revision_rows(policy_key, agency_id=scope)
+                if str(row["effective_from"]) <= on_date <= str(row["effective_to"])
+            ]
+            if covering:
+                chosen = max(covering, key=lambda row: int(row["version"]))
+                return PolicyValue.from_row(chosen, definition.value_type)
+        raise PolicyValueNotPublished(
+            f"no revision of {policy_key} covers {on_date}",
+            code="POLICY_VALUE_NOT_PUBLISHED",
+            policy_key=policy_key,
+            agency_id=self.agency_id,
+            on_date=on_date,
+        )
+
+    def _scopes(self) -> tuple[str, ...]:
+        """Agency policy first, then the platform baseline."""
+        if self.agency_id == DEFAULT_AGENCY_ID:
+            return (DEFAULT_AGENCY_ID,)
+        return (self.agency_id, DEFAULT_AGENCY_ID)
+
+    # -- writes ------------------------------------------------------------ #
+    def publish(
+        self,
+        policy_key: str,
+        value: Any,
+        *,
+        effective_from: str,
+        effective_to: str = POLICY_OPEN_END,
+        source_doc_ref: str,
+        approved_by: str,
+        at: Any = None,
+    ) -> PolicyValue:
+        """Append a new revision. The previous one stays readable forever."""
+        definition = self.definition(policy_key)
+        text = self._validate_value(definition, value)
+        if not str(source_doc_ref).strip():
+            raise PolicySourceRequired(
+                f"{policy_key} must cite the document it came from",
+                code="POLICY_SOURCE_REQUIRED",
+                policy_key=policy_key,
+            )
+        if not str(approved_by).strip():
+            raise PolicyApproverRequired(
+                f"{policy_key} must name the human who approved it",
+                code="POLICY_APPROVER_REQUIRED",
+                policy_key=policy_key,
+            )
+        source = require_text(source_doc_ref, "source_doc_ref", max_len=200)
+        approver = require_ref(approved_by, "approved_by")
+        start, end = parse_iso_date(effective_from), parse_iso_date(effective_to)
+        if start > end:
+            raise InvalidPolicyWindow(
+                "effective_from must not be after effective_to",
+                code="POLICY_WINDOW_INVALID",
+                effective_from=effective_from,
+                effective_to=effective_to,
+            )
+        existing = self.history(policy_key)
+        if existing:
+            newest_start = max(parse_iso_date(item.effective_from) for item in existing)
+            if start < newest_start:
+                raise PolicyBackdatedRevision(
+                    f"{policy_key} already has a revision starting {newest_start.isoformat()}",
+                    code="POLICY_BACKDATED_REVISION",
+                    policy_key=policy_key,
+                    effective_from=start.isoformat(),
+                    newest_effective_from=newest_start.isoformat(),
+                )
+        version = max((item.version for item in existing), default=0) + 1
+        revision_id = self.ids.new("polrev")
+        window = {
+            "agency_id": self.agency_id,
+            "policy_key": policy_key,
+            "version": version,
+            "value": text,
+            "effective_from": start.isoformat(),
+            "effective_to": end.isoformat(),
+            "source_doc_ref": source,
+            "approved_by": approver,
+        }
+        created_at = to_iso(self.clock.now() if at is None else parse_iso(str(at)))
+        self.conn.execute(
+            f"INSERT INTO {POLICY_REVISION_TABLE} (policy_revision_id, agency_id, policy_key,"
+            " version, value, effective_from, effective_to, source_doc_ref, approved_by,"
+            " fingerprint, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                revision_id,
+                self.agency_id,
+                policy_key,
+                version,
+                text,
+                start.isoformat(),
+                end.isoformat(),
+                source,
+                approver,
+                sha256_hex(canonical_json(window)),
+                created_at,
+            ),
+        )
+        return PolicyValue(
+            policy_revision_id=revision_id,
+            agency_id=self.agency_id,
+            policy_key=policy_key,
+            version=version,
+            value=text,
+            value_type=definition.value_type,
+            effective_from=start.isoformat(),
+            effective_to=end.isoformat(),
+            source_doc_ref=source,
+            approved_by=approver,
+            fingerprint=sha256_hex(canonical_json(window)),
+            created_at=created_at,
+        )
+
+    def _validate_value(self, definition: PolicyDef, value: Any) -> str:
+        """Canonical text for ``value``, or a refusal if it does not fit the type."""
+        kind = definition.value_type
+
+        def refuse(reason: str) -> NoReturn:
+            raise InvalidPolicyValue(
+                f"{definition.policy_key}: {reason}",
+                code="POLICY_VALUE_INVALID",
+                policy_key=definition.policy_key,
+                value_type=kind,
+            )
+
+        if kind in _INT_TYPES:
+            try:
+                number = int(str(value).strip())
+            except (TypeError, ValueError):
+                refuse(f"{value!r} is not an integer")
+            if number < 0:
+                refuse("a policy duration or count cannot be negative")
+            return str(number)
+        if kind == "PCT":
+            text = str(value).strip()
+            try:
+                pct = parse_pct(text, field_name=definition.policy_key)
+            except DomainError:
+                refuse(f"{value!r} is not a percentage")
+            if not (Decimal("0") <= pct <= Decimal("100")):
+                refuse("a percentage must be between 0 and 100")
+            return text
+        if kind == "BOOL":
+            text = str(value).strip().lower()
+            if text not in ("true", "false"):
+                refuse(f"{value!r} is not a boolean")
+            return text
+        if kind in ("JSON", "ROLE_SET"):
+            payload = value
+            if isinstance(value, str):
+                try:
+                    payload = json.loads(value)
+                except json.JSONDecodeError:
+                    refuse(f"{value!r} is not JSON")
+            if kind == "ROLE_SET":
+                if not isinstance(payload, list) or not payload:
+                    refuse("a role set must be a non-empty list of roles")
+                for role in payload:
+                    if not isinstance(role, str) or not role.strip():
+                        refuse("a role set may only contain role names")
+            elif not isinstance(payload, (list, dict)):
+                refuse("a JSON policy value must be a list or an object")
+            return canonical_json(payload)
+        if kind == "TEXT":
+            text = str(value)
+            if not text.strip():
+                refuse("a text policy value cannot be empty")
+            return require_text(text, "value", max_len=500)
+        refuse(f"unsupported value type {kind!r}")

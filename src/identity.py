@@ -216,8 +216,13 @@ class Session:
     def is_idle_expired(self, at: datetime) -> bool:
         return parse_iso(self.idle_expires_at) <= at
 
-    def needs_mfa(self) -> bool:
-        return self.role in MFA_REQUIRED_ROLES and self.mfa_satisfied_at is None
+    def needs_mfa(self, required_roles: tuple[str, ...] = MFA_REQUIRED_ROLES) -> bool:
+        """True when this session's role owes a second factor and has not paid it.
+
+        ``required_roles`` comes from the §16 policy store when the service was
+        built with one; the module constant is the documented baseline.
+        """
+        return self.role in required_roles and self.mfa_satisfied_at is None
 
     def has_step_up(self, at: datetime) -> bool:
         return self.step_up_until is not None and parse_iso(self.step_up_until) > at
@@ -248,6 +253,8 @@ class SessionService:
         idle_timeout: timedelta = SESSION_IDLE_TIMEOUT,
         absolute_timeout: timedelta = SESSION_ABSOLUTE_TIMEOUT,
         step_up_window: timedelta = STEP_UP_WINDOW,
+        mfa_required_roles: tuple[str, ...] = MFA_REQUIRED_ROLES,
+        high_risk_subject_types: tuple[str, ...] = HIGH_RISK_SUBJECT_TYPES,
     ) -> None:
         self.conn = conn
         self.conn.row_factory = sqlite3.Row
@@ -268,6 +275,49 @@ class SessionService:
         self.idle_timeout = idle_timeout
         self.absolute_timeout = absolute_timeout
         self.step_up_window = step_up_window
+        self.mfa_required_roles = tuple(mfa_required_roles)
+        self.high_risk_subject_types = tuple(high_risk_subject_types)
+
+    @classmethod
+    def from_policy(
+        cls,
+        conn: sqlite3.Connection,
+        policy: Any,
+        *,
+        ids: Optional[IdFactory] = None,
+        secrets: Optional[SecretResolver] = None,
+        at: Optional[Any] = None,
+    ) -> "SessionService":
+        """Build a service whose security numbers come from the §16 policy store.
+
+        §16 keeps these numbers out of the source. The resolver is the authority
+        for the session timeouts, the step-up window, the MFA role set and the
+        high-risk subject set; the module constants stay as the documented
+        baseline, and ``tests/test_wave1h_policy_engine.py`` fails if a constant
+        and its published revision drift apart.
+        """
+        return cls(
+            conn,
+            clock=policy.clock,
+            ids=ids,
+            agency_id=policy.agency_id,
+            secrets=secrets,
+            idle_timeout=timedelta(
+                minutes=policy.resolve("security.session.idle_timeout_minutes", at=at).as_int()
+            ),
+            absolute_timeout=timedelta(
+                hours=policy.resolve("security.session.absolute_timeout_hours", at=at).as_int()
+            ),
+            step_up_window=timedelta(
+                minutes=policy.resolve("security.step_up.window_minutes", at=at).as_int()
+            ),
+            mfa_required_roles=tuple(
+                policy.resolve("security.mfa.required_roles", at=at).as_roles()
+            ),
+            high_risk_subject_types=tuple(
+                policy.resolve("security.step_up.high_risk_subjects", at=at).as_json()
+            ),
+        )
 
     # -- plumbing ---------------------------------------------------------- #
     def _now(self) -> datetime:
@@ -455,7 +505,7 @@ class SessionService:
         role_name = require_ref(role, "role", max_len=64)
         moment = self._now() if at is None else self._moment(at)
         mfa_satisfied_at: Optional[str] = None
-        if role_name in MFA_REQUIRED_ROLES:
+        if role_name in self.mfa_required_roles:
             if mfa_code is None:
                 self._event(kind="ACCESS_DENIED", identity=who, actor=who,
                             detail={"reason": "MFA_REQUIRED", "role": role_name}, at=at)
@@ -513,7 +563,7 @@ class SessionService:
                         session_id=session.session_id, detail={"reason": "EXPIRED"}, at=at)
             raise SessionExpired("sesi sudah kedaluwarsa", code="SESSION_EXPIRED",
                                  session_id=session.session_id)
-        if session.needs_mfa():
+        if session.needs_mfa(self.mfa_required_roles):
             raise MFARequired("sesi ini belum memenuhi MFA", code="MFA_REQUIRED",
                               session_id=session.session_id)
         if touch:
@@ -599,10 +649,10 @@ class SessionService:
     def require_step_up(self, session: Session, *, subject_type: str, at: Optional[Any] = None) -> None:
         """Refuse a high-risk action unless a factor was satisfied *recently*."""
         moment = self._now() if at is None else self._moment(at)
-        if session.needs_mfa():
+        if session.needs_mfa(self.mfa_required_roles):
             raise MFARequired("sesi ini belum memenuhi MFA", code="MFA_REQUIRED",
                               session_id=session.session_id)
-        if subject_type not in HIGH_RISK_SUBJECT_TYPES:
+        if subject_type not in self.high_risk_subject_types:
             return
         if session.has_step_up(moment):
             return
