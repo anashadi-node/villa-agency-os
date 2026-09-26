@@ -112,6 +112,12 @@ CREATE TABLE villa_supplier_relationships (
 );
 CREATE INDEX ix_vsr_lookup ON villa_supplier_relationships (agency_id, property_id, unit_id, status);
 
+-- Provenance is not optional (v1.1 §12): every commercial fact records where it came
+-- from, how it was read, and who verified it. The pipeline is
+--   DRAFT → PENDING_VERIFICATION → VERIFIED → APPROVED → ACTIVE → SUPERSEDED/EXPIRED
+-- and AI_EXTRACTED → ACTIVE is forbidden: an extraction may only ever be a *draft*
+-- source, because the CHECK below refuses ACTIVE without a named human verifier and
+-- approver. That is the invariant enforced structurally, not by convention.
 CREATE TABLE contract_versions (
     contract_version_id TEXT    NOT NULL,
     agency_id    TEXT    NOT NULL DEFAULT 'agency_default',
@@ -121,15 +127,32 @@ CREATE TABLE contract_versions (
     effective_from TEXT NOT NULL,
     effective_to   TEXT NOT NULL,
     source_doc_ref TEXT NOT NULL CHECK (length(source_doc_ref) >= 1),
+    source_reference TEXT NOT NULL CHECK (length(source_reference) >= 1),
+    extraction_method TEXT NOT NULL DEFAULT 'HUMAN' CHECK (extraction_method IN ('HUMAN','AI_EXTRACTED')),
+    verified_by TEXT,
+    verified_at TEXT,
     approved_by TEXT,
+    approved_at TEXT,
     created_at   TEXT    NOT NULL,
+    updated_at   TEXT    NOT NULL,
     CONSTRAINT pk_contract_versions PRIMARY KEY (contract_version_id),
     CONSTRAINT fk_contract_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
     CONSTRAINT fk_contract_route FOREIGN KEY (villa_supplier_relationship_id) REFERENCES villa_supplier_relationships (villa_supplier_relationship_id),
     CONSTRAINT uq_contract_version UNIQUE (villa_supplier_relationship_id, version),
-    CONSTRAINT ck_contract_dates CHECK (effective_from <= effective_to)
+    CONSTRAINT ck_contract_dates CHECK (effective_from <= effective_to),
+    CONSTRAINT ck_contract_verified CHECK (
+        status NOT IN ('VERIFIED','APPROVED','ACTIVE')
+        OR (verified_by IS NOT NULL AND verified_at IS NOT NULL)
+    ),
+    CONSTRAINT ck_contract_activation_is_human CHECK (
+        status <> 'ACTIVE' OR (approved_by IS NOT NULL AND approved_at IS NOT NULL)
+    )
 );
 
+-- A rate is money, so it carries an amount and a minimum stay, and it must name the
+-- contract it belongs to before it can be ACTIVE (v1.1 §2 VILLA TRUTH: a rate comes
+-- from verified applicable contract data). Nightly amount is the WAVE 2 record;
+-- season segments and occupancy rules arrive with Pricing & Quotation (WAVE 4).
 CREATE TABLE rate_versions (
     rate_version_id TEXT    NOT NULL,
     agency_id    TEXT    NOT NULL DEFAULT 'agency_default',
@@ -138,18 +161,36 @@ CREATE TABLE rate_versions (
     version      INTEGER NOT NULL CHECK (version >= 1),
     status       TEXT    NOT NULL CHECK (status IN ('DRAFT','PENDING_VERIFICATION','VERIFIED','APPROVED','ACTIVE','SUPERSEDED','EXPIRED')),
     currency     TEXT    NOT NULL CHECK (length(currency) = 3),
+    nightly_minor INTEGER NOT NULL CHECK (nightly_minor >= 0),
+    min_stay     INTEGER NOT NULL DEFAULT 1 CHECK (min_stay >= 1),
     effective_from TEXT NOT NULL,
     effective_to   TEXT NOT NULL,
     source_doc_ref TEXT NOT NULL CHECK (length(source_doc_ref) >= 1),
+    source_reference TEXT NOT NULL CHECK (length(source_reference) >= 1),
+    extraction_method TEXT NOT NULL DEFAULT 'HUMAN' CHECK (extraction_method IN ('HUMAN','AI_EXTRACTED')),
+    verified_by TEXT,
+    verified_at TEXT,
     approved_by TEXT,
+    approved_at TEXT,
     created_at   TEXT    NOT NULL,
+    updated_at   TEXT    NOT NULL,
     CONSTRAINT pk_rate_versions PRIMARY KEY (rate_version_id),
     CONSTRAINT fk_rate_version_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
     CONSTRAINT fk_rate_version_route FOREIGN KEY (villa_supplier_relationship_id) REFERENCES villa_supplier_relationships (villa_supplier_relationship_id),
     CONSTRAINT fk_rate_version_contract FOREIGN KEY (contract_version_id) REFERENCES contract_versions (contract_version_id),
     CONSTRAINT uq_rate_version UNIQUE (villa_supplier_relationship_id, version),
-    CONSTRAINT ck_rate_version_dates CHECK (effective_from <= effective_to)
+    CONSTRAINT ck_rate_version_dates CHECK (effective_from <= effective_to),
+    CONSTRAINT ck_rate_version_verified CHECK (
+        status NOT IN ('VERIFIED','APPROVED','ACTIVE')
+        OR (verified_by IS NOT NULL AND verified_at IS NOT NULL)
+    ),
+    CONSTRAINT ck_rate_version_activation_is_human CHECK (
+        status <> 'ACTIVE'
+        OR (approved_by IS NOT NULL AND approved_at IS NOT NULL AND contract_version_id IS NOT NULL)
+    )
 );
+CREATE INDEX ix_contract_window ON contract_versions (agency_id, villa_supplier_relationship_id, status, effective_from);
+CREATE INDEX ix_rate_window ON rate_versions (agency_id, villa_supplier_relationship_id, status, effective_from);
 
 -- --------------------------------------------------------------------------
 -- Policy versions (append-only business rules)
