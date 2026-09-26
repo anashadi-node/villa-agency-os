@@ -22,13 +22,12 @@ agency, and a manager in one agency cannot be an approver in another.
 
 from __future__ import annotations
 
-import json
 import os
 import secrets
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Mapping, Optional, Protocol, Sequence
+from typing import Any, Mapping, Optional, Protocol
 
 import totp as T
 from primitives import (

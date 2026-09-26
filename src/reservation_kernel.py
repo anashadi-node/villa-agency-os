@@ -40,7 +40,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
 
-from ai_service import AiService
+from ai_service import require_tool_authority
 from audit import AuditLog, append_event
 from availability import (
     ANSWERED_STATE,
@@ -68,7 +68,6 @@ from hold_states import (
     can_transition,
     resolve_timezone,
 )
-from policy_engine import PolicyResolver
 from primitives import (
     DomainError,
     IdFactory,
@@ -85,7 +84,6 @@ from primitives import (
     to_iso,
 )
 from schema_loader import applied_version, connect_sqlite
-from supplier_route import is_machine_actor
 
 __all__ = [
     "ReservationKernel",
@@ -2057,31 +2055,21 @@ class ReservationKernel:
     ) -> None:
         """§56: a machine actor may act on a medium-risk tool only under policy control.
 
-        A human actor is admitted directly. A machine actor has to clear ``tool``
-        through the AI service, which is deny-first: until the owner publishes
-        ``security.ai.medium_tool_allowance`` the answer is no. That refusal is the
-        intended behaviour, not a stub — §56 classes these actions as policy-controlled,
-        so they open by publishing a policy value rather than by changing code.
-
-        One implementation for every §56 gate: a second gated path cannot inherit a
-        weaker copy of this rule, and cannot forget the principal requirement.
+        The rule itself lives in ``ai_service.require_tool_authority`` — one
+        implementation for every gated path, sitting beside the authority it enforces,
+        so a second path cannot inherit a weaker copy of it or forget the principal
+        requirement.
         """
-        if not is_machine_actor(actor, actor_role):
-            return
-        if principal_id is None:
-            raise DomainError(
-                "a machine actor must name the principal it acts as",
-                code="MACHINE_PRINCIPAL_REQUIRED",
-                actor=actor,
-                actor_role=actor_role,
-            )
-        AiService(
+        require_tool_authority(
             self.conn,
-            policy=PolicyResolver(self.conn, clock=self.clock, agency_id=self.agency_id),
+            actor,
+            actor_role,
+            principal_id,
+            tool=tool,
             clock=self.clock,
             ids=self.ids,
             agency_id=self.agency_id,
-        ).authorize(require_ref(principal_id, "principal_id"), tool)
+        )
 
     def _move_check(
         self,

@@ -17,11 +17,10 @@ import sqlite3
 
 import pytest
 
-from primitives import FrozenClock, IdFactory, to_iso
+from primitives import DomainError, FrozenClock, IdFactory, to_iso
 from option_sets import (
     AlreadyPresented,
     InvalidOptionSet,
-    MachineActorRefused,
     OptionSetInquiryNotFound,
     OptionSetNotFound,
     OptionSetService,
@@ -270,7 +269,7 @@ def test_an_unknown_inquiry_is_refused(world):
 
 
 # ---------------------------------------------------------------------------
-# Presentation: a client communication is human authority (§56)
+# Presentation: a client communication is policy-controlled (§56, ADR-0024)
 # ---------------------------------------------------------------------------
 
 
@@ -286,22 +285,26 @@ def test_presenting_records_who_when_and_how(world):
     assert service.presentation(built.option_set_id).presentation_id == shown.presentation_id
 
 
-def test_a_machine_identity_may_not_present(world):
+def test_a_machine_identity_is_gated_and_writes_nothing(world):
+    """§56/ADR-0024: the gate is the AI service, so a machine actor must name a principal."""
     service = svc(world)
     built = service.build("case_a", ["prop_a1"], actor="ai:reservation_agent")
-    with pytest.raises(MachineActorRefused) as caught:
+    with pytest.raises(DomainError) as caught:
         service.present(
             built.option_set_id, actor="ai:reservation_agent", actor_role="ai_service", channel="email"
         )
-    assert caught.value.code == "MACHINE_ACTOR_REFUSED"
+    assert caught.value.code == "MACHINE_PRINCIPAL_REQUIRED"
     assert world.execute("SELECT COUNT(*) FROM option_set_presentations").fetchone()[0] == 0
 
 
-def test_a_machine_actor_prefix_is_enough_to_refuse(world):
+def test_a_machine_actor_prefix_is_gated_too(world):
+    """A ``system:``/``ai:`` prefix is a machine identity even when the role looks human."""
     service = svc(world)
     built = service.build("case_a", ["prop_a1"], actor="actor:owner")
-    with pytest.raises(MachineActorRefused):
+    with pytest.raises(DomainError) as caught:
         service.present(built.option_set_id, actor="system:worker", actor_role="owner", channel="email")
+    assert caught.value.code == "MACHINE_PRINCIPAL_REQUIRED"
+    assert world.execute("SELECT COUNT(*) FROM option_set_presentations").fetchone()[0] == 0
 
 
 def test_presenting_the_same_version_twice_is_refused(world):

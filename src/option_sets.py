@@ -13,10 +13,11 @@ a set to a guest is a row of its own. That is what makes "what the guest was sho
 reproducible afterwards (§6 preserve context, §27 evidence discipline).
 
 Presenting is a client communication, which §56 classes as medium risk and reserves
-for policy-controlled tools. No policy engine exists yet, so `present` fails closed
-for machine identities instead of pretending to gate them. Building a set from a
-deterministic search is low risk (§56) and stays open to any actor — recorded, not
-inferred.
+for policy-controlled tools. The gate is real: a machine identity has to clear the
+``comm.client_selected`` tool through the AI service, which is deny-first until the
+owner publishes that tool on the §56 allowance (ADR-0023, ADR-0024). Building a set
+from a deterministic search is low risk (§56) and stays open to any actor — recorded,
+not inferred.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence
 
+from ai_service import require_tool_authority
 from primitives import (
     DEFAULT_AGENCY_ID,
     DomainError,
@@ -34,13 +36,12 @@ from primitives import (
     require_text,
     to_iso,
 )
-from supplier_route import is_machine_actor
 
 __all__ = [
     "PRESENTATION_CHANNELS",
+    "PRESENTATION_TOOL",
     "AlreadyPresented",
     "InvalidOptionSet",
-    "MachineActorRefused",
     "OptionSet",
     "OptionSetError",
     "OptionSetItem",
@@ -59,6 +60,11 @@ PRESENTATION_CHANNELS: tuple[str, ...] = (
     "dashboard",
     "phone",
 )
+
+#: The §56 catalogue tool this path enforces. Presenting options to a guest is a client
+#: communication, so the enforcement point is the catalogue's own "Selected client
+#: communications" row — the module invents no new capability (ADR-0024).
+PRESENTATION_TOOL = "comm.client_selected"
 
 
 class OptionSetError(DomainError):
@@ -79,10 +85,6 @@ class InvalidOptionSet(OptionSetError):
 
 class AlreadyPresented(OptionSetError):
     """This version was already shown to the guest; a change is a new version."""
-
-
-class MachineActorRefused(OptionSetError):
-    """Presentation is human authority (§56): a machine identity is refused."""
 
 
 @dataclass(frozen=True)
@@ -203,23 +205,39 @@ class OptionSetService:
         chosen_label = current.label if label is None else label
         return self.build(current.inquiry_id, items, actor=actor, label=chosen_label)
 
-    def present(self, option_set_id: Any, *, actor: Any, actor_role: Any, channel: Any) -> Presentation:
+    def present(
+        self,
+        option_set_id: Any,
+        *,
+        actor: Any,
+        actor_role: Any,
+        channel: Any,
+        principal_id: Optional[str] = None,
+    ) -> Presentation:
         """Record that this version was shown to the guest.
 
-        Human authority: §56 keeps client communication behind policy-controlled
-        tools, and no policy engine exists yet, so a machine identity is refused
-        rather than waved through.
+        §56 classes a client communication as a medium-risk, policy-controlled action,
+        so a machine identity must clear the ``comm.client_selected`` tool through the
+        AI service — deny-first until the owner publishes that tool on the allowance.
+        A human identity is admitted directly, which is what §56 states.
+
+        ``principal_id`` names the machine identity that acts; a human caller leaves it
+        empty. The gate runs before the "already presented" lookup, because the
+        permission is about *showing it* — a replay is gated too (ADR-0024).
         """
         target = require_ref(option_set_id, "option_set_id", max_len=64)
         who = require_ref(actor, "actor", max_len=64)
         role = require_ref(actor_role, "actor_role", max_len=64)
-        if is_machine_actor(who, role):
-            raise MachineActorRefused(
-                "presenting an option set is a client communication: human authority (§56)",
-                code="MACHINE_ACTOR_REFUSED",
-                actor=who,
-                actor_role=role,
-            )
+        require_tool_authority(
+            self.conn,
+            who,
+            role,
+            principal_id,
+            tool=PRESENTATION_TOOL,
+            clock=self.clock,
+            ids=self.ids,
+            agency_id=self.agency_id,
+        )
         if channel not in PRESENTATION_CHANNELS:
             raise InvalidOptionSet(
                 f"channel is not one this platform records: {channel!r}",

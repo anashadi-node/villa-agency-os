@@ -71,7 +71,7 @@ villa-agency-os/
 │   ├── dashboard.py          # dashboard internal (stdlib http.server, read-only)
 │   └── anchors.py            # publikasi & verifikasi anker rantai audit
 ├── templates/                # 12 berkas HTML dashboard (di-escape terpusat)
-├── tests/                    # pytest — bukti empiris (2282 passed + 3549 subtests, 0 failed)
+├── tests/                    # pytest — bukti empiris; angka terkini dari `make check`
 └── scripts/                  # preflight, anchor, twin generator, secret & unsafe scan
 ```
 

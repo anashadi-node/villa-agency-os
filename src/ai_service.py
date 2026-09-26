@@ -39,6 +39,7 @@ from primitives import (
     require_text,
     to_iso,
 )
+from supplier_route import is_machine_actor
 
 #: The role the AI acts as in the audit chain (§18). Never a human role.
 AI_ACTOR_ROLE = "ai_service"
@@ -496,3 +497,52 @@ class AiService:
             policy_version_id=policy_revision_id,
             tool=definition.tool,
         )
+
+
+# --------------------------------------------------------------------------- #
+# the §56 gate every policy-controlled path shares
+# --------------------------------------------------------------------------- #
+
+
+def require_tool_authority(
+    conn: sqlite3.Connection,
+    actor: Any,
+    actor_role: Any,
+    principal_id: Optional[str],
+    *,
+    tool: str,
+    clock: Optional[Any] = None,
+    ids: Optional[IdFactory] = None,
+    agency_id: str = DEFAULT_AGENCY_ID,
+) -> None:
+    """§56: a machine actor may use a medium-risk tool only under policy control.
+
+    A human actor is admitted directly — §56 reserves *policy control* for machine
+    actions, and requiring a published policy from a human would be a different rule
+    than the one the specification states. A machine actor must name the principal it
+    acts as and clear ``tool`` through the AI service, which is deny-first: until the
+    owner publishes that tool on ``security.ai.medium_tool_allowance`` the answer is
+    no. That refusal is the intended behaviour, not a stub — §56 classes these actions
+    as policy-controlled, so they open by publishing a policy value rather than by
+    changing code.
+
+    It lives here, beside the authority it enforces, because every gated path must
+    share one implementation: a second path cannot inherit a weaker copy of this rule
+    and cannot forget the principal requirement.
+    """
+    if not is_machine_actor(actor, actor_role):
+        return
+    if principal_id is None:
+        raise DomainError(
+            "a machine actor must name the principal it acts as",
+            code="MACHINE_PRINCIPAL_REQUIRED",
+            actor=actor,
+            actor_role=actor_role,
+        )
+    AiService(
+        conn,
+        policy=PolicyResolver(conn, clock=clock, agency_id=agency_id),
+        clock=clock,
+        ids=ids,
+        agency_id=agency_id,
+    ).authorize(require_ref(principal_id, "principal_id"), tool)
