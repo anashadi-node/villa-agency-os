@@ -285,6 +285,35 @@ class AuditTestCase(unittest.TestCase):
 # --------------------------------------------------------------------------- #
 # 1. The DDL as the authority
 # --------------------------------------------------------------------------- #
+class IntegrityValueTests(unittest.TestCase):
+    """A digest written into the chain must come back out unchanged.
+
+    The audit payload is redacted on write, and the redactor used to rewrite a sha256
+    that happened to contain ``08`` followed by digits as ``[PHONE]``. The chain then
+    recorded a hash no file ever had: ``publish_anchor`` refused to extend a healthy
+    series and ``verify_published_anchors`` called an untampered chain tampered — about
+    once in every 250 anchors, which is exactly how a real alarm gets ignored.
+    """
+
+    DIGEST = "fe372293ac6fc8767d248278e9ceacbb53aa57de8d3b30ef20813933935d1332"
+
+    def test_an_anchor_hash_survives_the_payload_round_trip(self):
+        payload = A.sanitize_payload({"file": "anchor-1.json", "file_sha256": self.DIGEST})
+        self.assertEqual(payload["file_sha256"], self.DIGEST)
+
+    def test_a_digest_in_a_nested_payload_survives_too(self):
+        digest = "0aaab3d1b08423975406e8c5579a9cfc9981feba12a0ab0ad54f129163ba8acd"
+        payload = A.sanitize_payload({"after": {"evidence": [digest]}})
+        self.assertEqual(payload["after"]["evidence"], [digest])
+
+    def test_the_guard_agrees_a_digest_carries_no_identifier(self):
+        self.assertFalse(A.contains_direct_identifiers(self.DIGEST))
+
+    def test_a_phone_number_in_a_payload_is_still_redacted(self):
+        payload = A.sanitize_payload({"note": "call +628123456789"})
+        self.assertNotIn("628123456789", payload["note"])
+
+
 class DdlSchemaAuthorityTests(unittest.TestCase):
     def test_the_ddl_declares_the_audit_events_table_with_a_column_list(self):
         self.assertRegex(

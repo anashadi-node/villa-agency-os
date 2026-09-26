@@ -195,6 +195,33 @@ class TestPrivacyRedaction(unittest.TestCase):
     def test_non_pii_text_survives_untouched(self):
         self.assertEqual(P.redact("villa canggu checkin 2026-10-01"), "villa canggu checkin 2026-10-01")
 
+    def test_a_hex_digest_survives_redaction(self):
+        """A digest is not an identifier, and the audit chain compares it byte for byte.
+
+        This sha256 contains ``08`` followed by digits, so the phone pattern used to
+        rewrite it to ``[PHONE]``: the chain then recorded a hash the file never had,
+        and a healthy anchor was reported as tampered about once in every 250 anchors.
+        """
+        digest = "fe372293ac6fc8767d248278e9ceacbb53aa57de8d3b30ef20813933935d1332"
+        self.assertEqual(P.redact(digest), digest)
+
+    def test_a_hex_digest_inside_a_longer_line_survives(self):
+        digest = "fe372293ac6fc8767d248278e9ceacbb53aa57de8d3b30ef20813933935d1332"
+        line = f"anchor file_sha256 {digest} count 3"
+        self.assertEqual(P.redact(line), line)
+
+    def test_a_digit_only_run_of_digest_length_is_still_masked(self):
+        """The exemption needs a hex *letter*: a long number is still an identifier."""
+        digits = "0" + "8123456789" * 6  # 61 digits, no hex letter
+        cleaned = P.redact(digits)
+        self.assertNotIn(digits, cleaned)
+        self.assertIn("[PHONE]", cleaned)
+
+    def test_a_short_hex_like_token_is_still_masked(self):
+        """A pseudonym suffix (16 hex chars) is below digest length and stays masked."""
+        suffix = "9f2c1a8b0812345678"
+        self.assertNotEqual(P.redact(f"guest_{suffix}"), f"guest_{suffix}")
+
     def test_pseudonymise_is_stable_per_salt_and_not_reversible(self):
         a = P.pseudonymize("guest@example.com", salt="k1")
         b = P.pseudonymize("guest@example.com", salt="k1")

@@ -696,21 +696,52 @@ _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 _PHONE_RE = re.compile(r"(?:\+?62|0)8[1-9][0-9]{6,11}")
 _NIK_RE = re.compile(r"\b\d{16}\b")
 _LONG_DIGITS_RE = re.compile(r"\b\d{9,}\b")
+#: A run this long, containing at least one hex letter, is a digest — see ``redact``.
+_HEX_RUN_RE = re.compile(r"[0-9a-f]+")
+HEX_DIGEST_MIN = 32
 
 
 def redact(text: Any) -> str:
     """Mask direct identifiers (email, Indonesian mobile, NIK/card-like digits).
 
     Use on anything destined for a log line, an error message, or an LLM prompt.
+
+    A hex digest survives: it is irreversible, it carries no direct identifier, and
+    masking it would destroy the integrity values that have to be compared byte for
+    byte. A sha256 that happened to contain ``08`` followed by digits was stored in
+    the audit chain as ``[PHONE]``, so a healthy anchor file was reported as tampered
+    and publication refused — about once in every 250 anchors. Only runs *with* a hex
+    letter qualify, so a long number (card, NIK) is still masked.
     """
     if text is None:
         return ""
     out = str(text)
-    out = _EMAIL_RE.sub("[EMAIL]", out)
+    stashed: list[str] = []
+
+    def _stash(match: "re.Match[str]") -> str:
+        token = match.group(0)
+        if len(token) >= HEX_DIGEST_MIN and _has_hex_letter(token):
+            stashed.append(token)
+            return f"\x00D{len(stashed) - 1}\x00"
+        return token
+
+    protected = _HEX_RUN_RE.sub(_stash, out)
+    cleaned = _mask_identifiers(protected)
+    for index, token in enumerate(stashed):
+        cleaned = cleaned.replace(f"\x00D{index}\x00", token)
+    return cleaned
+
+
+def _mask_identifiers(text: str) -> str:
+    out = _EMAIL_RE.sub("[EMAIL]", text)
     out = _PHONE_RE.sub("[PHONE]", out)
     out = _NIK_RE.sub("[ID_NUMBER]", out)
     out = _LONG_DIGITS_RE.sub("[DIGITS]", out)
     return out
+
+
+def _has_hex_letter(token: str) -> bool:
+    return any(char in "abcdef" for char in token)
 
 
 def pseudonymize(value: Any, salt: str = "villa-agency-os") -> str:
