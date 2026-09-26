@@ -1,6 +1,9 @@
 # ADR-0013 — Stablecoin (USDC/USDT) controls
 
-- Status: **PROPOSED — pending owner acceptance and a compliance gate**
+- Status: **ACCEPTED (design) — capability GATED** (owner decision, 2026-09-26)
+- Accepted as the internal model. Activation remains blocked until a recorded compliance review
+  (jurisdiction, sanctions/AML/KYC, tax/accounting, custody/treasury, refund policy) is attached
+  to this ADR. Designing the controls now is required; accepting funds is not.
 - Date: 2026-09-26
 - Spec: Master Spec v1.1 §60 (**LOCKED**), §14, §21, §48, §49
 

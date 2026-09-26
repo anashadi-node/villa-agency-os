@@ -16,7 +16,7 @@ Format per requirement: **Requirement → Existing condition → Gap → Change 
 
 | | |
 |---|---|
-| **Existing** | Production-facing text is Indonesian: **306** Indonesian string literals across **10** modules (`dashboard.py` 81, `connectors.py` 55, `incidents.py` 54, `cases.py` 37, `intake.py` 32, `matching.py` 16, `identity.py` 14, `messages.py` 9) + **11** templates (13 word hits) + Indonesian docs. Canonical identifiers are already English. |
+| **Existing** | Production-facing text is Indonesian: **484** Indonesian string literals across **10** modules (`dashboard.py` 158, `connectors.py` 90, `incidents.py` 74, `cases.py` 42, `intake.py` 40, `identity.py` 26, `matching.py` 26, `messages.py` 19, `documents.py` 7, `scheduler.py` 2) + **15** hits across **8** templates. *Measured with an AST sweep that excludes docstrings (developer-facing) and counts only literals a program can emit — an earlier regex estimate of 306 was too coarse and is superseded by this number, which is now pinned by `tests/test_language_standard.py`.* + Indonesian docs. Canonical identifiers are already English. |
 | **Gap** | The locked rule covers *all* production system language: internal UI, client communications, invoices, quotations, confirmations, validation/help text, default AI replies, tests, user-facing docs. |
 | **Change** | (a) ADR-0011 records the strategy; (b) translate UI/validation/error text in `templates/` + the 10 modules; (c) add a guard test that fails when new Indonesian text enters a production surface; (d) Indonesian remains allowed only in `docs/` governance notes where V1.1 itself uses it. |
 | **Test** | Guard test over `templates/*.html` + string literals in `src/`; assertion that a known sample of user-visible strings is en-US. |

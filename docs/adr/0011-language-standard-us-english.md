@@ -1,6 +1,10 @@
 # ADR-0011 — Production language standard: U.S. English (en-US)
 
-- Status: **PROPOSED — pending owner acceptance**
+- Status: **ACCEPTED** (owner decision, 2026-09-26)
+- Accepted with the ratchet strategy in §3: legacy Indonesian files are pinned with their
+  measured counts and the set may only shrink. The guard is implemented in
+  `tests/test_language_standard.py`, so accepting this ADR immediately turned into a control
+  rather than a note.
 - Date: 2026-09-26
 - Spec: Master Spec v1.1 §55 (**LOCKED**), §19, §57
 
@@ -11,10 +15,14 @@ client communications, invoices, quotations, confirmations, validation/help text
 replies, code/API/database identifiers, tests, and user-facing documentation. U.S. spelling,
 not British.
 
-The existing system does not meet this. Measured on 2026-09-26: **306 Indonesian string
-literals across 10 modules** (`dashboard.py` 81, `connectors.py` 55, `incidents.py` 54,
-`cases.py` 37, `intake.py` 32, `matching.py` 16, `identity.py` 14, `messages.py` 9) plus **11
-templates**. Canonical identifiers (tables, columns, error codes) are already English, so the
+The existing system does not meet this. Measured on 2026-09-26 with an AST sweep (docstrings excluded — a developer-facing
+docstring is a lower tier than production copy, and only literals a program can emit are
+counted): **484 Indonesian string literals across 10 modules** (`dashboard.py` 158,
+`connectors.py` 90, `incidents.py` 74, `cases.py` 42, `intake.py` 40, `identity.py` 26,
+`matching.py` 26, `messages.py` 19, `documents.py` 7, `scheduler.py` 2) plus **15 hits across
+8 templates**. Those exact numbers are pinned by `tests/test_language_standard.py`; an earlier
+regex estimate of 306 was too coarse and is superseded. Canonical identifiers (tables,
+columns, error codes) are already English, so the
 gap is the human-readable layer.
 
 The requirement is not optional, so this ADR does not decide *whether*; it decides *how*, and

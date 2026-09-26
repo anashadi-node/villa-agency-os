@@ -1,6 +1,9 @@
 # ADR-0012 — Provider-neutral multi-rail payments
 
-- Status: **PROPOSED — pending owner acceptance**
+- Status: **ACCEPTED** (owner decision, 2026-09-26)
+- Accepted as the target model. It is a *design* acceptance: no payment schema change is
+  executed until the owner approves the migration itself (Spec §39, no autonomous destructive
+  migration). The legacy-rail mapping in §7 must be reviewed before any backfill.
 - Date: 2026-09-26
 - Spec: Master Spec v1.1 §58, §59, §61 (**LOCKED capability**), §13, §14, §24
 

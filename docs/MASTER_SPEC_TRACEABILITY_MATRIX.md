@@ -115,7 +115,7 @@ records the *matrix consequence*; it deliberately does not repeat the audit alre
 | Identity / MFA / sessions | MISSING | **KEEP** (built, ADR-0005 accepted) | WAVE 1 work landed: TOTP, dual-deadline sessions, step-up, append-only auth trail |
 | Approval engine + audit chain | KEEP | KEEP | unchanged by v1.1 |
 | RBAC role model | PARTIAL | **REFACTOR** | v1.1 §18 defines 12 roles; repo has 5 (`reservation`/`finance` merge Manager+Staff, which breaks maker-checker) |
-| Production UI/validation language | not assessed | **REPLACE** | v1.1 §55 LOCKED en-US; 306 Indonesian literals + 11 templates to translate (ADR-0011, ratchet guard) |
+| Production UI/validation language | not assessed | **REPLACE** | v1.1 §55 LOCKED en-US; 484 Indonesian literals in 10 modules + 15 template hits to translate (ADR-0011 ratchet, `tests/test_language_standard.py`) |
 | Payment model | PARTIAL | **REFACTOR** | v1.1 §58/§61 add CARD/PAYPAL/STABLECOIN + provider-neutral adapters + canonical fields (ADR-0012) |
 | Card handling | KEEP (`assert_no_card_data`) | KEEP + extend | §59 minimum PCI; extend guard to logs/error payloads |
 | Stablecoin | MISSING | **MISSING (gated)** | §60 asset+network allowlist, verification sources, exception catalogue (ADR-0013); activation gated on compliance |

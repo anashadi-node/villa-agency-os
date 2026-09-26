@@ -1,6 +1,14 @@
 # ADR-0014 — Identifier and human-readable reference format
 
-- Status: **PROPOSED — pending owner acceptance**
+- Status: **ACCEPTED** (owner decision, 2026-09-26)
+- **Decision on §1 (the open question): keep the opaque prefixed tokens (`task_ab12cd34`) as the
+  internal primary key**, and record it as an approved deviation from the literal "UUID/ULID"
+  wording. Rationale accepted: the prefix is already globally unique, type-identifying,
+  URL-safe under `_REF_TOKEN`, and carried by every existing foreign key; switching to ULID
+  would rewrite every key and touch 5,900+ passing tests for no behavioural gain.
+  Reversal window: still cheap **now**; expensive once WAVE 2/3 tables carry these keys.
+- §2–§5 (human-readable references, one generator module, optimistic-concurrency `version`
+  columns, decimal-string money at the API boundary) are accepted as the plan of record.
 - Date: 2026-09-26
 - Spec: Master Spec v1.1 §39, §23, Appendix B
 
