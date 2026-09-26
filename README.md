@@ -138,6 +138,30 @@ python3 scripts/publish_ai_allowance.py publish \
 VILLA_DB=data/villa.db python3 scripts/publish_ai_allowance.py withdraw \
     --approved-by owner_anas --effective-from 2026-09-27
 
+# Nilai kebijakan komersial — diisi manual oleh owner/management, bukan ditulis di kode.
+# §15: "Threshold adalah configuration, bukan hard-coded" — engine membaca angkanya dari
+# policy store. Lihat dulu key mana yang masih menunggu keputusan:
+make policy-status VILLA_DB=data/villa.db
+
+# Menyetujui satu nilai. WAJIB: dokumen asal nilainya, siapa yang memutuskan, dan VILLA_DB
+# eksplisit (nilai yang jatuh ke data/villa.db mana pun yang kebetulan ada di direktori
+# kerja adalah keputusan yang tak dibuat siapa pun). `set` sengaja BUKAN target make:
+# jalur ini dibuka oleh keputusan, bukan refleks. Selama key belum diterbitkan, engine
+# MENOLAK — fail-closed, tidak pernah mengarang nilai default.
+VILLA_DB=data/villa.db python3 scripts/publish_policy_value.py set \
+    --key commercial.margin_floor_pct --value 20 \
+    --source-doc-ref "Keputusan owner 2026-09-26 — kondisi high season" \
+    --approved-by owner_anas
+
+# Tiga key yang dibaca mesin diskon (§11): role berwenang, floor persen, floor absolut.
+# Tipe nilainya ditentukan katalog: ROLE_SET (JSON), PCT (teks desimal), COUNT (bilangan).
+VILLA_DB=data/villa.db python3 scripts/publish_policy_value.py set \
+    --key commercial.discount.authority_roles --value '["owner","supervisor"]' \
+    --source-doc-ref "Keputusan owner 2026-09-26" --approved-by owner_anas
+VILLA_DB=data/villa.db python3 scripts/publish_policy_value.py set \
+    --key commercial.margin_floor_minor --value 1000000 \
+    --source-doc-ref "Keputusan owner 2026-09-26" --approved-by owner_anas
+
 # Gerbang go-live: menolak jalan bila keputusan bisnis BLOCKING masih OPEN,
 # anker basi, ada data demo di produksi, atau rantai audit tidak utuh
 python3 scripts/preflight.py --db data/villa.db --anchor-dir /var/lib/villa/anchors \

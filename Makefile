@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 PYTHON ?= python3
 
-.PHONY: help test verify syntax lint secret-scan unsafe-scan check schema-parity pg-twin anchor-publish anchor-verify allowance-status
+.PHONY: help test verify syntax lint secret-scan unsafe-scan check schema-parity pg-twin anchor-publish anchor-verify allowance-status policy-status
 
 help:
 	@echo "make test          - run the full pytest suite"
@@ -16,6 +16,8 @@ help:
 	@echo "make allowance-status- what the §56 medium-risk tool allowance says right now (VILLA_DB)"
 	@echo "                     publishing it is deliberately NOT a make target: an owner act"
 	@echo "                     needs --tools and --approved-by typed out (see README)"
+	@echo "make policy-status - every policy key, and whether an owner has decided it yet (VILLA_DB)"
+	@echo "                     setting a value is an owner act too: NOT a make target (see README)"
 	@echo "make check         - syntax + test + secret scan + unsafe scan + schema parity (pre-deploy gate)"
 
 test:
@@ -53,4 +55,9 @@ anchor-verify:
 # approver; a one-keystroke make target would make it possible to open a §56 path by reflex.
 allowance-status:
 	$(PYTHON) scripts/publish_ai_allowance.py status
+
+# Read-only for the same reason as the allowance: the numbers are the owner's to decide.
+# This reports which keys are still waiting; setting one is an owner act, not a target.
+policy-status:
+	$(PYTHON) scripts/publish_policy_value.py show
 
