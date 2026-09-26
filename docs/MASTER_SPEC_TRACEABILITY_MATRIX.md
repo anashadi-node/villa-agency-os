@@ -4,7 +4,23 @@
 - Master source of truth: `/home/anashadi/Downloads/villa-agency-os-hermes-master-specification.html`
 - Scope: compare existing `/home/anashadi/villa-agency-os` against Master Specification V1 Production Core
 - Rule: this file is **audit/migration control**, not implementation.
-- Coding/refactor/database migration: **NOT STARTED**.
+- Coding/refactor/database migration: **NOT STARTED** *(true of this Wave 0 baseline snapshot; see
+  the progress note below — the rows are deliberately left as audited, not rewritten).*
+
+## Progress since this baseline
+
+The classifications above are the Wave 0 audit of the code as it was found. Work has since
+proceeded wave by wave, each recorded in an ADR rather than by editing these rows:
+
+| Wave | Scope | Record |
+|---|---|---|
+| WAVE 1 | tenant scoping, integrity, observability | ADR-0003 … ADR-0014 |
+| WAVE 2-A | supplier route (contract/rate versions) | `docs/adr/0013-*`, `src/supplier_route.py` |
+| WAVE 2-B | document quarantine + evidence provenance (§27) | `docs/adr/0015-*`, `src/evidence.py` |
+| WAVE 3-A | Appendix B references, guest master, inquiry, requirements | `docs/adr/0015-*`, `src/crm.py`, `src/references.py` |
+| WAVE 3-B | matching on confirmed requirements; option sets | `docs/adr/0016-*`, `src/matching.py`, `src/option_sets.py` |
+
+Read a row's classification as "what the baseline found", and the ADRs as "what was decided".
 
 ## Executive assessment
 

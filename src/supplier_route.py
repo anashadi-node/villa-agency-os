@@ -59,6 +59,7 @@ __all__ = [
     "CONTRACT_STATUSES",
     "EXTRACTION_METHODS",
     "MACHINE_ROLES",
+    "is_machine_actor",
     "RATE_STATUSES",
     "ContractConflict",
     "ContractNotFound",
@@ -143,12 +144,22 @@ class ApplicableRate:
     effective_to: str
 
 
+def is_machine_actor(actor: Any, actor_role: Any) -> bool:
+    """True when this identity is a machine/AI principal (§18/§21/§56).
+
+    Public because other domains apply the same rule to their own steps and must
+    raise their own error; keeping one predicate stops the two copies drifting.
+    """
+    who = str(actor).lower()
+    role = str(actor_role).lower()
+    return role in MACHINE_ROLES or any(who.startswith(p) for p in MACHINE_ACTOR_PREFIXES)
+
+
 def _require_human(actor: Any, actor_role: Any) -> tuple[str, str]:
     """Verification, approval and activation are human authority (§18/§21/§56)."""
     who = require_ref(actor, "actor", max_len=64)
     role = require_ref(actor_role, "actor_role", max_len=64)
-    lowered = who.lower()
-    if role.lower() in MACHINE_ROLES or any(lowered.startswith(p) for p in MACHINE_ACTOR_PREFIXES):
+    if is_machine_actor(who, role):
         raise VerificationRequired(
             "this step is human authority: a machine/AI identity is refused",
             code="VERIFICATION_REQUIRED",

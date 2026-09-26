@@ -1135,6 +1135,55 @@ CREATE TABLE incident_steps (
     CONSTRAINT uq_incident_steps_seq UNIQUE (incident_id, seq)
 );
 
+-- --------------------------------------------------------------------------
+-- Option sets (§5: INQUIRY -> OPTION SETS -> VILLA; §34 Option Set Builder)
+-- --------------------------------------------------------------------------
+-- What an agency offers for one inquiry. Append-only like the rest of the ledger:
+-- a change is a new version, and presenting the set is a row of its own, so
+-- nothing a guest has already been shown can be edited afterwards.
+
+CREATE TABLE option_sets (
+    option_set_id  TEXT    NOT NULL,
+    case_id        TEXT    NOT NULL,
+    version        INTEGER NOT NULL CHECK (version >= 1),
+    label          TEXT,
+    created_by     TEXT    NOT NULL CHECK (length(created_by) >= 3),
+    created_at     TEXT    NOT NULL,
+    CONSTRAINT pk_option_sets PRIMARY KEY (option_set_id),
+    CONSTRAINT fk_option_sets_case FOREIGN KEY (case_id) REFERENCES cases (case_id),
+    CONSTRAINT uq_option_sets_version UNIQUE (case_id, version)
+);
+
+CREATE TABLE option_set_items (
+    option_set_item_id  TEXT    NOT NULL,
+    option_set_id       TEXT    NOT NULL,
+    position            INTEGER NOT NULL CHECK (position >= 1),
+    property_id         TEXT    NOT NULL,
+    unit_id             TEXT,
+    source_match_run_id TEXT,
+    note                TEXT,
+    created_at          TEXT    NOT NULL,
+    CONSTRAINT pk_option_set_items PRIMARY KEY (option_set_item_id),
+    CONSTRAINT fk_option_set_items_set FOREIGN KEY (option_set_id) REFERENCES option_sets (option_set_id),
+    CONSTRAINT fk_option_set_items_property FOREIGN KEY (property_id) REFERENCES properties (property_id),
+    CONSTRAINT fk_option_set_items_unit FOREIGN KEY (unit_id) REFERENCES units (unit_id),
+    CONSTRAINT fk_option_set_items_run FOREIGN KEY (source_match_run_id) REFERENCES match_runs (match_run_id),
+    CONSTRAINT uq_option_set_items_position UNIQUE (option_set_id, position),
+    CONSTRAINT uq_option_set_items_property UNIQUE (option_set_id, property_id),
+    CONSTRAINT ck_option_set_items_note CHECK (note IS NULL OR length(note) <= 500)
+);
+
+CREATE TABLE option_set_presentations (
+    presentation_id TEXT NOT NULL,
+    option_set_id   TEXT NOT NULL,
+    presented_by    TEXT NOT NULL CHECK (length(presented_by) >= 3),
+    presented_at    TEXT NOT NULL,
+    channel         TEXT NOT NULL CHECK (channel IN ('website','email','whatsapp_business','dashboard','phone')),
+    CONSTRAINT pk_option_set_presentations PRIMARY KEY (presentation_id),
+    CONSTRAINT fk_option_set_presentations_set FOREIGN KEY (option_set_id) REFERENCES option_sets (option_set_id),
+    CONSTRAINT uq_option_set_presentations_set UNIQUE (option_set_id)
+);
+
 -- Immutability guards: the database itself refuses to rewrite history.
 -- --------------------------------------------------------------------------
 CREATE TRIGGER trg_audit_events_no_update
@@ -1524,3 +1573,39 @@ VALUES (
 
 INSERT INTO schema_meta (schema_version, applied_at, description)
 VALUES ('001_initial', '2026-09-21T00:00:00+00:00', 'Villa Agency OS initial schema: inventory, policy, rates, evidence, quotes, holds, bookings, audit, cases, intake, matching, approvals, drafts, SLA, billing, payments, reconciliation, documents, ops, incidents');
+
+CREATE TRIGGER trg_option_sets_no_update
+BEFORE UPDATE ON option_sets
+BEGIN
+    SELECT RAISE(ABORT, 'option_sets is append-only (UPDATE rejected)');
+END;
+
+CREATE TRIGGER trg_option_sets_no_delete
+BEFORE DELETE ON option_sets
+BEGIN
+    SELECT RAISE(ABORT, 'option_sets is append-only (DELETE rejected)');
+END;
+
+CREATE TRIGGER trg_option_set_items_no_update
+BEFORE UPDATE ON option_set_items
+BEGIN
+    SELECT RAISE(ABORT, 'option_set_items is append-only (UPDATE rejected)');
+END;
+
+CREATE TRIGGER trg_option_set_items_no_delete
+BEFORE DELETE ON option_set_items
+BEGIN
+    SELECT RAISE(ABORT, 'option_set_items is append-only (DELETE rejected)');
+END;
+
+CREATE TRIGGER trg_option_set_presentations_no_update
+BEFORE UPDATE ON option_set_presentations
+BEGIN
+    SELECT RAISE(ABORT, 'option_set_presentations is append-only (UPDATE rejected)');
+END;
+
+CREATE TRIGGER trg_option_set_presentations_no_delete
+BEFORE DELETE ON option_set_presentations
+BEGIN
+    SELECT RAISE(ABORT, 'option_set_presentations is append-only (DELETE rejected)');
+END;
