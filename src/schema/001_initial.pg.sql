@@ -470,11 +470,14 @@ CREATE TABLE quotation_versions (
     CONSTRAINT uq_quotation_versions_version UNIQUE (agency_id, unit_id, check_in, check_out, version),
     CONSTRAINT ck_quotation_versions_stay CHECK (check_in < check_out),
     CONSTRAINT ck_quotation_versions_supersedes CHECK (supersedes_id IS NULL OR supersedes_id <> quotation_version_id),
-    -- A draft has never been sent; a version that was sent carries the timestamp of
-    -- that send. A version voided before it was sent stays in the first group.
+    -- A draft has never been sent; a version that was sent carries the timestamp of that
+    -- send. A void version is either case: it may be withdrawn before it is sent or after,
+    -- and the withdrawal must not erase the fact that it was sent (the freeze trigger keeps
+    -- ``sent_at`` immutable for exactly that reason).
     CONSTRAINT ck_quotation_versions_sent CHECK (
-        (sent_at IS NULL AND status IN ('DRAFT','VOID'))
-        OR (sent_at IS NOT NULL AND status IN ('SENT','ACCEPTED','SUPERSEDED'))
+        (status = 'DRAFT' AND sent_at IS NULL)
+        OR (status IN ('SENT','ACCEPTED','SUPERSEDED') AND sent_at IS NOT NULL)
+        OR status = 'VOID'
     )
 );
 

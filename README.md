@@ -109,11 +109,13 @@ python3 src/dashboard.py --db /tmp/demo/villa.db --dump /tmp/demo/pages   # snap
 python3 src/scheduler.py --db data/villa.db --dry-run     # lihat rencana, tanpa menulis
 python3 src/scheduler.py --db data/villa.db               # jalankan (idempoten)
 
-# Kesehatan & metrik
+# Kesehatan & metrik — kode keluar 0 hanya bila severity terburuk OK/UNKNOWN;
+# WARNING atau CRITICAL keluar 1 (probe monitoring, bukan tanda perintahnya gagal)
 python3 src/observability.py --db data/villa.db --anchor-dir /var/lib/villa/anchors
 python3 src/observability.py --db data/villa.db --format prometheus
 
 # Kanal masuk (email) — isi pesan selalu diperlakukan sebagai data, bukan instruksi
+mkdir -p inbox                                       # CLI menolak path masuk yang tidak ada
 python3 src/connectors.py email --dir inbox/ --db data/villa.db --dry-run
 
 # Rantai audit: terbitkan anker (dari mesin/akun berbeda) lalu verifikasi

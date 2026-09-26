@@ -632,6 +632,30 @@ def test_a_void_version_does_not_supersede_and_is_not_current(world):
     assert current.quotation_version_id == first.quotation_version_id
 
 
+def test_a_sent_version_can_be_withdrawn(world):
+    """Withdrawal is a status change, not an overwrite: the send stays on the record."""
+    version = sent(world)
+    withdrawn = svc(world).void(
+        version.quotation_version_id, actor=HUMAN, actor_role=HUMAN_ROLE, reason="guest cancelled"
+    )
+    assert withdrawn.status == "VOID"
+    # ``sent_at`` survives: the guest *was* shown it, and a withdrawal cannot unsay that.
+    assert withdrawn.sent_at == NOW_ISO
+    # The record it was sent with stays readable.
+    assert len(snapshots_of(world, version.quotation_version_id)) == 3
+
+
+def test_a_withdrawn_offer_is_not_current_and_cannot_be_accepted(world):
+    version = sent(world)
+    svc(world).void(
+        version.quotation_version_id, actor=HUMAN, actor_role=HUMAN_ROLE, reason="guest cancelled"
+    )
+    assert svc(world).current(unit_id="unit_1", check_in=CHECK_IN, check_out=CHECK_OUT) is None
+    with pytest.raises(DomainError) as caught:
+        svc(world).accept(version.quotation_version_id, actor=HUMAN, actor_role=HUMAN_ROLE)
+    assert caught.value.code == "QUOTATION_NOT_SENT"
+
+
 def test_the_transition_table_refuses_an_edge_that_does_not_exist():
     assert QT.can_transition("DRAFT", "SENT")
     assert QT.can_transition("SENT", "ACCEPTED")
