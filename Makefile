@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 PYTHON ?= python3
 
-.PHONY: help test verify syntax lint secret-scan unsafe-scan check schema-parity pg-twin anchor-publish anchor-verify
+.PHONY: help test verify syntax lint secret-scan unsafe-scan check schema-parity pg-twin anchor-publish anchor-verify allowance-status
 
 help:
 	@echo "make test          - run the full pytest suite"
@@ -13,6 +13,9 @@ help:
 	@echo "make lint          - pyflakes over src/ scripts/ tests/ (needs: pip install pyflakes)"
 	@echo "make anchor-publish- publish the audit-chain anchor (VILLA_DB, VILLA_ANCHOR_DIR)"
 	@echo "make anchor-verify - verify the live chain against published anchors (exit 1 = suspect)"
+	@echo "make allowance-status- what the §56 medium-risk tool allowance says right now (VILLA_DB)"
+	@echo "                     publishing it is deliberately NOT a make target: an owner act"
+	@echo "                     needs --tools and --approved-by typed out (see README)"
 	@echo "make check         - syntax + test + secret scan + unsafe scan + schema parity (pre-deploy gate)"
 
 test:
@@ -45,4 +48,9 @@ anchor-publish:
 
 anchor-verify:
 	$(PYTHON) scripts/publish_anchor.py verify
+
+# Read-only on purpose. Publishing a permission is an owner act that names the tools and the
+# approver; a one-keystroke make target would make it possible to open a §56 path by reflex.
+allowance-status:
+	$(PYTHON) scripts/publish_ai_allowance.py status
 

@@ -53,9 +53,30 @@ ADR-0021 and ADR-0022 built the enforcement points. Both left `security.ai.mediu
 ## Verification
 
 - `tests/test_wave4b3_ai_allowance_decision.py` — 8 tests (listed in Decision 5). The window test uses one file database read by two clocks, so it exercises the real rule rather than a backdated revision.
-- `tests/test_ai_allowance_cli.py` — 6 tests running the documented command as a subprocess against a real file.
+- `tests/test_ai_allowance_cli.py` — 9 tests running the documented command as a subprocess against a real file.
 - The script was exercised for real on a database holding the demo dataset: `status` (CLOSED, never published) → `publish` with no approver (exit 2, nothing written) → `publish --approved-by owner_anas` (version 1, `["availability.request"]`, 2026-09-26 → 2026-10-26) → `status` (effective) → `withdraw` (version 2, `[]`, effective the same day) → `status` (refused again) → both revisions still present. Raw output is in the WAVE 4-B-3 report.
 - **Two traps the CLI tests caught in this script, recorded rather than quietly fixed**: (a) `withdraw` initially fell back to the *publish* default start date, so a withdrawal would have waited until 2026-09-27 while the permission stayed open — it now defaults to the platform clock's today; (b) `PolicyValue.value` is the stored JSON **text**, so `if value.value:` is true for the string `'[]'` — emptiness now goes through the platform's own `as_json()`, the accessor `ai_service` uses.
 - A third finding came out of the same evidence run: the demo seeder (`scripts/seed_demo.py`) had been broken since WAVE 4-B and **nothing ran it**. It is fixed and covered by `tests/test_seed_demo_cli.py`; the fix has its own commit and its own tests.
 - Full suite and `make check` → PASS.
 - No schema change: 58 tables / 50 triggers unchanged, PG twin `--check` clean.
+
+## Amendment — the granting act names its database (2026-09-26)
+
+Two rules added after running the documented commands outside the test suite:
+
+- **`publish` refuses unless `VILLA_DB` is set explicitly** (exit 2, nothing written). Every
+  other CLI in this repository falls back to `data/villa.db`, which is the right default for a
+  read or a seed; for an authority grant it is not a default anyone chose. Measured, not
+  theorised: the README's own publish example, run without `VILLA_DB`, wrote a revision into
+  this repository's demo database. Reads and seeds keep the default — only the grant is strict.
+- **Both write paths print `target database: <path>`**, so an authority change can be pointed
+  at rather than inferred.
+- **The withdrawal date is the operator's to name.** A withdrawal defaults to the platform
+  clock's today (Decision 4, unchanged), but the engine refuses a revision starting before the
+  newest one (`POLICY_BACKDATED_REVISION`). So revoking a revision that begins in the future
+  requires `--effective-from` — the README example now shows it, and
+  `test_withdraw_can_name_a_date_for_a_revision_that_starts_in_the_future` pins both the
+  refusal and the working form. This is the second time the *default date* of a withdrawal
+  has been the trap in this script; the first is recorded in Verification above.
+- `make allowance-status` exposes the read-only view. Publishing is deliberately not a make
+  target: opening a §56 path should cost a typed decision, not a keystroke.

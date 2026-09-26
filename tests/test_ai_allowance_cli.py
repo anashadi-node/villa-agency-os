@@ -29,9 +29,13 @@ OPEN_FROM = TODAY.isoformat()
 OPEN_TO = (TODAY + datetime.timedelta(days=30)).isoformat()
 
 
-def _run(db: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _run(db: Path | None, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run the CLI. ``db=None`` means *leave VILLA_DB unset* — the case that matters for the
+    granting act, which must refuse to guess its target rather than inherit one."""
     env = dict(os.environ)
-    env["VILLA_DB"] = str(db)
+    env.pop("VILLA_DB", None)
+    if db is not None:
+        env["VILLA_DB"] = str(db)
     env["PYTHONPATH"] = str(REPO / "src")
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args],
@@ -115,3 +119,57 @@ def test_a_missing_database_is_a_configuration_error(tmp_path: Path):
     result = _run(tmp_path / "nope.db", "status")
     assert result.returncode == 2
     assert "database not found" in result.stderr
+
+
+def test_publish_without_an_explicit_target_is_refused_and_writes_nothing(tmp_path: Path):
+    """The granting act names its database.
+
+    Every other CLI in this repository falls back to ``data/villa.db``, which is the right
+    default for a read or a seed — but a permission that lands in whatever ``data/villa.db``
+    happens to sit in the working directory is a permission nobody decided to give. Found by
+    running the documented command without ``VILLA_DB``: it published a revision into this
+    repository's demo database.
+    """
+    repo_db = REPO / "data" / "villa.db"
+    before = _revisions(repo_db) if repo_db.exists() else None
+
+    result = _run(
+        None, "publish", "--approved-by", "owner_anas",
+        "--effective-from", OPEN_FROM, "--effective-to", OPEN_TO,
+    )
+
+    assert result.returncode == 2
+    assert "VILLA_DB" in result.stderr
+    after = _revisions(repo_db) if repo_db.exists() else None
+    assert after == before, "a refused publish must not write a revision anywhere"
+
+
+def test_publish_says_which_database_it_wrote_to(db: Path):
+    result = _run(
+        db, "publish", "--approved-by", "owner_anas",
+        "--effective-from", OPEN_FROM, "--effective-to", OPEN_TO,
+    )
+    assert result.returncode == 0, result.stderr
+    assert f"target database: {db}" in result.stdout
+
+
+def test_withdraw_can_name_a_date_for_a_revision_that_starts_in_the_future(db: Path):
+    """The documented withdrawal names its date.
+
+    A withdrawal defaults to *today*, and the policy engine refuses a revision that starts
+    before the newest one (``POLICY_BACKDATED_REVISION``). So for a revision that begins
+    tomorrow, the plain ``withdraw --approved-by …`` form fails and the operator has to say
+    when — which is the form the README shows.
+    """
+    future = (TODAY + datetime.timedelta(days=1)).isoformat()
+    assert _run(
+        db, "publish", "--approved-by", "owner_anas",
+        "--effective-from", future, "--effective-to", OPEN_TO,
+    ).returncode == 0
+
+    too_early = _run(db, "withdraw", "--approved-by", "owner_anas")
+    assert too_early.returncode == 1
+    assert "POLICY_BACKDATED_REVISION" in too_early.stderr
+
+    dated = _run(db, "withdraw", "--approved-by", "owner_anas", "--effective-from", future)
+    assert dated.returncode == 0, dated.stderr

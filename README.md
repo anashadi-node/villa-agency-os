@@ -122,6 +122,20 @@ python3 src/connectors.py email --dir inbox/ --db data/villa.db --dry-run
 make anchor-publish VILLA_DB=data/villa.db VILLA_ANCHOR_DIR=/var/lib/villa/anchors
 make anchor-verify  VILLA_DB=data/villa.db VILLA_ANCHOR_DIR=/var/lib/villa/anchors
 
+# Izin §56 (tool medium-risk untuk mesin) — status kapan saja, menerbitkan hanya oleh owner.
+# Menerbitkan WAJIB menyebut database-nya (tanpa VILLA_DB ditolak: izin yang jatuh ke
+# data/villa.db mana pun yang kebetulan ada di direktori kerja bukan keputusan siapa pun),
+# dan menerbitkan sengaja bukan target make: jalur §56 dibuka oleh keputusan, bukan refleks.
+make allowance-status VILLA_DB=data/villa.db
+python3 scripts/publish_ai_allowance.py publish \
+    --tools availability.request --approved-by owner_anas \
+    --effective-from 2026-09-27 --effective-to 2026-10-26
+
+# Menarik kembali: tanggalnya harus disebut bila revisi terbaru mulai di masa depan —
+# engine kebijakan menolak revisi yang mundur sebelum revisi terbaru (POLICY_BACKDATED_REVISION)
+VILLA_DB=data/villa.db python3 scripts/publish_ai_allowance.py withdraw \
+    --approved-by owner_anas --effective-from 2026-09-27
+
 # Gerbang go-live: menolak jalan bila keputusan bisnis BLOCKING masih OPEN,
 # anker basi, ada data demo di produksi, atau rantai audit tidak utuh
 python3 scripts/preflight.py --db data/villa.db --anchor-dir /var/lib/villa/anchors \
