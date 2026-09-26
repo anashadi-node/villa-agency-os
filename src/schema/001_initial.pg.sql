@@ -1266,6 +1266,56 @@ CREATE TABLE policy_revisions (
     CONSTRAINT ck_policy_revisions_dates CHECK (effective_from <= effective_to)
 );
 
+-- §18/§56 AI service identity (WAVE 1-I): the machine principal, its kill switch and
+-- the tool envelope. §18 gives the AI Service role "narrow safe tools" with an explicit
+-- deny on financial authority, secrets, raw passport and privileged security; §56 fixes
+-- the three risk tiers. The tool vocabulary is data and the deny registry is policy
+-- (security.ai.denied_actions), so neither lives in the source.
+-- --------------------------------------------------------------------------
+CREATE TABLE ai_principals (
+    principal_id TEXT NOT NULL,
+    agency_id    TEXT NOT NULL DEFAULT 'agency_default',
+    name         TEXT NOT NULL CHECK (length(name) >= 1),
+    secret_ref   TEXT NOT NULL CHECK (length(secret_ref) >= 1),
+    created_at   TEXT NOT NULL,
+    CONSTRAINT pk_ai_principals PRIMARY KEY (principal_id),
+    CONSTRAINT fk_ai_principals_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id)
+);
+
+-- Status is derived from the newest event, never stored as a mutable column: an
+-- append-only log keeps *when* and *who* for the §40 kill switch.
+CREATE TABLE ai_principal_events (
+    ai_principal_event_id TEXT NOT NULL,
+    principal_id          TEXT NOT NULL,
+    seq                   BIGINT NOT NULL CHECK (seq >= 1),
+    kind                  TEXT NOT NULL,
+    actor                 TEXT NOT NULL CHECK (length(actor) >= 1),
+    reason                TEXT,
+    occurred_at           TEXT NOT NULL,
+    CONSTRAINT pk_ai_principal_events PRIMARY KEY (ai_principal_event_id),
+    CONSTRAINT fk_ai_principal_events_principal FOREIGN KEY (principal_id)
+        REFERENCES ai_principals (principal_id),
+    CONSTRAINT uq_ai_principal_events_seq UNIQUE (principal_id, seq),
+    CONSTRAINT ck_ai_principal_events_kind
+        CHECK (kind IN ('REGISTERED', 'SUSPENDED', 'REINSTATED', 'RETIRED'))
+);
+
+-- The §56 capability envelope. Platform-wide on purpose: a per-agency copy would let a
+-- tenant believe the AI holds authority it does not have here.
+CREATE TABLE ai_tools (
+    tool        TEXT NOT NULL,
+    tier        TEXT NOT NULL,
+    policy_key  TEXT,
+    spec_ref    TEXT NOT NULL CHECK (length(spec_ref) >= 1),
+    description TEXT NOT NULL CHECK (length(description) >= 1),
+    created_at  TEXT NOT NULL,
+    CONSTRAINT pk_ai_tools PRIMARY KEY (tool),
+    CONSTRAINT fk_ai_tools_policy FOREIGN KEY (policy_key) REFERENCES policy_defs (policy_key),
+    CONSTRAINT ck_ai_tools_tier CHECK (tier IN ('LOW', 'MEDIUM', 'HIGH')),
+    CONSTRAINT ck_ai_tools_medium_is_policy_controlled
+        CHECK (tier <> 'MEDIUM' OR policy_key IS NOT NULL)
+);
+
 CREATE FUNCTION villa_reject_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     RAISE EXCEPTION 'append-only table %: % is not allowed', TG_TABLE_NAME, TG_OP
@@ -1608,6 +1658,30 @@ CREATE TRIGGER trg_policy_revisions_no_delete
     BEFORE DELETE ON policy_revisions
     FOR EACH ROW EXECUTE FUNCTION villa_reject_mutation();
 
+CREATE TRIGGER trg_ai_principals_no_update
+    BEFORE UPDATE ON ai_principals
+    FOR EACH ROW EXECUTE FUNCTION villa_reject_mutation();
+
+CREATE TRIGGER trg_ai_principals_no_delete
+    BEFORE DELETE ON ai_principals
+    FOR EACH ROW EXECUTE FUNCTION villa_reject_mutation();
+
+CREATE TRIGGER trg_ai_principal_events_no_update
+    BEFORE UPDATE ON ai_principal_events
+    FOR EACH ROW EXECUTE FUNCTION villa_reject_mutation();
+
+CREATE TRIGGER trg_ai_principal_events_no_delete
+    BEFORE DELETE ON ai_principal_events
+    FOR EACH ROW EXECUTE FUNCTION villa_reject_mutation();
+
+CREATE TRIGGER trg_ai_tools_no_update
+    BEFORE UPDATE ON ai_tools
+    FOR EACH ROW EXECUTE FUNCTION villa_reject_mutation();
+
+CREATE TRIGGER trg_ai_tools_no_delete
+    BEFORE DELETE ON ai_tools
+    FOR EACH ROW EXECUTE FUNCTION villa_reject_mutation();
+
 INSERT INTO agencies (agency_id, name, status, created_at, updated_at)
 VALUES ('agency_default', 'Default Agency', 'ACTIVE', '2026-09-21T00:00:00+00:00', '2026-09-21T00:00:00+00:00');
 
@@ -1720,3 +1794,61 @@ INSERT INTO policy_revisions (policy_revision_id, agency_id, policy_key, version
 INSERT INTO policy_revisions (policy_revision_id, agency_id, policy_key, version, value, effective_from, effective_to, source_doc_ref, approved_by, fingerprint, created_at) VALUES ('polrev_baseline_11', 'agency_default', 'security.step_up.high_risk_subjects', 1, '["refund","payout","bank_change"]', '2026-01-01', '9999-12-31', 'src/identity.py HIGH_RISK_SUBJECT_TYPES migrated to policy (WAVE 1-H)', 'owner_anas', '6e15f3f9ca451993b55784b4211f732d8f5d866e787c780c88aea20c1abb12d9', '2026-09-26T00:00:00+00:00');
 
 INSERT INTO policy_revisions (policy_revision_id, agency_id, policy_key, version, value, effective_from, effective_to, source_doc_ref, approved_by, fingerprint, created_at) VALUES ('polrev_baseline_12', 'agency_default', 'security.step_up.window_minutes', 1, '10', '2026-01-01', '9999-12-31', 'ADR-0005 (identity, auth, session and RBAC)', 'owner_anas', '87206f8ceb50e944f64122ec100de474d0fbd728ca42e51d3e4a022d027302f1', '2026-09-26T00:00:00+00:00');
+
+-- §56 capability envelope: low-risk autonomous, medium-risk through a policy-controlled
+-- tool, high-risk as human-authority-only. Registered is not granted: the deny
+-- registry (security.ai.denied_actions) is checked first.
+-- --------------------------------------------------------------------------
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('security.ai.medium_tool_allowance', 'SECURITY', 'JSON', 'HIGH', 'owner', '§56/ADR-0009', 'Medium-risk tools the owner has explicitly allowed the AI service to hold; a tool absent from this list is not policy-controlled and is refused.', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('inquiry.intake', 'LOW', NULL, '§56', 'Inquiry intake', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('inquiry.clarify', 'LOW', NULL, '§56', 'Clarification questions', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('villa.search', 'LOW', NULL, '§56', 'Deterministic villa search', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('villa.answer_verified', 'LOW', NULL, '§56', 'Verified villa questions and answers', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('villa.suggest_alternatives', 'LOW', NULL, '§56', 'Suitable alternatives', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('followup.routine', 'LOW', NULL, '§56', 'Routine follow-up', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('booking.status', 'LOW', NULL, '§56', 'Booking-status information', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('arrival.inform_verified', 'LOW', NULL, '§56', 'Verified pre-arrival information', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('availability.request', 'MEDIUM', 'security.ai.medium_tool_allowance', '§56', 'Availability requests', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('hold.request_tentative', 'MEDIUM', 'security.ai.medium_tool_allowance', '§56', 'Tentative-hold requests', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('quotation.send', 'MEDIUM', 'security.ai.medium_tool_allowance', '§56', 'Quotation sending', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('request.coordinate_special', 'MEDIUM', 'security.ai.medium_tool_allowance', '§56', 'Special-request coordination', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('comm.client_selected', 'MEDIUM', 'security.ai.medium_tool_allowance', '§56', 'Selected client communications', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('comm.supplier_selected', 'MEDIUM', 'security.ai.medium_tool_allowance', '§56', 'Selected supplier communications', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('payment.approve', 'HIGH', NULL, '§56', 'Financial approval', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('payment.execute', 'HIGH', NULL, '§56', 'Financial execution', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('bank.change', 'HIGH', NULL, '§56', 'Bank changes', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('refund.approve', 'HIGH', NULL, '§56', 'Refund approval', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('refund.execute', 'HIGH', NULL, '§56', 'Refund execution', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('discount.approve_out_of_policy', 'HIGH', NULL, '§56', 'Out-of-policy discounts', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('margin_override.approve', 'HIGH', NULL, '§56', 'Commercial overrides', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('contract.activate', 'HIGH', NULL, '§56', 'Contract activation', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('rate.verify', 'HIGH', NULL, '§56', 'Rate verification', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('rate.activate', 'HIGH', NULL, '§56', 'Rate activation', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('incident.compensate_serious', 'HIGH', NULL, '§56', 'Serious incident compensation', '2026-09-26T00:00:00+00:00');
+
+INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at) VALUES ('legal.dispute', 'HIGH', NULL, '§56', 'Legal disputes', '2026-09-26T00:00:00+00:00');

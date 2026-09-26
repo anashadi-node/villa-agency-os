@@ -20,6 +20,7 @@ proceeded wave by wave, each recorded in an ADR rather than by editing these row
 | WAVE 3-A | Appendix B references, guest master, inquiry, requirements | `docs/adr/0015-*`, `src/crm.py`, `src/references.py` |
 | WAVE 3-B | matching on confirmed requirements; option sets | `docs/adr/0016-*`, `src/matching.py`, `src/option_sets.py` |
 | WAVE 1-H | governance policy engine (§16): catalogue + versioned revisions, fail-closed resolution | `docs/adr/0017-*`, `src/policy_engine.py` |
+| WAVE 1-I | AI service identity (§18/§56): principal + kill switch, §56 tool tiers, deny registry as policy | `docs/adr/0018-*`, `src/ai_service.py` |
 
 Read a row's classification as "what the baseline found", and the ADRs as "what was decided".
 
