@@ -44,7 +44,13 @@ NOW = P.parse_iso(START)
 NOW_ISO = P.to_iso(NOW)
 
 #: The three root tables this wave scopes.
-ROOT_TABLES = ("sla_breaches", "approval_requests", "reconciliation_cases")
+ROOT_TABLES = (
+    "sla_breaches",
+    "approval_requests",
+    "reconciliation_cases",
+    # WAVE 4-A-2: the availability-check request is a root row and owns its tenant.
+    "availability_checks",
+)
 
 #: Child tables whose tenant must stay *derived* from their parent row.
 DERIVED_TABLES = (
@@ -59,6 +65,8 @@ DERIVED_TABLES = (
     "intake_fields",
     "rate_seasons",
     "message_drafts",
+    # WAVE 4-A-2: a check's events are scoped through their request, never duplicated.
+    "availability_check_events",
 )
 
 

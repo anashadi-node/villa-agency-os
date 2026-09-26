@@ -40,11 +40,15 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
 
+from ai_service import AiService
 from audit import AuditLog, append_event
 from availability import (
+    ANSWERED_STATE,
+    CHECK_STATES,
     RESTRICTED_RESULT,
     RESTRICTION_KEYS,
     SOURCE_RESULTS,
+    check_transition_allowed,
 )
 from gates import (
     CODE_EVIDENCE_STALE,
@@ -64,6 +68,7 @@ from hold_states import (
     can_transition,
     resolve_timezone,
 )
+from policy_engine import PolicyResolver
 from primitives import (
     DomainError,
     IdFactory,
@@ -80,11 +85,14 @@ from primitives import (
     to_iso,
 )
 from schema_loader import applied_version, connect_sqlite
+from supplier_route import is_machine_actor
 
 __all__ = [
     "ReservationKernel",
     "HoldOutcome",
     "BookingOutcome",
+    "CheckOutcome",
+    "AVAILABILITY_REQUEST_TOOL",
     "HOLD_CONFIRMED",
     "HOLD_RELEASE_CONFIRMED",
     "HOLD_CONVERTED",
@@ -168,6 +176,16 @@ DEFAULT_EVIDENCE_TTL_HOURS = 24
 
 DEFAULT_ROLE = "kernel"
 
+#: The availability-check vocabulary (§7), mirroring the schema CHECK verbatim —
+#: the same pairing ``EVIDENCE_RESULTS``/``SOURCE_RESULTS`` already has.
+CHECK_REQUEST_STATES: tuple[str, ...] = CHECK_STATES
+
+#: The §56 tool this flow has to pass. It is seeded in ``ai_tools`` as a MEDIUM
+#: policy-controlled tool, which is why a machine actor is refused until the owner
+#: publishes ``security.ai.medium_tool_allowance``: §56 names "availability requests"
+#: among the actions an AI may take only under policy control.
+AVAILABILITY_REQUEST_TOOL = "availability.request"
+
 #: The chain's starting value. 64 zeros rather than a word, because the schema
 #: requires every ``prev_hash`` to look like a SHA-256 hex digest.
 
@@ -241,6 +259,26 @@ class BookingOutcome:
     total_minor: int
     deposit_due_minor: int
     balance_due_minor: int
+    replayed: bool = False
+
+
+@dataclass(frozen=True)
+class CheckOutcome:
+    """Result of a check-availability request.
+
+    ``state`` is the request's own state (``CHECK_REQUESTED``, ``CHECKING`` or
+    ``ANSWERED``); once it is ``ANSWERED``, ``evidence_id`` names the answer. The
+    canonical availability state of the unit is derived separately, by
+    ``availability.AvailabilityService``.
+    """
+
+    check_id: str
+    unit_id: str
+    check_in: str
+    check_out: str
+    state: str
+    requested_at: str
+    evidence_id: Optional[str] = None
     replayed: bool = False
 
 
@@ -649,6 +687,229 @@ class ReservationKernel:
                 f"unknown availability evidence: {evidence_id}",
                 code="EVIDENCE_NOT_FOUND",
                 evidence_id=evidence_id,
+            )
+        return row
+
+    # -- availability checks (§7) ------------------------------------------- #
+    def request_availability_check(
+        self,
+        *,
+        unit_id: str,
+        check_in: str,
+        check_out: str,
+        actor: str,
+        actor_role: str,
+        idempotency_key: str,
+        principal_id: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> CheckOutcome:
+        """Ask a source whether a unit is free for a window — §7's CHECK AVAILABILITY.
+
+        This is the platform's *outbound* question, which is why §56 applies to it: a
+        machine actor has to clear ``availability.request`` first. A human actor is
+        admitted directly. The gate runs before the idempotency lookup, so a replay is
+        gated too — the permission is about asking, not about creating a row.
+
+        No evidence is required to ask. Asking is how you find out.
+        """
+        unit_id = require_ref(unit_id, "unit_id")
+        idempotency_key = require_ref(idempotency_key, "idempotency_key")
+        _require_min_length(idempotency_key, "idempotency_key", 8)
+        window_start = parse_iso_date(check_in)
+        window_end = parse_iso_date(check_out)
+        # Refuses a window that does not move forward, with the same code the hold path
+        # raises: one mistake keeps one name across the two flows.
+        nights_between(window_start, window_end)
+        actor = require_ref(actor, "actor", max_len=64)
+        actor_role = require_ref(actor_role, "actor_role", max_len=64)
+        if notes is not None:
+            notes = require_text(notes, "notes", max_len=500)
+        self._require_availability_request_authority(actor, actor_role, principal_id)
+
+        request_hash = sha256_hex(
+            "availability_check",
+            unit_id,
+            window_start.isoformat(),
+            window_end.isoformat(),
+            actor,
+            actor_role,
+        )
+        with self.transaction() as conn:
+            replay = self._idempotent_lookup(
+                conn, "request_availability_check", idempotency_key, request_hash
+            )
+            if replay is not None:
+                row = conn.execute(
+                    "SELECT * FROM availability_checks WHERE check_id = ? AND agency_id = ?",
+                    (replay, self.agency_id),
+                ).fetchone()
+                if row is None:  # pragma: no cover - defensive
+                    raise DomainError(
+                        "idempotency ledger points at a missing availability check",
+                        code="IDEMPOTENCY_DANGLING",
+                        check_id=replay,
+                    )
+                return self._check_outcome(conn, row, replayed=True)
+
+            unit = conn.execute(
+                "SELECT * FROM units WHERE unit_id = ? AND agency_id = ?",
+                (unit_id, self.agency_id),
+            ).fetchone()
+            if unit is None:
+                raise DomainError(f"unknown unit: {unit_id}", code="UNIT_NOT_FOUND", unit_id=unit_id)
+
+            check_id = self.ids.new("chk")
+            requested_at = self._now()
+            conn.execute(
+                """
+                INSERT INTO availability_checks (
+                    check_id, agency_id, unit_id, check_in, check_out, requested_by,
+                    requested_role, requested_at, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    check_id,
+                    self.agency_id,
+                    unit_id,
+                    window_start.isoformat(),
+                    window_end.isoformat(),
+                    actor,
+                    actor_role,
+                    requested_at,
+                    notes,
+                ),
+            )
+            self._transition_check(
+                conn,
+                check_id=check_id,
+                to_state="CHECK_REQUESTED",
+                actor=actor,
+                actor_role=actor_role,
+            )
+            self._record_idempotency(
+                conn, "request_availability_check", idempotency_key, request_hash, check_id
+            )
+            self._audit(
+                conn,
+                action="availability.check_requested",
+                entity_type="availability_check",
+                entity_id=check_id,
+                after={
+                    "unit_id": unit_id,
+                    "check_in": window_start.isoformat(),
+                    "check_out": window_end.isoformat(),
+                    "state": "CHECK_REQUESTED",
+                },
+                reason=None,
+                policy_version_id=None,
+                evidence_ref=None,
+                actor=actor,
+            )
+            row = conn.execute(
+                "SELECT * FROM availability_checks WHERE check_id = ?", (check_id,)
+            ).fetchone()
+            return self._check_outcome(conn, row, replayed=False)
+
+    def begin_check(
+        self,
+        check_id: str,
+        *,
+        actor: str,
+        actor_role: str,
+        note: Optional[str] = None,
+    ) -> CheckOutcome:
+        """Record that the question is with the source and an answer is outstanding."""
+        return self._move_check(
+            check_id,
+            to_state="CHECKING",
+            action="availability.check_started",
+            actor=actor,
+            actor_role=actor_role,
+            note=note,
+        )
+
+    def answer_check(
+        self,
+        check_id: str,
+        *,
+        evidence_id: str,
+        actor: str,
+        actor_role: str,
+        note: Optional[str] = None,
+    ) -> CheckOutcome:
+        """Close a request with the answer it received.
+
+        The evidence is checked here for existence, unit and tenant — and *not* for
+        freshness. Freshness is a property of reading (ADR-0019): refusing to record
+        what a source said because the answer has since aged would lose the fact that
+        it was ever said. An aged answer reports RECONFIRMATION_REQUIRED instead.
+
+        A machine actor is not gated here. Recording what a source reported is not the
+        outbound act §56 governs; what authorises a quote or a hold is the gate at the
+        point of use, and that gate reads the evidence, not this request.
+        """
+        check_id = require_ref(check_id, "check_id")
+        evidence_id = require_ref(evidence_id, "evidence_id")
+        actor = require_ref(actor, "actor", max_len=64)
+        actor_role = require_ref(actor_role, "actor_role", max_len=64)
+        if note is not None:
+            note = require_text(note, "note", max_len=500)
+        with self.transaction() as conn:
+            row = self._check_row(conn, check_id)
+            evidence = conn.execute(
+                "SELECT * FROM availability_evidence WHERE evidence_id = ? AND agency_id = ?",
+                (evidence_id, self.agency_id),
+            ).fetchone()
+            if evidence is None:
+                raise DomainError(
+                    f"unknown availability evidence: {evidence_id}",
+                    code="EVIDENCE_NOT_FOUND",
+                    evidence_id=evidence_id,
+                )
+            if evidence["unit_id"] != row["unit_id"]:
+                raise DomainError(
+                    "evidence belongs to a different unit",
+                    code="EVIDENCE_UNIT_MISMATCH",
+                    evidence_unit=evidence["unit_id"],
+                    unit_id=row["unit_id"],
+                )
+            self._transition_check(
+                conn,
+                check_id=check_id,
+                to_state=ANSWERED_STATE,
+                actor=actor,
+                actor_role=actor_role,
+                evidence_id=evidence_id,
+                note=note,
+            )
+            self._audit(
+                conn,
+                action="availability.check_answered",
+                entity_type="availability_check",
+                entity_id=check_id,
+                after={
+                    "state": ANSWERED_STATE,
+                    "evidence_id": evidence_id,
+                    "result": evidence["result"],
+                },
+                reason=None,
+                policy_version_id=None,
+                evidence_ref=evidence_id,
+                actor=actor,
+            )
+            return self._check_outcome(conn, row, replayed=False)
+
+    def get_check(self, check_id: str) -> sqlite3.Row:
+        reference = require_ref(check_id, "check_id")
+        row = self.conn.execute(
+            "SELECT * FROM availability_checks WHERE check_id = ? AND agency_id = ?",
+            (reference, self.agency_id),
+        ).fetchone()
+        if row is None:
+            raise DomainError(
+                f"unknown availability check: {reference}",
+                code="CHECK_NOT_FOUND",
+                check_id=reference,
             )
         return row
 
@@ -1766,6 +2027,185 @@ class ReservationKernel:
                 conflicting_window=(booking["check_in"], booking["check_out"]),
                 requested_window=(check_in, check_out),
             )
+
+    # -- availability checks: internals ------------------------------------- #
+    def _require_availability_request_authority(
+        self, actor: str, actor_role: str, principal_id: Optional[str]
+    ) -> None:
+        """§56: a machine actor may ask a source only under policy control.
+
+        A human actor is admitted directly. A machine actor has to clear
+        ``availability.request`` through the AI service, which is deny-first: until the
+        owner publishes ``security.ai.medium_tool_allowance`` the answer is no. That
+        refusal is the intended behaviour, not a stub — §56 classes availability
+        requests as policy-controlled, so they open by publishing a policy value rather
+        than by changing code.
+        """
+        if not is_machine_actor(actor, actor_role):
+            return
+        if principal_id is None:
+            raise DomainError(
+                "a machine actor must name the principal it acts as",
+                code="MACHINE_PRINCIPAL_REQUIRED",
+                actor=actor,
+                actor_role=actor_role,
+            )
+        AiService(
+            self.conn,
+            policy=PolicyResolver(self.conn, clock=self.clock, agency_id=self.agency_id),
+            clock=self.clock,
+            ids=self.ids,
+            agency_id=self.agency_id,
+        ).authorize(require_ref(principal_id, "principal_id"), AVAILABILITY_REQUEST_TOOL)
+
+    def _move_check(
+        self,
+        check_id: str,
+        *,
+        to_state: str,
+        action: str,
+        actor: str,
+        actor_role: str,
+        note: Optional[str] = None,
+    ) -> CheckOutcome:
+        """The forward move that needs no evidence; the rules live in ``_transition_check``."""
+        check_id = require_ref(check_id, "check_id")
+        actor = require_ref(actor, "actor", max_len=64)
+        actor_role = require_ref(actor_role, "actor_role", max_len=64)
+        if note is not None:
+            note = require_text(note, "note", max_len=500)
+        with self.transaction() as conn:
+            row = self._check_row(conn, check_id)
+            before = self._current_check_state(conn, check_id)
+            self._transition_check(
+                conn,
+                check_id=check_id,
+                to_state=to_state,
+                actor=actor,
+                actor_role=actor_role,
+                note=note,
+            )
+            self._audit(
+                conn,
+                action=action,
+                entity_type="availability_check",
+                entity_id=check_id,
+                before={"state": before},
+                after={"state": to_state},
+                reason=None,
+                policy_version_id=None,
+                evidence_ref=None,
+                actor=actor,
+            )
+            return self._check_outcome(conn, row, replayed=False)
+
+    def _transition_check(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        check_id: str,
+        to_state: str,
+        actor: str,
+        actor_role: str,
+        evidence_id: Optional[str] = None,
+        note: Optional[str] = None,
+    ) -> str:
+        """The one place a check changes state.
+
+        Every caller goes through here, so the transition map cannot be bypassed: a
+        second writer would be a second set of rules, and the two eventually disagree.
+        """
+        row = conn.execute(
+            "SELECT COALESCE(MAX(seq), 0) AS last_seq FROM availability_check_events"
+            " WHERE check_id = ?",
+            (check_id,),
+        ).fetchone()
+        seq = int(row["last_seq"]) + 1
+        if seq == 1:
+            if to_state != "CHECK_REQUESTED":
+                raise DomainError(
+                    "a check's first event is its request",
+                    code="CHECK_INVALID_TRANSITION",
+                    from_state=None,
+                    to_state=to_state,
+                    check_id=check_id,
+                )
+        else:
+            current = self._current_check_state(conn, check_id)
+            if not check_transition_allowed(current, to_state):
+                raise DomainError(
+                    f"a check in {current} cannot become {to_state}",
+                    code=(
+                        "CHECK_ALREADY_ANSWERED"
+                        if current == ANSWERED_STATE and to_state == ANSWERED_STATE
+                        else "CHECK_INVALID_TRANSITION"
+                    ),
+                    from_state=current,
+                    to_state=to_state,
+                    check_id=check_id,
+                )
+        event_id = self.ids.new("cke")
+        conn.execute(
+            """
+            INSERT INTO availability_check_events (
+                check_event_id, check_id, seq, state, actor, actor_role, evidence_id,
+                note, occurred_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_id,
+                check_id,
+                seq,
+                to_state,
+                actor,
+                actor_role,
+                evidence_id,
+                note,
+                self._now(),
+            ),
+        )
+        return event_id
+
+    def _current_check_state(self, conn: sqlite3.Connection, check_id: str) -> str:
+        """The newest event's state: the last line of a history is what is true now."""
+        row = conn.execute(
+            "SELECT state FROM availability_check_events WHERE check_id = ?"
+            " ORDER BY seq DESC LIMIT 1",
+            (check_id,),
+        ).fetchone()
+        return row["state"] if row is not None else ""
+
+    def _check_row(self, conn: sqlite3.Connection, check_id: str) -> sqlite3.Row:
+        row = conn.execute(
+            "SELECT * FROM availability_checks WHERE check_id = ? AND agency_id = ?",
+            (check_id, self.agency_id),
+        ).fetchone()
+        if row is None:
+            raise DomainError(
+                f"unknown availability check: {check_id}",
+                code="CHECK_NOT_FOUND",
+                check_id=check_id,
+            )
+        return row
+
+    def _check_outcome(
+        self, conn: sqlite3.Connection, row: sqlite3.Row, *, replayed: bool
+    ) -> CheckOutcome:
+        answer = conn.execute(
+            "SELECT evidence_id FROM availability_check_events WHERE check_id = ?"
+            " AND state = ? ORDER BY seq DESC LIMIT 1",
+            (row["check_id"], ANSWERED_STATE),
+        ).fetchone()
+        return CheckOutcome(
+            check_id=row["check_id"],
+            unit_id=row["unit_id"],
+            check_in=row["check_in"],
+            check_out=row["check_out"],
+            state=self._current_check_state(conn, row["check_id"]),
+            requested_at=row["requested_at"],
+            evidence_id=answer["evidence_id"] if answer is not None else None,
+            replayed=replayed,
+        )
 
     def _append_state_event(
         self,

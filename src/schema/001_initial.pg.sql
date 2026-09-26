@@ -317,6 +317,80 @@ CREATE TABLE availability_evidence (
 CREATE INDEX ix_evidence_unit ON availability_evidence (unit_id, captured_at);
 
 -- --------------------------------------------------------------------------
+-- Availability checks (§7): the request half of CHECK AVAILABILITY
+-- --------------------------------------------------------------------------
+-- §7 opens with CLIENT INQUIRY -> CHECK AVAILABILITY, and Appendix A lists
+-- CHECK_REQUESTED and CHECKING among the availability states. availability_evidence
+-- holds only the answers a source reports, so the request needs its own home; without
+-- one, those two states exist in the vocabulary and nowhere in the system.
+--
+-- The state lives in an append-only event log and is derived from it. A mutable
+-- status column would let the request row and its log disagree, and the log is the
+-- one that has to win.
+CREATE TABLE availability_checks (
+    check_id       TEXT    NOT NULL,
+    agency_id      TEXT    NOT NULL DEFAULT 'agency_default',
+    unit_id        TEXT    NOT NULL,
+    check_in       TEXT    NOT NULL,
+    check_out      TEXT    NOT NULL,
+    requested_by   TEXT    NOT NULL CHECK (length(requested_by) >= 3),
+    requested_role TEXT    NOT NULL CHECK (length(requested_role) >= 1),
+    requested_at   TEXT    NOT NULL,
+    notes          TEXT,
+    CONSTRAINT pk_availability_checks PRIMARY KEY (check_id),
+    CONSTRAINT fk_availability_checks_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    CONSTRAINT fk_availability_checks_unit FOREIGN KEY (unit_id) REFERENCES units (unit_id),
+    CONSTRAINT ck_availability_checks_window CHECK (check_in < check_out),
+    CONSTRAINT ck_availability_checks_notes CHECK (notes IS NULL OR length(notes) <= 500)
+);
+
+CREATE INDEX ix_availability_checks_unit ON availability_checks (agency_id, unit_id, check_in);
+
+CREATE TABLE availability_check_events (
+    check_event_id TEXT    NOT NULL,
+    check_id       TEXT    NOT NULL,
+    seq            BIGINT NOT NULL CHECK (seq >= 1),
+    state          TEXT    NOT NULL CHECK (state IN ('CHECK_REQUESTED','CHECKING','ANSWERED')),
+    actor          TEXT    NOT NULL CHECK (length(actor) >= 3),
+    actor_role     TEXT    NOT NULL CHECK (length(actor_role) >= 1),
+    evidence_id    TEXT,
+    note           TEXT,
+    occurred_at    TEXT    NOT NULL,
+    CONSTRAINT pk_availability_check_events PRIMARY KEY (check_event_id),
+    CONSTRAINT fk_ace_check FOREIGN KEY (check_id) REFERENCES availability_checks (check_id),
+    CONSTRAINT fk_ace_evidence FOREIGN KEY (evidence_id) REFERENCES availability_evidence (evidence_id),
+    CONSTRAINT uq_ace_seq UNIQUE (check_id, seq),
+    CONSTRAINT ck_ace_answer_has_evidence CHECK (state <> 'ANSWERED' OR evidence_id IS NOT NULL),
+    CONSTRAINT ck_ace_open_has_no_evidence CHECK (state = 'ANSWERED' OR evidence_id IS NULL),
+    CONSTRAINT ck_ace_note CHECK (note IS NULL OR length(note) <= 500)
+);
+
+CREATE INDEX ix_ace_check ON availability_check_events (check_id, seq);
+
+CREATE FUNCTION villa_reject_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'append-only table %: % is not allowed', TG_TABLE_NAME, TG_OP
+        USING ERRCODE = 'raise_exception';
+END;
+$$;
+
+CREATE TRIGGER trg_availability_checks_no_update
+    BEFORE UPDATE ON availability_checks
+    FOR EACH ROW EXECUTE FUNCTION villa_reject_mutation();
+
+CREATE TRIGGER trg_availability_checks_no_delete
+    BEFORE DELETE ON availability_checks
+    FOR EACH ROW EXECUTE FUNCTION villa_reject_mutation();
+
+CREATE TRIGGER trg_availability_check_events_no_update
+    BEFORE UPDATE ON availability_check_events
+    FOR EACH ROW EXECUTE FUNCTION villa_reject_mutation();
+
+CREATE TRIGGER trg_availability_check_events_no_delete
+    BEFORE DELETE ON availability_check_events
+    FOR EACH ROW EXECUTE FUNCTION villa_reject_mutation();
+
+-- --------------------------------------------------------------------------
 -- Quotes
 -- --------------------------------------------------------------------------
 CREATE TABLE quotes (
@@ -1339,13 +1413,6 @@ CREATE TABLE ai_tools (
     CONSTRAINT ck_ai_tools_medium_is_policy_controlled
         CHECK (tier <> 'MEDIUM' OR policy_key IS NOT NULL)
 );
-
-CREATE FUNCTION villa_reject_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-    RAISE EXCEPTION 'append-only table %: % is not allowed', TG_TABLE_NAME, TG_OP
-        USING ERRCODE = 'raise_exception';
-END;
-$$;
 
 -- Immutability guards: the database itself refuses to rewrite history.
 -- --------------------------------------------------------------------------

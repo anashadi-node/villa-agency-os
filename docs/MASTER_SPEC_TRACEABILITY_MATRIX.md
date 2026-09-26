@@ -23,6 +23,7 @@ proceeded wave by wave, each recorded in an ADR rather than by editing these row
 | WAVE 1-I | AI service identity (§18/§56): principal + kill switch, §56 tool tiers, deny registry as policy | `docs/adr/0018-*`, `src/ai_service.py` |
 | WAVE 4-A | availability state vocabulary (§7/§11, Appendix A): canonical results, derived state, explicit restricted state | `docs/adr/0019-*`, `src/availability.py` |
 | WAVE 4-B | hold lifecycle (§7): one vocabulary + one transition writer, timezone on the expiry, two-step extension, expiry as `EXPIRED_PENDING_VERIFICATION` that keeps occupying until an authoritative source verifies it | `docs/adr/0020-*`, `src/hold_states.py`, `src/reservation_kernel.py` |
+| WAVE 4-A-2 | check-availability request (§7): the request half of `CHECK AVAILABILITY` — append-only request + event log, one transition writer, `ANSWERED` kept out of the availability vocabulary, subject state precedence, and the `availability.request` §56 MEDIUM gate | `docs/adr/0021-*`, `src/availability.py`, `src/reservation_kernel.py` |
 
 Read a row's classification as "what the baseline found", and the ADRs as "what was decided".
 
