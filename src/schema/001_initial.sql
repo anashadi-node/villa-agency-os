@@ -512,6 +512,41 @@ CREATE TABLE idempotency_keys (
 );
 
 -- --------------------------------------------------------------------------
+-- Guest Master & confirmed inquiry requirements (Master Spec v1.1 §5, §6, §50 WAVE 3)
+--
+-- Two distinctions this section exists to make, because both are places where a
+-- platform quietly loses its source of truth:
+--
+--  * A **guest** is MASTER data with an identity (Guest Master), not the free-text
+--    `guest_ref` the case spine was built around. The old column stays for legacy
+--    rows; new rows link a real guest.
+--  * **intake_fields** are *proposals* (PROPOSED/ACCEPTED/REJECTED, with confidence)
+--    produced by extraction; **inquiry_requirements** is the confirmed trip
+--    requirement that the inquiry is actually priced and matched against (§6:
+--    "Current trip requirements → Inquiry"). A requirement may cite the accepted
+--    intake field it came from, so the AI-extracted → verified step stays visible
+--    instead of being assumed.
+-- --------------------------------------------------------------------------
+CREATE TABLE guests (
+    guest_id     TEXT NOT NULL,
+    agency_id    TEXT NOT NULL DEFAULT 'agency_default',
+    full_name    TEXT NOT NULL CHECK (length(full_name) BETWEEN 2 AND 200),
+    email        TEXT,
+    phone        TEXT,
+    locale       TEXT NOT NULL DEFAULT 'en-US' CHECK (length(locale) BETWEEN 2 AND 35),
+    status       TEXT NOT NULL CHECK (status IN ('ACTIVE','ARCHIVED')),
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    CONSTRAINT pk_guests PRIMARY KEY (guest_id),
+    CONSTRAINT fk_guests_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    -- A guest nobody can reach is not a guest record; at least one channel is required.
+    CONSTRAINT ck_guests_contactable CHECK (email IS NOT NULL OR phone IS NOT NULL)
+);
+CREATE UNIQUE INDEX uq_guest_email ON guests (agency_id, email) WHERE email IS NOT NULL;
+CREATE UNIQUE INDEX uq_guest_phone ON guests (agency_id, phone) WHERE phone IS NOT NULL;
+
+
+-- --------------------------------------------------------------------------
 -- Phase 2 — case management, structured intake, explainable matching,
 -- approval queue, message drafts, SLA tracking.
 --
@@ -527,6 +562,8 @@ CREATE TABLE idempotency_keys (
 CREATE TABLE cases (
     case_id        TEXT    NOT NULL,
     agency_id      TEXT    NOT NULL DEFAULT 'agency_default',
+    reference      TEXT,
+    guest_id       TEXT,
     channel        TEXT    NOT NULL CHECK (channel IN ('website','email','whatsapp_business','dashboard','phone')),
     channel_ref    TEXT,
     guest_ref      TEXT    NOT NULL CHECK (length(guest_ref) >= 3),
@@ -549,12 +586,17 @@ CREATE TABLE cases (
     CONSTRAINT pk_cases PRIMARY KEY (case_id),
     CONSTRAINT fk_cases_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
     CONSTRAINT fk_cases_booking FOREIGN KEY (booking_id) REFERENCES bookings (booking_id),
+    CONSTRAINT fk_cases_guest FOREIGN KEY (guest_id) REFERENCES guests (guest_id),
     CONSTRAINT uq_cases_idempotency UNIQUE (agency_id, idempotency_key),
     CONSTRAINT ck_cases_sla_window CHECK (created_at < first_response_due_at AND first_response_due_at <= quote_due_at),
     CONSTRAINT ck_cases_closed CHECK (status NOT LIKE 'CLOSED_%' OR closed_at IS NOT NULL),
     CONSTRAINT ck_cases_close_reason CHECK (status NOT LIKE 'CLOSED_%' OR (close_reason IS NOT NULL AND length(close_reason) >= 3))
 );
 CREATE INDEX ix_cases_status ON cases (status, first_response_due_at);
+-- Human-readable references (Appendix B) are per agency, and a legacy row may have
+-- none: the index is partial so NULL keeps meaning "not yet allocated" while a real
+-- reference can never be duplicated inside one agency.
+CREATE UNIQUE INDEX uq_cases_reference ON cases (agency_id, reference) WHERE reference IS NOT NULL;
 CREATE INDEX ix_cases_owner ON cases (owner_actor, status);
 
 CREATE TABLE case_messages (
@@ -622,6 +664,41 @@ CREATE TABLE intake_fields (
     CONSTRAINT ck_intake_field_rejection CHECK (status <> 'REJECTED' OR (rejection_reason IS NOT NULL AND length(rejection_reason) >= 3))
 );
 CREATE INDEX ix_intake_fields_case ON intake_fields (case_id, field_name, status);
+
+CREATE TABLE inquiry_requirements (
+    requirement_id   TEXT NOT NULL,
+    agency_id        TEXT NOT NULL DEFAULT 'agency_default',
+    case_id          TEXT NOT NULL,
+    field_name       TEXT NOT NULL CHECK (length(field_name) BETWEEN 2 AND 64),
+    field_value      TEXT,
+    value_type       TEXT NOT NULL CHECK (value_type IN ('date','integer','text','money','boolean','enum')),
+    status           TEXT NOT NULL CHECK (status IN ('ACTIVE','SUPERSEDED','WITHDRAWN')),
+    source           TEXT NOT NULL CHECK (source IN ('HUMAN_ENTRY','ACCEPTED_INTAKE')),
+    source_intake_field_id TEXT,
+    supersedes_requirement_id TEXT,
+    recorded_by      TEXT NOT NULL CHECK (length(recorded_by) >= 1),
+    recorded_at      TEXT NOT NULL,
+    CONSTRAINT pk_inquiry_requirements PRIMARY KEY (requirement_id),
+    CONSTRAINT fk_requirements_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    CONSTRAINT fk_requirements_case FOREIGN KEY (case_id) REFERENCES cases (case_id),
+    CONSTRAINT fk_requirements_intake FOREIGN KEY (source_intake_field_id) REFERENCES intake_fields (intake_field_id),
+    CONSTRAINT fk_requirements_supersedes FOREIGN KEY (supersedes_requirement_id) REFERENCES inquiry_requirements (requirement_id),
+    CONSTRAINT ck_requirements_provenance CHECK (
+        source <> 'ACCEPTED_INTAKE' OR source_intake_field_id IS NOT NULL
+    ),
+    CONSTRAINT ck_requirements_not_self_superseding CHECK (
+        supersedes_requirement_id IS NULL OR supersedes_requirement_id <> requirement_id
+    ),
+    CONSTRAINT ck_requirements_value_present CHECK (
+        field_value IS NOT NULL AND length(field_value) >= 1
+    )
+);
+-- One ACTIVE value per field: a guest who changes their mind gets a new version, never
+-- two competing truths about the same trip.
+CREATE UNIQUE INDEX uq_requirement_active_field
+    ON inquiry_requirements (agency_id, case_id, field_name) WHERE status = 'ACTIVE';
+CREATE INDEX ix_requirements_case ON inquiry_requirements (agency_id, case_id, status);
+
 
 CREATE TABLE match_runs (
     match_run_id   TEXT    NOT NULL,

@@ -1250,5 +1250,61 @@ class TestPhase2FailClosedGuards(unittest.TestCase):
             created_at=self.NOW,
         )
 
+class TestDdlCommentsAreNotData(unittest.TestCase):
+    """A ``--`` comment inside a table body is legal SQL and must not blind the reader.
+
+    Regression: a comment sitting between definitions reached the column splitter, and
+    because :func:`parse_schema_model` walks *every* table, one comment made the whole
+    schema unreadable — which took down booking-state derivation for the entire suite
+    rather than failing one table.
+    """
+
+    #: A comma, a CHECK keyword *and* an unbalanced parenthesis — everything that
+    #: hurts if a comment is mistaken for structure.
+    DDL = """
+CREATE TABLE sample (
+    sample_id TEXT NOT NULL,
+    -- a comma, a CHECK keyword and a stray ( parenthesis in a comment
+    status TEXT NOT NULL CHECK (status IN ('B','A')),
+    CONSTRAINT pk_sample PRIMARY KEY (sample_id)
+);
+CREATE TABLE notes (
+    note TEXT NOT NULL DEFAULT 'a -- b',
+    CONSTRAINT ck_note CHECK (length(note) >= 1)
+);
+"""
+
+    def test_a_comment_inside_a_table_body_does_not_hide_the_table(self):
+        model = SL.parse_schema_model("sqlite", text=self.DDL)
+        self.assertIn("sample", model.tables)
+        self.assertEqual(model.tables["sample"].column_names(), ("sample_id", "status"))
+        # Declared B,A and read back a,b: the model lower-cases and sorts, and this
+        # test only proves that because the two orders differ.
+        self.assertEqual(model.enums.get("sample.status"), ("a", "b"))
+
+    def test_a_comment_marker_inside_a_literal_is_data_not_a_comment(self):
+        model = SL.parse_schema_model("sqlite", text=self.DDL)
+        note = next(c for c in model.tables["notes"].columns if c.name == "note")
+        self.assertEqual(note.default, "'a -- b'")
+
+    def test_removing_the_comment_strip_breaks_this_dialogue(self):
+        """Prove the control is load-bearing, not decorative."""
+        original = SL._strip_line_comments
+        SL._strip_line_comments = lambda text: text
+        try:
+            with self.assertRaises(SL.SchemaParseError):
+                SL.parse_schema_model("sqlite", text=self.DDL)
+        finally:
+            SL._strip_line_comments = original
+
+    def test_the_real_schema_still_parses_with_its_comments(self):
+        model = SL.parse_schema_model("sqlite")
+        self.assertIn("guests", model.tables)
+        self.assertEqual(model.tables["guests"].column_names()[:2], ("guest_id", "agency_id"))
+        self.assertIn("inquiry_requirements", model.tables)
+        self.assertEqual(model.enums.get("inquiry_requirements.value_type"),
+                         ("boolean", "date", "enum", "integer", "money", "text"))
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

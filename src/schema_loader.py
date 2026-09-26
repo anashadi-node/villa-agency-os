@@ -637,6 +637,40 @@ def _parse_column(defn: str, table: str) -> Column:
     return Column(name=name, type_family=family, nullable=nullable, default=default, inline_pk=inline_pk)
 
 
+def _strip_line_comments(text: str) -> str:
+    """Drop ``--`` comments, leaving string literals untouched.
+
+    Comments are legal SQL and this repository's own DDL uses them. Without this,
+    a comment inside a table body reaches the column splitter and the *whole*
+    schema becomes unreadable — every derived enum fails, not just that table.
+    A ``--`` inside a quoted literal (a default value, say) is data, so the
+    scanner steps over literals before it ever looks for a comment.
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "'":
+            j = i + 1
+            while j < n:
+                if text[j] == "'":
+                    if j + 1 < n and text[j + 1] == "'":
+                        j += 2
+                        continue
+                    break
+                j += 1
+            out.append(text[i : j + 1])
+            i = j + 1
+            continue
+        if ch == "-" and i + 1 < n and text[i + 1] == "-":
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _parse_table(statement: str) -> Table:
     m = re.match(r"CREATE\s+TABLE\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", statement, re.I | re.S)
     if not m:
@@ -768,6 +802,11 @@ def parse_schema_model(dialect: str = "sqlite", *, text: Optional[str] = None) -
         statement = _strip_leading_comments(raw_statement)
         if not statement:
             continue
+        # Comments must go before anything scans the text: the parenthesis scanner
+        # walks the raw statement, so a lone '(' inside a comment breaks it, and a
+        # comment sitting between definitions is handed to the column parser as if it
+        # were a column.
+        statement = _strip_line_comments(statement)
         kind = statement_kind(statement)
         if kind == "create_table":
             table = _parse_table(statement)
