@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dokumen Supervisi Lengkap — Villa Agency OS</title>
+  <style>
+    :root {
+      --ink:#172033; --muted:#5a6475; --line:#d8dee9; --soft:#f6f8fb;
+      --brand:#1f6feb; --ok:#177245; --warn:#9a6700; --bad:#b42318; --card:#ffffff;
+    }
+    *{box-sizing:border-box} body{margin:0;background:#eef2f7;color:var(--ink);font-family:Inter,Segoe UI,Arial,sans-serif;line-height:1.58}
+    .page{max-width:1180px;margin:0 auto;background:var(--card);min-height:100vh;padding:36px 44px 70px;box-shadow:0 0 0 1px rgba(0,0,0,.04),0 20px 60px rgba(15,23,42,.08)}
+    h1{font-size:34px;line-height:1.16;margin:0 0 12px} h2{font-size:25px;margin:38px 0 12px;border-top:2px solid var(--line);padding-top:22px}
+    h3{font-size:19px;margin:26px 0 10px} h4{font-size:16px;margin:18px 0 8px}.lead{font-size:18px;color:#2f3b52;margin:8px 0 18px}.muted{color:var(--muted)}
+    .meta,.callout,.status-grid>div,.box{border:1px solid var(--line);background:var(--soft);border-radius:14px;padding:16px}.meta{display:grid;grid-template-columns:180px 1fr;gap:8px 16px;margin:22px 0}.toc{columns:2;column-gap:36px;background:#fbfcfe;border:1px solid var(--line);border-radius:14px;padding:18px 22px}.toc a{display:block;color:var(--brand);text-decoration:none;margin:0 0 8px;break-inside:avoid}.status-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:18px 0}.badge{display:inline-block;border-radius:999px;padding:4px 10px;font-weight:700;font-size:12px;letter-spacing:.02em}.ok{background:#daf5e6;color:var(--ok)}.warn{background:#fff1cc;color:var(--warn)}.bad{background:#ffe1de;color:var(--bad)}.info{background:#dbeafe;color:#1d4ed8}
+    table{width:100%;border-collapse:collapse;margin:14px 0 22px;font-size:14px} th,td{border:1px solid var(--line);padding:10px 11px;vertical-align:top} th{background:#f1f5f9;text-align:left} tr:nth-child(even) td{background:#fafbfc}
+    code{background:#eef2ff;border:1px solid #dbe4ff;border-radius:6px;padding:1px 5px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.92em}.big{font-size:20px;font-weight:800}.small{font-size:13px}.checklist li{margin:7px 0}.decision{border-left:5px solid var(--brand);background:#f8fbff}.risk{border-left:5px solid var(--bad);background:#fff8f7}.good{border-left:5px solid var(--ok);background:#f7fff9}.next{border-left:5px solid var(--warn);background:#fffdf5}.print-note{font-size:12px;color:var(--muted)}
+    .watermark{margin-top:28px;padding-top:18px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+    @media(max-width:860px){.page{padding:24px 18px}.toc{columns:1}.status-grid{grid-template-columns:1fr}.meta{grid-template-columns:1fr}table{font-size:13px}}
+    @media print{body{background:white}.page{box-shadow:none;padding:20mm}.toc{columns:2}a{color:#000}}
+  </style>
+</head>
+<body>
+<main class="page">
+  <header>
+    <div class="badge info">Dokumen Supervisi & Koreksi</div>
+    <h1>Villa Agency OS — Penjelasan Lengkap Platform yang Sudah Dibuat</h1>
+    <p class="lead">Dokumen ini ditulis dengan bahasa sederhana agar Mas Anas bisa mengecek: apa yang sudah ada dan baik, apa yang belum ada/kurang, apa yang perlu dikoreksi, dan apa yang belum cocok untuk dipakai/jual secara live.</p>
+    <div class="meta">
+      <b>Tanggal dibuat</b><span>2026-09-22 07:16 WIB</span>
+      <b>Project</b><span><code>/home/anashadi/villa-agency-os</code></span>
+      <b>Commit terakhir diverifikasi</b><span><code>82fe2d1999b6788838a147af325e3544acea8647</code> — <i>feat(demo): add customer-facing mock app and video</i></span>
+      <b>Status jujur</b><span><span class="badge ok">Demo siap</span> <span class="badge warn">Pilot terbatas setelah data bisnis diisi</span> <span class="badge bad">Belum full production-live</span></span>
+      <b>Bukti test terakhir</b><span><code>2.282 passed</code>, <code>4 skipped</code>, <code>3.549 subtests passed</code>, secret scan PASS, unsafe scan PASS, pre-deploy gate PASS.</span>
+    </div>
+  </header>
+
+  <section class="callout decision">
+    <p class="big">Kesimpulan utama</p>
+    <p><b>Platform ini sudah bisa ditunjukkan kepada calon pembeli/konsumen sebagai demo profesional dan bisa dipakai untuk training/pilot internal terbatas.</b> Namun, saya belum merekomendasikan langsung dipakai untuk transaksi tamu nyata secara penuh sebelum Mas Anas memilih provider pembayaran/WhatsApp/PMS, mengisi data properti real, menyelesaikan dokumen go-live, dan menjalankan pilot 10–20 properti.</p>
+  </section>
+
+  <nav class="toc" aria-label="Daftar isi">
+    <a href="#ringkasan">1. Ringkasan awam</a>
+    <a href="#tujuan">2. Tujuan platform</a>
+    <a href="#artefak">3. Artefak yang sudah dibuat</a>
+    <a href="#modul">4. Modul/fungsi sistem</a>
+    <a href="#demo">5. Mock aplikasi & video</a>
+    <a href="#dashboard">6. Interface website/dashboard</a>
+    <a href="#os">7. Windows, Mac, Linux, HP</a>
+    <a href="#mobile">8. Android/iOS/PWA</a>
+    <a href="#kualitas">9. Bukti kualitas & test</a>
+    <a href="#baik">10. Yang sudah baik</a>
+    <a href="#kurang">11. Yang belum ada/kurang</a>
+    <a href="#tidakcocok">12. Potensi tidak cocok/koreksi</a>
+    <a href="#butuh-user">13. Yang saya butuhkan dari Mas Anas</a>
+    <a href="#roadmap">14. Roadmap menuju siap jual/live</a>
+    <a href="#checklist">15. Checklist supervisi Mas Anas</a>
+    <a href="#istilah">16. Kamus istilah</a>
+  </nav>
+
+  <section id="ringkasan">
+    <h2>1. Ringkasan awam: ini sebenarnya platform apa?</h2>
+    <p><b>Villa Agency OS</b> adalah sistem kerja untuk bisnis Villa Agency dan Villa Management. Tujuannya bukan sekadar website cantik, melainkan <b>mesin operasional</b> agar proses booking, pembayaran, approval, tugas villa, dan laporan owner berjalan rapi serta tidak bergantung pada ingatan staf atau spreadsheet manual.</p>
+    <div class="status-grid">
+      <div><span class="badge ok">Sudah ada</span><h3>Core anti double booking</h3><p>Sistem dibuat agar satu unit villa tidak dijual ke dua tamu pada tanggal yang sama.</p></div>
+      <div><span class="badge ok">Sudah ada</span><h3>Audit trail</h3><p>Aksi penting meninggalkan jejak. Cocok untuk supervisi, investigasi, dan pertanggungjawaban.</p></div>
+      <div><span class="badge warn">Perlu keputusan</span><h3>Go-live bisnis</h3><p>Provider pembayaran, WhatsApp, PMS, legal, tax, SLA, dan harga paket belum diputuskan penuh.</p></div>
+    </div>
+    <p>Bahasa sederhananya: <b>platform ini adalah pusat kendali bisnis villa</b>. Tamu masuk dari kanal tertentu, sistem mengubahnya menjadi kasus, mengecek ketersediaan, memberi quote, membuat invoice, mengunci tanggal, meminta approval manusia untuk hal sensitif, lalu menyimpan bukti.</p>
+  </section>
+
+  <section id="tujuan">
+    <h2>2. Tujuan platform</h2>
+    <table>
+      <tr><th>Tujuan bisnis</th><th>Arti awam</th><th>Cara sistem membantu</th></tr>
+      <tr><td>0 double booking</td><td>Tidak ada dua tamu memegang villa yang sama di tanggal sama.</td><td>Reservation kernel, hold, booking state, database constraint, PostgreSQL exclusion.</td></tr>
+      <tr><td>Rekonsiliasi pembayaran rapi</td><td>Uang masuk harus cocok dengan invoice dan bukti provider/bank.</td><td>Invoice, payment event, ledger, reconciliation case, audit.</td></tr>
+      <tr><td>AI tidak boleh mengarang</td><td>Pesan ke tamu tidak boleh berisi klaim tanpa bukti.</td><td>Grounded message, approval manusia, binding fakta ber-ID.</td></tr>
+      <tr><td>Owner bisa diaudit</td><td>Kalau ada sengketa, bisa dilihat siapa memutuskan apa dan kapan.</td><td>Audit hash-chain, approval log, incident/postmortem.</td></tr>
+      <tr><td>Operasional villa tidak tercecer</td><td>Cleaning, check-in prep, maintenance punya pemilik dan deadline.</td><td>Ops tasks, scheduler, SLA, command center.</td></tr>
+    </table>
+  </section>
+
+  <section id="artefak">
+    <h2>3. Artefak yang sudah dibuat</h2>
+    <h3>A. Kode inti sistem</h3>
+    <table>
+      <tr><th>Area</th><th>File/modul</th><th>Fungsi</th><th>Status</th></tr>
+      <tr><td>Fondasi nilai</td><td><code>src/primitives.py</code></td><td>Uang integer, waktu deterministik, ID, fingerprint, error domain.</td><td><span class="badge ok">Ada</span></td></tr>
+      <tr><td>Database</td><td><code>src/schema_loader.py</code>, <code>src/schema/*.sql</code></td><td>Skema SQLite dan PostgreSQL, parity/twin, constraint.</td><td><span class="badge ok">Ada</span></td></tr>
+      <tr><td>Reservasi</td><td><code>src/reservation_kernel.py</code>, <code>src/booking_states.py</code></td><td>Hold, booking, pembatalan, okupansi, anti overlap.</td><td><span class="badge ok">Ada</span></td></tr>
+      <tr><td>Harga</td><td><code>src/policy_engine.py</code>, <code>src/quote_calculator.py</code></td><td>Rate, pajak, service, deposit, long stay, policy.</td><td><span class="badge ok">Ada</span></td></tr>
+      <tr><td>Case/inquiry</td><td><code>src/cases.py</code>, <code>src/intake.py</code>, <code>src/matching.py</code></td><td>Mengubah pesan tamu menjadi case, struktur data, rekomendasi unit.</td><td><span class="badge ok">Ada</span></td></tr>
+      <tr><td>Approval</td><td><code>src/approvals.py</code></td><td>Persetujuan manusia, dual control untuk uang/legal.</td><td><span class="badge ok">Ada</span></td></tr>
+      <tr><td>Pesan aman</td><td><code>src/messages.py</code></td><td>Draft pesan harus grounded; klaim tanpa bukti ditolak.</td><td><span class="badge ok">Ada</span></td></tr>
+      <tr><td>Finance</td><td><code>src/invoicing.py</code>, <code>src/payments.py</code></td><td>Invoice, payment intent, webhook, ledger, rekonsiliasi.</td><td><span class="badge ok">Ada</span></td></tr>
+      <tr><td>Operasional</td><td><code>src/ops_tasks.py</code>, <code>src/scheduler.py</code>, <code>src/incidents.py</code></td><td>Task cleaning/check-in/maintenance, heartbeat, incident.</td><td><span class="badge ok">Ada</span></td></tr>
+      <tr><td>Dashboard</td><td><code>src/dashboard.py</code>, <code>templates/*.html</code></td><td>Command center internal dan halaman operasional.</td><td><span class="badge ok">Ada basisnya</span></td></tr>
+      <tr><td>Observability</td><td><code>src/observability.py</code>, <code>scripts/preflight.py</code></td><td>Health check, preflight deploy, deteksi kondisi berbahaya.</td><td><span class="badge ok">Ada</span></td></tr>
+    </table>
+
+    <h3>B. Dokumen operasional dan sales</h3>
+    <table>
+      <tr><th>Dokumen</th><th>Isi</th><th>Status supervisi</th></tr>
+      <tr><td><code>README.md</code></td><td>Ringkasan sistem, cara test, struktur repo.</td><td>Perlu dibaca saat onboarding teknis.</td></tr>
+      <tr><td><code>docs/DEPLOYMENT.md</code></td><td>Cara deploy, systemd, backup, reverse proxy, monitoring.</td><td>Sudah ada, production tetap butuh server nyata.</td></tr>
+      <tr><td><code>docs/OPERATIONS_RUNBOOK.md</code></td><td>Panduan harian staf: pagi, approval, finance, insiden, weekly/monthly.</td><td>Sudah bagus untuk SOP awal.</td></tr>
+      <tr><td><code>docs/SALES_PACKAGE.md</code></td><td>Paket penjualan, pitch, batasan, demo.</td><td>Masih ada placeholder <code>[ISI]</code> untuk harga/SLA.</td></tr>
+      <tr><td><code>docs/GO_LIVE_DECISIONS.md</code></td><td>Keputusan bisnis sebelum live.</td><td>Masih blocking sampai Mas Anas isi/pilih.</td></tr>
+      <tr><td><code>reports/BUILD_STATUS_2026-09-22.md</code></td><td>Bukti test, defect fixed, batasan jujur.</td><td>Menjadi bukti status terbaru.</td></tr>
+    </table>
+  </section>
+
+  <section id="modul">
+    <h2>4. Modul/fungsi sistem dalam bahasa sederhana</h2>
+    <h3>4.1 Inquiry → Case</h3>
+    <p>Saat tamu bertanya lewat WhatsApp/email/web, sistem idealnya membuat <b>case</b>. Case adalah map kerja. Di dalamnya ada siapa yang bertanya, tanggal yang diminta, jumlah tamu, preferensi, status follow-up, dan bukti perubahan.</p>
+    <h3>4.2 Matching villa</h3>
+    <p>Sistem bisa menilai unit mana yang cocok. Yang penting: sistem tidak boleh asal menyarankan villa jika bukti ketersediaannya tidak cukup.</p>
+    <h3>4.3 Hold</h3>
+    <p>Hold berarti tanggal dipegang sementara. Tujuannya agar staf tidak menjual slot yang sama saat sedang proses quote atau payment.</p>
+    <h3>4.4 Booking</h3>
+    <p>Booking adalah reservasi yang lebih kuat dari hold. Di level database, status tertentu tetap menahan slot, termasuk cancellation review/dispute, agar villa tidak dijual ulang sebelum keputusan jelas.</p>
+    <h3>4.5 Invoice & payment</h3>
+    <p>Invoice dibuat dari policy/rate, bukan angka asal ketik. Payment masuk harus dicocokkan dengan provider/bank. Screenshot tamu tidak boleh dianggap bukti final tanpa rekonsiliasi.</p>
+    <h3>4.6 Approval</h3>
+    <p>Refund, payout, perubahan rekening, relokasi, dan pengecualian policy harus melewati approval manusia. Untuk uang/legal, sistem menerapkan dua penyetuju berbeda.</p>
+    <h3>4.7 Safe message</h3>
+    <p>Pesan ke tamu tidak boleh mengandung klaim palsu. Jika sistem tidak punya bukti harga/tanggal/fasilitas, statusnya harus <b>UNKNOWN</b> atau perlu approval manusia.</p>
+    <h3>4.8 Audit trail</h3>
+    <p>Setiap aksi penting menyimpan jejak. Jejak ini dibuat append-only dan bisa diberi anker eksternal supaya perubahan diam-diam lebih sulit.</p>
+    <h3>4.9 Scheduler/heartbeat</h3>
+    <p>Scheduler berjalan berkala untuk mengecek hold kedaluwarsa, SLA lewat, invoice jatuh tempo, tugas terlambat, dan insiden yang perlu eskalasi.</p>
+  </section>
+
+  <section id="demo">
+    <h2>5. Mock aplikasi & mock video yang sudah dibuat</h2>
+    <div class="callout good">
+      <p><b>Status:</b> siap dipakai untuk presentasi calon pembeli/konsumen. Data di dalamnya adalah demo/mock, bukan data tamu/properti nyata.</p>
+    </div>
+    <table>
+      <tr><th>File</th><th>Fungsi</th><th>Cara pakai</th></tr>
+      <tr><td><code>demo/customer-demo-app.html</code></td><td>Mock aplikasi interaktif untuk live demo.</td><td>Buka di browser, klik tombol “Jalankan alur demo 90 detik”.</td></tr>
+      <tr><td><code>demo/villa-agency-os-mock-video.mp4</code></td><td>Video demo 28 detik, 1280×720.</td><td>Diputar sebagai pembuka/closing pitch.</td></tr>
+      <tr><td><code>demo/villa-agency-os-mock-video-cover.png</code></td><td>Cover/thumbnail video.</td><td>Dipakai di proposal/presentasi.</td></tr>
+      <tr><td><code>demo/render_mock_video.py</code></td><td>Script render ulang video.</td><td>Untuk reproducibility teknis.</td></tr>
+    </table>
+    <p><b>Yang ditampilkan di demo:</b> Command Center, Inquiry → Booking, Anti Double Booking, Finance, Safe Message Approval, Owner Report.</p>
+  </section>
+
+  <section id="dashboard">
+    <h2>6. Interface website/dashboard</h2>
+    <h3>6.1 Dashboard internal: sudah ada basisnya</h3>
+    <p>Dashboard internal adalah website untuk staf/owner. Ini bukan website publik untuk tamu. Fungsinya untuk kerja harian.</p>
+    <table>
+      <tr><th>Halaman internal</th><th>Perkiraan fungsi</th></tr>
+      <tr><td>Command Center</td><td>Ringkasan antrean: case, approval, finance, ops, incident.</td></tr>
+      <tr><td>Properties/Inventory</td><td>Daftar villa/unit, ketersediaan, bukti.</td></tr>
+      <tr><td>Cases</td><td>Mengelola inquiry tamu dari awal sampai booking/lost.</td></tr>
+      <tr><td>Finance</td><td>Invoice, payment, reconciliation.</td></tr>
+      <tr><td>Approvals</td><td>Keputusan manusia untuk uang/legal/pesan.</td></tr>
+      <tr><td>Operations</td><td>Cleaning, check-in prep, maintenance.</td></tr>
+      <tr><td>Audit</td><td>Melihat jejak aksi dan bukti.</td></tr>
+    </table>
+
+    <h3>6.2 Website publik penyewa villa: belum final production</h3>
+    <p>Website publik adalah yang dilihat konsumen/penyewa villa. Ini diperlukan untuk bisnis komersial. Saat ini yang sudah dibuat adalah mock/demo dan dashboard internal, bukan public booking website lengkap production.</p>
+    <table>
+      <tr><th>Fitur website publik yang diperlukan</th><th>Status</th><th>Catatan</th></tr>
+      <tr><td>Landing page brand</td><td><span class="badge warn">Perlu dibuat/finalkan</span></td><td>Menjelaskan agency, trust, wilayah, CTA.</td></tr>
+      <tr><td>Listing villa</td><td><span class="badge warn">Perlu dibuat/finalkan</span></td><td>Search/filter lokasi, kamar, kapasitas, harga.</td></tr>
+      <tr><td>Detail villa + gallery</td><td><span class="badge warn">Perlu data foto/video</span></td><td>Butuh foto asli, fasilitas, rules, map.</td></tr>
+      <tr><td>Availability calendar</td><td><span class="badge warn">Perlu integrasi</span></td><td>Harus sinkron dengan inventory/booking.</td></tr>
+      <tr><td>Booking inquiry/checkout</td><td><span class="badge warn">Perlu keputusan payment</span></td><td>Form tamu masuk ke case/reservation kernel.</td></tr>
+      <tr><td>Payment gateway</td><td><span class="badge bad">Belum dipilih</span></td><td>Midtrans/Xendit/Stripe/bank transfer/manual.</td></tr>
+      <tr><td>SEO & analytics</td><td><span class="badge warn">Perlu dibuat</span></td><td>Penting untuk calon penyewa dari Google.</td></tr>
+    </table>
+  </section>
+
+  <section id="os">
+    <h2>7. Berjalan di Windows, Mac Apple, Linux Ubuntu, atau hanya Windows?</h2>
+    <p><b>Tidak hanya Windows.</b> Arsitektur terbaik untuk platform ini adalah <b>web/server based</b>: sistem utama berjalan di server, lalu user membuka dashboard/website lewat browser.</p>
+    <table>
+      <tr><th>Lingkungan</th><th>Status</th><th>Penjelasan sederhana</th></tr>
+      <tr><td>Linux Ubuntu</td><td><span class="badge ok">Paling direkomendasikan</span></td><td>Cocok untuk server production, systemd, backup, reverse proxy.</td></tr>
+      <tr><td>Mac Apple/macOS</td><td><span class="badge ok">Bisa</span></td><td>Cocok untuk development, demo, supervisi lewat browser.</td></tr>
+      <tr><td>Windows</td><td><span class="badge ok">Bisa</span></td><td>Untuk development/demo disarankan WSL2/Docker; user biasa cukup browser.</td></tr>
+      <tr><td>HP Android/iPhone</td><td><span class="badge ok">Bisa akses web</span></td><td>Kalau dibuat responsive/PWA, bisa dipakai seperti aplikasi ringan.</td></tr>
+      <tr><td>Native desktop app</td><td><span class="badge warn">Belum jadi produk terpisah</span></td><td>Installer Windows/Mac/Linux perlu packaging khusus jika memang dibutuhkan.</td></tr>
+    </table>
+    <div class="callout decision"><b>Rekomendasi saya:</b> production jangan dipasang di laptop staf. Pasang di Ubuntu VPS/cloud, lalu staf dan owner akses dari browser. Ini lebih aman, lebih mudah backup, dan lebih mudah dikontrol.</div>
+  </section>
+
+  <section id="mobile">
+    <h2>8. Aplikasi Android dan iOS</h2>
+    <p>Menurut saya, aplikasi mobile memang mungkin diperlukan, tetapi urutannya jangan langsung native Android/iOS. Lebih aman dan cepat seperti ini:</p>
+    <table>
+      <tr><th>Tahap</th><th>Produk</th><th>Kelebihan</th><th>Status sekarang</th></tr>
+      <tr><td>1</td><td>Website publik responsive</td><td>Bisa dibuka semua HP, bisa SEO Google, cepat dipasarkan.</td><td><span class="badge warn">Perlu dibuat/finalkan</span></td></tr>
+      <tr><td>2</td><td>PWA</td><td>Bisa “Add to Home Screen”, rasa aplikasi, satu codebase.</td><td><span class="badge warn">Perlu dibuat</span></td></tr>
+      <tr><td>3</td><td>Native Android/iOS</td><td>Lebih kuat untuk push notification, store presence.</td><td><span class="badge bad">Belum ada</span></td></tr>
+    </table>
+    <p><b>Keputusan praktis:</b> buat public website + PWA dulu. Native app dibuat setelah alur booking terbukti dan ada kebutuhan pasar yang jelas.</p>
+  </section>
+
+  <section id="kualitas">
+    <h2>9. Bukti kualitas & test</h2>
+    <div class="callout good">
+      <p><b>Gate teknis terakhir PASS.</b> Bukti dari laporan build: <code>make check</code>, compile, pytest, secret scan, unsafe scan, schema parity.</p>
+    </div>
+    <table>
+      <tr><th>Bukti</th><th>Hasil</th><th>Makna awam</th></tr>
+      <tr><td>Unit/integration tests</td><td>2.282 passed, 4 skipped, 3.549 subtests passed</td><td>Banyak aturan sistem diuji otomatis.</td></tr>
+      <tr><td>Secret scan</td><td>PASS, 0 findings</td><td>Tidak ada credential/API key yang terdeteksi di repo saat scan.</td></tr>
+      <tr><td>Unsafe scan</td><td>PASS, 0 findings</td><td>Tidak ada konfigurasi berbahaya yang terdeteksi oleh gate.</td></tr>
+      <tr><td>Schema parity</td><td>OK</td><td>Skema SQLite dan PostgreSQL dijaga agar tidak melenceng.</td></tr>
+      <tr><td>Demo seeder</td><td>3 properties, 4 units, 3 cases, 1 hold, 1 booking, 2 invoices, dst.</td><td>Data demo bisa dibuat nyata untuk presentasi.</td></tr>
+    </table>
+    <p><b>Batasan penting:</b> test hijau bukan berarti “tidak mungkin ada bug”. Artinya: aturan yang sudah ditulis test-nya lulus. Untuk klaim siap live, masih perlu pilot dengan data dan staf nyata.</p>
+  </section>
+
+  <section id="baik">
+    <h2>10. Apa saja yang sudah ada dan baik</h2>
+    <ol class="checklist">
+      <li><b>Fondasi anti double booking kuat</b>: ada logic kernel, state machine, dan database constraint.</li>
+      <li><b>Uang diperlakukan serius</b>: integer minor unit, bukan float yang rawan pembulatan.</li>
+      <li><b>Audit trail dirancang dari awal</b>: bukan fitur tempelan belakangan.</li>
+      <li><b>Approval manusia untuk hal sensitif</b>: AI/sistem tidak diberi kuasa langsung untuk uang/legal.</li>
+      <li><b>Fail-closed</b>: kalau bukti tidak cukup, sistem lebih baik menolak/UNKNOWN daripada mengarang.</li>
+      <li><b>Dokumen deployment dan runbook ada</b>: staf/teknis punya panduan awal.</li>
+      <li><b>Demo sales sudah ada</b>: Mas Anas bisa mulai menunjukkan konsep ke calon pembeli.</li>
+      <li><b>Gate keamanan dasar sudah berjalan</b>: secret scan, unsafe scan, pre-deploy check.</li>
+    </ol>
+  </section>
+
+  <section id="kurang">
+    <h2>11. Apa saja yang belum ada, kurang, atau belum final</h2>
+    <table>
+      <tr><th>Kekurangan</th><th>Dampak jika belum diselesaikan</th><th>Yang perlu dilakukan</th><th>Prioritas</th></tr>
+      <tr><td>Keputusan go-live bisnis belum lengkap</td><td>Sistem bisa benar secara teknis tetapi salah secara bisnis/legal.</td><td>Isi <code>docs/GO_LIVE_DECISIONS.md</code>.</td><td><span class="badge bad">P0</span></td></tr>
+      <tr><td>Provider payment belum dipilih</td><td>Tidak bisa menerima pembayaran live dengan aman.</td><td>Pilih Midtrans/Xendit/Stripe/bank transfer flow.</td><td><span class="badge bad">P0</span></td></tr>
+      <tr><td>WhatsApp/provider channel belum dipilih</td><td>Inquiry real belum otomatis masuk ke case.</td><td>Pilih Meta Cloud API/WATI/Qontak/Twilio/dll.</td><td><span class="badge bad">P0</span></td></tr>
+      <tr><td>Website publik production belum final</td><td>Penyewa villa belum punya tempat resmi browsing/booking.</td><td>Buat public website + booking inquiry.</td><td><span class="badge bad">P0</span></td></tr>
+      <tr><td>Data properti real belum diisi</td><td>Sistem hanya bisa demo, belum operasi nyata.</td><td>Masukkan 10–20 villa pilot.</td><td><span class="badge bad">P0</span></td></tr>
+      <tr><td>Harga paket sales masih placeholder</td><td>Sulit dijual dengan penawaran final.</td><td>Tentukan setup fee, monthly fee, commission, SLA.</td><td><span class="badge warn">P1</span></td></tr>
+      <tr><td>Native Android/iOS belum ada</td><td>Belum bisa publish Play Store/App Store.</td><td>Buat PWA dulu, native app fase lanjut.</td><td><span class="badge warn">P2</span></td></tr>
+      <tr><td>Pilot real belum dijalankan</td><td>Belum ada bukti lapangan dengan staf/properti nyata.</td><td>Pilot 10–20 properti; ukur 0 double booking, recon ≥99%.</td><td><span class="badge bad">P0</span></td></tr>
+      <tr><td>Legal/tax docs belum final</td><td>Risiko salah janji, sengketa, pajak, refund.</td><td>Isi T&C, privacy, refund, kontrak owner, PBJT.</td><td><span class="badge bad">P0</span></td></tr>
+      <tr><td>Production hosting belum dipasang</td><td>Belum bisa dipakai stabil 24/7.</td><td>Deploy ke Ubuntu VPS/cloud + backup + TLS + monitoring.</td><td><span class="badge bad">P0</span></td></tr>
+    </table>
+  </section>
+
+  <section id="tidakcocok">
+    <h2>12. Hal yang mungkin tidak sesuai/tidak cocok dan perlu Mas Anas koreksi</h2>
+    <p>Bagian ini sengaja saya tulis agar Mas Anas mudah mengoreksi arah bisnisnya.</p>
+    <table>
+      <tr><th>Area yang perlu dikoreksi</th><th>Pilihan saat ini</th><th>Pertanyaan untuk Mas Anas</th></tr>
+      <tr><td>Model bisnis</td><td>Platform mendukung agency/management, tetapi paket komersial belum final.</td><td>Apakah target menjual software, jasa management, atau keduanya?</td></tr>
+      <tr><td>Wilayah</td><td>Disiapkan untuk Bali + Yogyakarta.</td><td>Apakah wilayah awal cukup Bali, Jogja, atau langsung multi-kota?</td></tr>
+      <tr><td>Payment</td><td>Belum memilih provider final.</td><td>Apakah ingin payment gateway otomatis atau manual transfer dulu?</td></tr>
+      <tr><td>WhatsApp</td><td>Belum memilih provider final.</td><td>Apakah mau resmi WhatsApp Business API atau semi-manual dulu?</td></tr>
+      <tr><td>Public website</td><td>Belum final production.</td><td>Apakah brand website satu marketplace villa atau tiap klien punya microsite?</td></tr>
+      <tr><td>Android/iOS</td><td>Belum native app.</td><td>Apakah penting untuk calon pembeli sekarang, atau cukup PWA dulu?</td></tr>
+      <tr><td>Approval ketat</td><td>Uang/legal perlu approval dan dual control.</td><td>Apakah ini cocok dengan cara kerja tim, atau perlu role berbeda?</td></tr>
+      <tr><td>Dashboard internal dibatasi</td><td>Deployment menyarankan dashboard tidak dibuka bebas ke internet.</td><td>Apakah tim bekerja dari kantor/VPN, atau perlu akses luas dengan auth kuat?</td></tr>
+    </table>
+  </section>
+
+  <section id="butuh-user">
+    <h2>13. Yang saya butuhkan dari Mas Anas</h2>
+    <h3>A. Data brand & bisnis</h3>
+    <ol>
+      <li>Nama brand final.</li><li>Logo/warna/identitas visual.</li><li>Target market: tamu lokal, ekspat, turis internasional, corporate, wedding, dll.</li><li>Bahasa: Indonesia saja, Inggris, atau bilingual.</li><li>Mata uang: IDR saja atau multi-currency.</li>
+    </ol>
+    <h3>B. Data villa pilot</h3>
+    <ol>
+      <li>10–20 properti pertama.</li><li>Nama villa, lokasi, kapasitas, kamar, fasilitas.</li><li>Foto/video asli.</li><li>Rate weekday/weekend/season/holiday.</li><li>Rules: minimum stay, deposit, refund, check-in/out, extra guest.</li>
+    </ol>
+    <h3>C. Keputusan provider</h3>
+    <ol>
+      <li>Payment provider: Midtrans/Xendit/Stripe/bank transfer/manual.</li><li>WhatsApp provider: Meta Cloud API/WATI/Qontak/Twilio/lain.</li><li>PMS/channel manager: Hostaway/Guesty/Smoobu/Beds24/manual.</li><li>Hosting: VPS Ubuntu/cloud/lokal.</li><li>Domain/subdomain.</li>
+    </ol>
+    <h3>D. Legal, pajak, dan operasional</h3>
+    <ol>
+      <li>Kontrak owner.</li><li>Terms & Conditions tamu.</li><li>Privacy policy.</li><li>Refund/cancellation policy.</li><li>Pajak/service charge/PBJT.</li><li>Struktur role staf dan siapa boleh approve uang.</li>
+    </ol>
+  </section>
+
+  <section id="roadmap">
+    <h2>14. Roadmap menuju siap dijual dan dipakai live</h2>
+    <table>
+      <tr><th>Urutan</th><th>Output</th><th>Acceptance criteria</th><th>Estimasi kerja</th></tr>
+      <tr><td>1</td><td>Public Website Mock + PWA</td><td>Landing, listing, detail villa, inquiry form, mobile responsive.</td><td>Prioritas segera</td></tr>
+      <tr><td>2</td><td>Isi GO_LIVE_DECISIONS</td><td>Semua item blocking punya keputusan jelas.</td><td>Butuh input Mas Anas</td></tr>
+      <tr><td>3</td><td>Data pilot 10–20 properti</td><td>Properti real masuk, foto/rate/rules lengkap.</td><td>Butuh data Mas Anas</td></tr>
+      <tr><td>4</td><td>Deploy staging</td><td>Server Ubuntu, TLS, backup, preflight PASS.</td><td>Setelah provider/hosting dipilih</td></tr>
+      <tr><td>5</td><td>UAT staf</td><td>Reservation, finance, ops, owner bisa menjalankan SOP tanpa bingung.</td><td>1–2 siklus kerja</td></tr>
+      <tr><td>6</td><td>Pilot live terbatas</td><td>0 confirmed double booking, reconciliation ≥99%, unsupported AI claim = 0.</td><td>2–4 minggu</td></tr>
+      <tr><td>7</td><td>Sales package final</td><td>Harga, SLA, proposal, demo script, case study pilot.</td><td>Setelah pilot</td></tr>
+      <tr><td>8</td><td>Native Android/iOS bila perlu</td><td>Jika PWA terbukti cukup/tidak cukup, baru putuskan native.</td><td>Fase lanjut</td></tr>
+    </table>
+  </section>
+
+  <section id="checklist">
+    <h2>15. Checklist supervisi Mas Anas</h2>
+    <p>Centang manual saat Mas Anas review dokumen ini:</p>
+    <h3>A. Cocok/tidak cocok secara bisnis</h3>
+    <ul class="checklist">
+      <li>☐ Tujuan “0 double booking” sudah sesuai prioritas bisnis.</li>
+      <li>☐ Model approval ketat cocok dengan cara kerja tim.</li>
+      <li>☐ Target wilayah Bali/Yogyakarta sudah benar.</li>
+      <li>☐ Public website memang harus jadi prioritas berikutnya.</li>
+      <li>☐ PWA dulu sebelum native Android/iOS disetujui.</li>
+    </ul>
+    <h3>B. Yang sudah ada dan disetujui</h3>
+    <ul class="checklist">
+      <li>☐ Demo app interaktif layak ditunjukkan ke calon pembeli.</li>
+      <li>☐ Video demo 28 detik layak dipakai untuk pitch.</li>
+      <li>☐ Dashboard internal sesuai kebutuhan staf/owner.</li>
+      <li>☐ Runbook operasional mudah dipahami staf.</li>
+      <li>☐ Paket sales perlu dilanjutkan ke proposal final.</li>
+    </ul>
+    <h3>C. Yang perlu koreksi dari Mas Anas</h3>
+    <ul class="checklist">
+      <li>☐ Nama brand/platform final.</li>
+      <li>☐ Harga paket dan SLA support.</li>
+      <li>☐ Payment provider.</li>
+      <li>☐ WhatsApp provider.</li>
+      <li>☐ Format website publik: marketplace tunggal atau microsite per owner.</li>
+      <li>☐ Data 10–20 villa pilot.</li>
+      <li>☐ Terms, privacy, refund, kontrak owner.</li>
+    </ul>
+  </section>
+
+  <section id="istilah">
+    <h2>16. Kamus istilah awam</h2>
+    <table>
+      <tr><th>Istilah</th><th>Arti sederhana</th></tr>
+      <tr><td>Kernel</td><td>Mesin aturan inti yang memutuskan booking/hold boleh atau tidak.</td></tr>
+      <tr><td>Hold</td><td>Tanggal dipegang sementara.</td></tr>
+      <tr><td>Booking</td><td>Reservasi yang sudah lebih kuat dari hold.</td></tr>
+      <tr><td>Double booking</td><td>Satu villa/tanggal dijual ke dua tamu.</td></tr>
+      <tr><td>Rekonsiliasi</td><td>Mencocokkan pembayaran masuk dengan invoice/bukti resmi.</td></tr>
+      <tr><td>Approval</td><td>Persetujuan manusia sebelum aksi sensitif dilakukan.</td></tr>
+      <tr><td>Audit trail</td><td>Jejak siapa melakukan apa dan kapan.</td></tr>
+      <tr><td>Preflight</td><td>Pemeriksaan sebelum sistem boleh dipakai/deploy.</td></tr>
+      <tr><td>PWA</td><td>Website yang bisa dipasang di HP seperti aplikasi ringan.</td></tr>
+      <tr><td>Production-live</td><td>Sistem dipakai untuk tamu/uang/data nyata.</td></tr>
+    </table>
+  </section>
+
+  <section class="callout risk">
+    <h2>Catatan kejujuran profesional</h2>
+    <p>Saya tidak akan mengklaim “100% tanpa bug selamanya” karena itu tidak ilmiah. Yang benar: sistem sudah punya fondasi kuat, test gate hijau, demo sales siap, dan banyak guard keselamatan. Tetapi untuk penggunaan tamu/uang nyata, tetap wajib ada pilot, UAT staf, data real, provider resmi, backup, monitoring, dan keputusan bisnis/legal.</p>
+  </section>
+
+  <section class="callout next">
+    <h2>Next action yang saya rekomendasikan</h2>
+    <ol>
+      <li>Mas Anas review checklist di §15.</li>
+      <li>Mas Anas koreksi bagian yang tidak cocok.</li>
+      <li>Saya lanjutkan membuat <b>Public Website Mock + PWA Villa Booking</b> agar calon penyewa villa bisa melihat listing, detail, dan kirim inquiry dari HP/browser.</li>
+    </ol>
+  </section>
+
+  <footer class="watermark">
+    <p>Dokumen dibuat untuk supervisi internal Mas Anas. Tidak berisi API key, token, password, atau credential. Jika nanti dipakai ke calon pembeli, bagian risiko dan status live sebaiknya tetap dipertahankan agar penawaran jujur dan tidak overclaim.</p>
+    <p class="print-note">Sumber status utama: <code>reports/BUILD_STATUS_2026-09-22.md</code>, <code>reports/final-report.md</code>, <code>docs/DEPLOYMENT.md</code>, <code>docs/OPERATIONS_RUNBOOK.md</code>, <code>docs/SALES_PACKAGE.md</code>, <code>demo/README.md</code>.</p>
+  </footer>
+</main>
+</body>
+</html>

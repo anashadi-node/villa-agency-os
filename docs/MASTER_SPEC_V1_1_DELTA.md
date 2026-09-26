@@ -162,3 +162,16 @@ Format per requirement: **Requirement → Existing condition → Gap → Change 
 - Condition 4 (blocker to a *sellable* pilot): the en-US language migration must be scheduled — a locked requirement that is currently unmet.
 
 **No-GO** applies only to production go-live, unchanged: no auth wired into the HTTP surface, no policy engine, no outbox, no provider integrations, no restore drill.
+
+
+## Domain mapping recorded (2026-09-26, WAVE 2-B + WAVE 3-A)
+
+- WAVE 2-B closed §27: `evidence_objects` + `evidence_access_grants` + append-only
+  `evidence_events`, pipeline `QUARANTINE → VALIDATE → SCAN → CLASSIFY → STORE` enforced by
+  database CHECK constraints; signed, expiring, single-use access grants; contract/rate
+  versions may cite a stored evidence object (`source_evidence_id`).
+- WAVE 3-A delivered Appendix B references and the inquiry slice: `references.py`
+  (`INQ-/QT-/RSV-/INV-/PR-/INC-/APR-`, per agency, per year), `guests`, `cases.reference`,
+  `cases.guest_id`, `inquiry_requirements`, `crm.py`.
+- Domain mapping decisions are recorded in ADR-0015. Conversation/task/matching/option-set
+  slices remain open in WAVE 3.
