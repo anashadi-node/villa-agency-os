@@ -417,9 +417,12 @@ class TestEvidenceGates(KernelTestCase):
             self.hold(evidence_id=evidence_id)
         self.assertEqual(ctx.exception.code, "EVIDENCE_DOES_NOT_AUTHORISE_HOLD")
 
-    def test_hold_on_occupied_evidence_is_refused(self):
+    def test_hold_on_not_available_evidence_is_refused(self):
         evidence_id = self.kernel.record_evidence(
-            unit_id="unit_1", source_type="manager_written", evidence_level="B", result="occupied"
+            unit_id="unit_1",
+            source_type="manager_written",
+            evidence_level="B",
+            result="NOT_AVAILABLE",
         )
         with self.assertRaises(DomainError) as ctx:
             self.hold(evidence_id=evidence_id)

@@ -37,6 +37,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Mapping, Optional, Sequence
 
 from primitives import (
+    restriction_payload,
     UTC,
     DomainError,
     canonical_json,
@@ -90,6 +91,7 @@ __all__ = [
     "CODE_EVIDENCE_CANNOT_HOLD",
     "CODE_EVIDENCE_CANNOT_CONFIRM",
     "CODE_AVAILABILITY_UNKNOWN",
+    "CODE_AVAILABILITY_RESTRICTED",
     "CODE_UNIT_OCCUPIED",
     "CODE_EMPTY_PAYLOAD",
     "CODE_UNKNOWN_DESTINATION",
@@ -190,6 +192,7 @@ CODE_EVIDENCE_CANNOT_QUOTE = "EVIDENCE_CANNOT_QUOTE"
 CODE_EVIDENCE_CANNOT_HOLD = "EVIDENCE_CANNOT_HOLD"
 CODE_EVIDENCE_CANNOT_CONFIRM = "EVIDENCE_CANNOT_CONFIRM"
 CODE_AVAILABILITY_UNKNOWN = "AVAILABILITY_UNKNOWN"
+CODE_AVAILABILITY_RESTRICTED = "AVAILABILITY_RESTRICTED"
 CODE_UNIT_OCCUPIED = "UNIT_OCCUPIED"
 
 #: Data classification (P0–P4) for anything leaving the system.
@@ -810,6 +813,7 @@ class AvailabilityEvidence:
     can_hold: bool = False
     can_confirm: bool = False
     source_ref: str = ""
+    restrictions: Mapping[str, Any] = _field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -823,6 +827,7 @@ class AvailabilityEvidence:
             "can_quote": self.can_quote,
             "can_hold": self.can_hold,
             "can_confirm": self.can_confirm,
+            "restrictions": dict(self.restrictions),
         }
 
     @classmethod
@@ -840,6 +845,7 @@ class AvailabilityEvidence:
             can_hold=_flag(row.get("can_hold")),
             can_confirm=_flag(row.get("can_confirm")),
             source_ref=str(row.get("source_ref") or ""),
+            restrictions=restriction_payload(row.get("restrictions")),
         )
 
 
@@ -932,11 +938,24 @@ def gate_availability(
         )
 
     result = _norm(resolved.result)
-    if result == "OCCUPIED":
+    if result == "AVAILABLE_BUT_RESTRICTED":
+        # §11: a restriction is its own state, not a flavour of unavailable, so it
+        # gets its own denial — the operator must see what the supplier restricted.
+        return _deny(
+            gate,
+            CODE_AVAILABILITY_RESTRICTED,
+            "unit is available but restricted; a human must resolve the restriction",
+            {
+                "evidence_id": resolved.evidence_id,
+                "evidence_level": level,
+                "restrictions": dict(resolved.restrictions),
+            },
+        )
+    if result == "NOT_AVAILABLE":
         return _deny(
             gate,
             CODE_UNIT_OCCUPIED,
-            "unit is occupied according to the cited evidence",
+            "unit is not available according to the cited evidence",
             {"evidence_id": resolved.evidence_id, "evidence_level": level},
         )
     if result != "AVAILABLE":

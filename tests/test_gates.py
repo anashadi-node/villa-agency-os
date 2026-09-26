@@ -386,7 +386,10 @@ class TestSchemaDerivedPolicy(GateTestCase):
         block = _sql_block(self.sql, "availability_evidence")
         self.assertEqual(_ddl_enum(block, "evidence_level"), tuple(sorted(LEVEL_SOURCE_TYPES, reverse=False)))
         self.assertEqual(_ddl_enum(block, "source_type"), SOURCE_TYPES)
-        self.assertEqual(_ddl_enum(block, "result"), ("AVAILABLE", "OCCUPIED", "UNKNOWN"))
+        self.assertEqual(
+            _ddl_enum(block, "result"),
+            ("AVAILABLE", "NOT_AVAILABLE", "AVAILABLE_BUT_RESTRICTED", "UNKNOWN"),
+        )
 
     def test_every_source_type_belongs_to_exactly_one_level(self):
         block = _sql_block(self.sql, "availability_evidence")
@@ -986,9 +989,9 @@ class TestGateAvailability(GateTestCase):
             CODE_OK,
         )
 
-    def test_occupied_units_are_denied(self):
+    def test_not_available_units_are_denied(self):
         decision = gate_availability(
-            self.evidence(result="OCCUPIED"), now=self.now, purpose="quote"
+            self.evidence(result="NOT_AVAILABLE"), now=self.now, purpose="quote"
         )
         self.assertDenied(decision, "UNIT_OCCUPIED", GATE_AVAILABILITY)
 
@@ -1585,7 +1588,11 @@ class TestGateUnit(GateTestCase):
         cases = {
             "missing evidence": (None, "EVIDENCE_MISSING", GATE_AVAILABILITY),
             "too weak": (self.evidence(level="D", source="memory"), "EVIDENCE_LEVEL_TOO_WEAK", GATE_AVAILABILITY),
-            "occupied": (self.evidence(result="OCCUPIED"), "UNIT_OCCUPIED", GATE_AVAILABILITY),
+            "not available": (
+                self.evidence(result="NOT_AVAILABLE"),
+                "UNIT_OCCUPIED",
+                GATE_AVAILABILITY,
+            ),
             "stale": (self.evidence(captured_at=self.at(-901)), "EVIDENCE_STALE", GATE_AVAILABILITY),
         }
         for label, (evidence, expected, gate) in cases.items():
@@ -1892,7 +1899,9 @@ class TestDecisionObject(GateTestCase):
         denials = [
             (gate_contract_pack(None, now=self.now, purpose="quote"), "CONTRACT_PACK_MISSING"),
             (
-                gate_availability(self.evidence(result="OCCUPIED"), now=self.now, purpose="quote"),
+                gate_availability(
+                    self.evidence(result="NOT_AVAILABLE"), now=self.now, purpose="quote"
+                ),
                 "UNIT_OCCUPIED",
             ),
             (

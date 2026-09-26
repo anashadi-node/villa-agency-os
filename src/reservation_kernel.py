@@ -41,6 +41,11 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
 
 from audit import AuditLog, append_event
+from availability import (
+    RESTRICTED_RESULT,
+    RESTRICTION_KEYS,
+    SOURCE_RESULTS,
+)
 from primitives import (
     DomainError,
     IdFactory,
@@ -52,6 +57,7 @@ from primitives import (
     parse_iso_date,
     require_ref,
     require_text,
+    restriction_payload,
     sha256_hex,
     to_iso,
 )
@@ -128,7 +134,8 @@ BOOKING_STATES: tuple[str, ...] = (
 )
 
 #: Evidence results and levels, exactly as the CHECK constraints spell them.
-EVIDENCE_RESULTS: tuple[str, ...] = ("AVAILABLE", "OCCUPIED", "UNKNOWN")
+# The canonical vocabulary has exactly one home (§11, Appendix A).
+EVIDENCE_RESULTS: tuple[str, ...] = SOURCE_RESULTS
 EVIDENCE_LEVELS: tuple[str, ...] = ("A", "B", "C", "D")
 EVIDENCE_SOURCES: tuple[str, ...] = (
     "property_api",
@@ -151,6 +158,43 @@ DEFAULT_ROLE = "kernel"
 # --------------------------------------------------------------------------- #
 # Outcomes
 # --------------------------------------------------------------------------- #
+def _validated_restrictions(result: str, restrictions: Any) -> Optional[str]:
+    """The restriction payload as stored JSON, or a refusal saying why not.
+
+    §11 requires a restricted state to state what is restricted, and the two keys
+    are the two the spec names: an unknown key is a typo that would otherwise be
+    stored and silently never enforced.
+    """
+    payload = restriction_payload(restrictions)
+    if result == RESTRICTED_RESULT and not payload:
+        raise DomainError(
+            "a restricted availability result must state its restriction",
+            code="EVIDENCE_RESTRICTION_REQUIRED",
+            restrictions=restrictions,
+        )
+    if payload and result != RESTRICTED_RESULT:
+        raise DomainError(
+            "only a restricted availability result may carry a restriction",
+            code="EVIDENCE_RESTRICTION_NOT_APPLICABLE",
+            result=result,
+        )
+    unknown = sorted(set(payload) - set(RESTRICTION_KEYS))
+    if unknown:
+        raise DomainError(
+            f"unknown restriction keys {unknown}: expected {list(RESTRICTION_KEYS)}",
+            code="EVIDENCE_INVALID_RESTRICTIONS",
+            restrictions=payload,
+        )
+    for key, value in payload.items():
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise DomainError(
+                f"restriction {key} must be a positive integer",
+                code="EVIDENCE_INVALID_RESTRICTIONS",
+                restrictions=payload,
+            )
+    return canonical_json(payload) if payload else None
+
+
 @dataclass(frozen=True)
 class HoldOutcome:
     """Result of a hold request — ``replayed`` means idempotency returned the old row."""
@@ -490,6 +534,7 @@ class ReservationKernel:
         valid_until: Optional[str] = None,
         ttl_hours: int = DEFAULT_EVIDENCE_TTL_HOURS,
         occupancy_ranges: Sequence[Mapping[str, str]] = (),
+        restrictions: Optional[Mapping[str, Any]] = None,
         can_quote: bool = True,
         can_hold: bool = True,
         can_confirm: bool = False,
@@ -528,6 +573,7 @@ class ReservationKernel:
                 code="EVIDENCE_INVALID_RESULT",
                 result=result,
             )
+        restrictions_json = _validated_restrictions(normalised_result, restrictions)
         captured = captured_at or self._now()
         expires = valid_until or to_iso(parse_iso(captured) + timedelta(hours=ttl_hours))
         if expires <= captured:
@@ -552,8 +598,8 @@ class ReservationKernel:
                 INSERT INTO availability_evidence (
                     evidence_id, agency_id, unit_id, evidence_level, source_type, source_ref,
                     captured_at, valid_until, result, occupancy_ranges,
-                    can_quote, can_hold, can_confirm, notes, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    can_quote, can_hold, can_confirm, notes, created_at, restrictions
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     evidence_id,
@@ -571,6 +617,7 @@ class ReservationKernel:
                     1 if can_confirm else 0,
                     notes,
                     self._now(),
+                    restrictions_json,
                 ),
             )
         return evidence_id

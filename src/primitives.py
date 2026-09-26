@@ -533,6 +533,24 @@ class IdFactory:
         return f"{prefix}_{token}"
 
 
+def restriction_payload(value: Any) -> dict[str, Any]:
+    """The restriction payload of an availability row, as a plain mapping.
+
+    Accepts stored JSON text or an already-parsed mapping, and returns {} for
+    anything it cannot read: an unparseable restriction is not one a caller may
+    rely on, and every reader of it denies in that case anyway.
+    """
+    if isinstance(value, Mapping):
+        return dict(value)
+    if value is None or str(value).strip() == "":
+        return {}
+    try:
+        loaded = json.loads(str(value))
+    except (TypeError, ValueError):
+        return {}
+    return dict(loaded) if isinstance(loaded, Mapping) else {}
+
+
 def require_ref(value: Any, field_name: str = "ref", max_len: int = 128) -> str:
     """Validate an identifier/reference: non-empty, printable, bounded."""
     if not isinstance(value, str):
