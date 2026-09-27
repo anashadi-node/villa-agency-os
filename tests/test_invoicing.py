@@ -1103,8 +1103,12 @@ class TestVerify(InvoiceTestBase):
 
     def test_verify_detects_line_money_tampered_underneath_the_service(self) -> None:
         invoice = self.issue()
+        # Plain digits on purpose: SQLite only accepts underscores in numeric literals from
+        # 3.46, and the interpreter this runs under decides which SQLite is linked in (3.45.1
+        # on the system Python here, 3.53 in the project venv). A tamper value must not be the
+        # thing that makes the suite interpreter-dependent.
         self.conn.execute(
-            "UPDATE invoice_lines SET quantity = 3, amount_minor = 2_250_000 WHERE invoice_id = ?",
+            "UPDATE invoice_lines SET quantity = 3, amount_minor = 2250000 WHERE invoice_id = ?",
             (invoice.invoice_id,),
         )
         with self.assertRaises(P.DomainError) as raised:

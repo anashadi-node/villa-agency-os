@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from primitives import SystemClock
 from schema_loader import connect_sqlite
 
 REPO = Path(__file__).resolve().parent.parent
@@ -24,8 +25,15 @@ SCRIPT = REPO / "scripts" / "publish_ai_allowance.py"
 ALLOWANCE = "security.ai.medium_tool_allowance"
 
 #: A window that is open *now*, so the assertions do not age.
-TODAY = datetime.date.today()
-OPEN_FROM = TODAY.isoformat()
+#:
+#: Derived from the platform's own clock (``SystemClock``, UTC), never from the wall clock.
+#: ``datetime.date.today()`` is **local**: between 00:00 and 07:00 WIB it is already tomorrow in
+#: UTC, so the published window began in the future, ``status`` answered CLOSED, and ``withdraw``
+#: was refused as ``POLICY_BACKDATED_REVISION`` — the pre-deploy gate was red for seven hours of
+#: every day, which is how this was found. The window opens a day early so a run that straddles
+#: midnight cannot flip either way.
+TODAY = SystemClock().today()
+OPEN_FROM = (TODAY - datetime.timedelta(days=1)).isoformat()
 OPEN_TO = (TODAY + datetime.timedelta(days=30)).isoformat()
 
 
