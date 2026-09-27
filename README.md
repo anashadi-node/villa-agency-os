@@ -158,14 +158,29 @@ VILLA_DB=data/villa.db python3 scripts/publish_policy_value.py set \
     --source-doc-ref "Keputusan owner 2026-09-26 — kondisi high season" \
     --approved-by owner_anas
 
-# Tiga key yang dibaca mesin diskon (§11): role berwenang, floor persen, floor absolut.
-# Tipe nilainya ditentukan katalog: ROLE_SET (JSON), PCT (teks desimal), COUNT (bilangan).
+# Key yang dibaca mesin diskon (§11): role berwenang, floor persen, floor absolut, dan
+# mata uang floor itu. Tipe nilainya ditentukan katalog: ROLE_SET (JSON), PCT (teks desimal),
+# COUNT (bilangan), TEXT (kode mata uang).
 VILLA_DB=data/villa.db python3 scripts/publish_policy_value.py set \
-    --key commercial.discount.authority_roles --value '["owner","supervisor"]' \
+    --key commercial.discount.authority_roles --value '["owner","manager"]' \
     --source-doc-ref "Keputusan owner 2026-09-26" --approved-by owner_anas
 VILLA_DB=data/villa.db python3 scripts/publish_policy_value.py set \
-    --key commercial.margin_floor_minor --value 1000000 \
-    --source-doc-ref "Keputusan owner 2026-09-26" --approved-by owner_anas
+    --key commercial.margin_floor_minor --value 2500 \
+    --source-doc-ref "Keputusan owner 2026-09-27 — penjaga 2 adalah 25 USD" --approved-by owner_anas
+
+# Floor absolut itu SATU ANGKA dan satu angka tidak menyebut mata uangnya (ADR-0030).
+# Tanpa key di bawah, angka 2500 dibandingkan mentah ke mata uang booking — benar selama
+# semua booking se-mata-uang (Bali, USD), salah begitu ada booking IDR (Yogyakarta).
+VILLA_DB=data/villa.db python3 scripts/publish_policy_value.py set \
+    --key commercial.margin_floor_currency --value USD \
+    --source-doc-ref "Keputusan owner 2026-09-27 — harga villa Bali dalam USD" --approved-by owner_anas
+
+# Kurs untuk mengonversi floor ke mata uang booking. Format: {"BASE/QUOTE": "rate"} —
+# satu unit BASE bernilai sekian QUOTE. Selama belum terbit, booking di luar mata uang
+# floor MENOLAK (FX_RATE_NOT_PUBLISHED), bukan memakai kurs karangan:
+VILLA_DB=data/villa.db python3 scripts/publish_policy_value.py set \
+    --key commercial.fx.rates --value '{"USD/IDR": "16250"}' \
+    --source-doc-ref "Keputusan owner 2026-09-27 — kurs acuan USD/IDR" --approved-by owner_anas
 
 # Gerbang go-live: menolak jalan bila keputusan bisnis BLOCKING masih OPEN,
 # anker basi, ada data demo di produksi, atau rantai audit tidak utuh

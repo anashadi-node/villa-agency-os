@@ -1944,6 +1944,10 @@ INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role,
 
 INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('commercial.margin_floor_minor', 'COMMERCIAL', 'COUNT', 'MEDIUM', 'owner', '§11', 'Absolute margin floor in minor units, the second half of the §11 guard: a discount may not leave less than this behind, whatever the percentage says.', '2026-09-26T00:00:00+00:00');
 
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('commercial.margin_floor_currency', 'COMMERCIAL', 'TEXT', 'MEDIUM', 'owner', '§11', 'ISO-4217 currency commercial.margin_floor_minor is denominated in. A booking in another currency has the floor converted through commercial.fx.rates before the §11 guard is applied.', '2026-09-27T00:00:00+00:00');
+
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('commercial.fx.rates', 'COMMERCIAL', 'JSON', 'MEDIUM', 'owner', '§11', 'Published FX rates as {"BASE/QUOTE": "rate"}: one unit of BASE is worth this many QUOTE. Used to express the absolute margin floor in the currency of the booking. An unpublished pair refuses — the engine never assumes parity.', '2026-09-27T00:00:00+00:00');
+
 INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('finance.approval.payment_thresholds_minor', 'FINANCE', 'JSON', 'HIGH', 'owner', '§16', 'Payment amounts in minor units that require approval at each level.', '2026-09-26T00:00:00+00:00');
 
 INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('finance.approval.dual_control_min_approvals', 'FINANCE', 'COUNT', 'HIGH', 'owner', '§16', 'Approvals required for a subject on the dual-control list.', '2026-09-26T00:00:00+00:00');

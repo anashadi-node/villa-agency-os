@@ -39,11 +39,14 @@ absolute floor as an integer count of minor units — USD 25 is `2500`, not `25`
   - exactly USD 25 behind (20,00%) → `APPLIED`. The boundary is inclusive.
 - `manager` can discount; `supervisor` — the retired name (ADR-0028) — is refused
   `DISCOUNT_AUTHORITY_REFUSED`, so the rename is enforced by the engine and not only by the tests.
-- **Two things are still open, and the first is a real limit rather than a missing feature:**
-  1. The absolute floor is compared as a raw count in the booking's own currency, so one number
-     is only correct while bookings share a currency. Bali (USD) is fine. A Yogyakarta booking in
-     IDR would compare IDR minor units against a USD number, which is meaningless. A per-currency
-     floor, or a conversion step with a published rate, has to be built before IDR bookings can
-     discount. The owner asked for exactly this.
-  2. Six catalogue keys remain unpublished, so the finance, availability and incident gates that
-     read them still refuse rather than run on an assumed value.
+- **Two things were still open when this ADR was written, and both have since moved:**
+  1. The absolute floor was compared as a raw count in the booking's own currency, so one number was
+     only correct while bookings shared a currency. Bali (USD) was fine. A Yogyakarta booking in IDR
+     compared IDR minor units against a USD number, which is meaningless. A per-currency floor, or a
+     conversion step with a published rate, had to be built before IDR bookings could discount. The
+     owner asked for exactly this — **built in ADR-0030**, which adds
+     `commercial.margin_floor_currency`, `commercial.fx.rates` and `src/fx.py`.
+  2. Six catalogue keys remained unpublished, so the finance, availability and incident gates that
+     read them still refuse rather than run on an assumed value. **ADR-0030 adds a seventh**
+     (`commercial.fx.rates`), because converting the floor needs a published rate. The count is
+     runtime state: `make policy-status` reports it, and it is authoritative over this sentence.

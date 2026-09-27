@@ -30,6 +30,7 @@ SCRIPT = REPO / "scripts" / "publish_policy_value.py"
 AUTHORITY = "commercial.discount.authority_roles"
 FLOOR_PCT = "commercial.margin_floor_pct"
 FLOOR_MINOR = "commercial.margin_floor_minor"
+FLOOR_CURRENCY = "commercial.margin_floor_currency"
 
 #: A window that is open now, so the assertions do not age.
 #: Derived from the frozen clock, never from the wall clock: a revision published "today"
@@ -104,10 +105,15 @@ def _set(db: Path, key: str, value: str, **extra: str) -> subprocess.CompletedPr
 
 
 def _publish_discount_policy(db: Path) -> None:
-    """Exactly what the owner does by hand, through the documented command."""
+    """Exactly what the owner does by hand, through the documented command.
+
+    The absolute floor needs its currency published with it: one number on its own cannot say
+    what it is worth, and the engine refuses a floor whose currency was never declared.
+    """
     assert _set(db, AUTHORITY, '["owner","manager"]').returncode == 0
     assert _set(db, FLOOR_PCT, "20").returncode == 0
     assert _set(db, FLOOR_MINOR, "1000000").returncode == 0
+    assert _set(db, FLOOR_CURRENCY, "IDR").returncode == 0
 
 
 def _evaluate(db: Path, request: DiscountRequest) -> Any:

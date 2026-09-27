@@ -16,6 +16,13 @@ How this module keeps those promises:
   names the roles that may grant a discount; ``commercial.margin_floor_pct`` and
   ``commercial.margin_floor_minor`` are the two halves of the floor. An unpublished value raises
   :class:`DiscountPolicyNotPublished` — the engine refuses, it never substitutes a default.
+* **The absolute floor carries a currency, and the booking decides which.** One number cannot say
+  what it is worth: ``commercial.margin_floor_minor`` is denominated in
+  ``commercial.margin_floor_currency``, and a booking in any other currency has the floor
+  converted through the published rates (:mod:`fx`) *before* the comparison. Without that step a
+  rupiah booking would be measured against a dollar number and clear a guard it never met. No
+  rate published for the pair refuses (:class:`fx.FxRateNotPublished`); so does a floor whose
+  currency was never declared.
 * **The margin basis is an input, not a guess.** The platform has no supplier-cost basis yet
   (``rate_versions.nightly_minor`` is the *selling* rate; ``contract_versions`` carries no amount),
   so a caller must hand over the revenue and the margin it is asking the engine to protect.
@@ -38,9 +45,11 @@ from typing import Any, Mapping, Optional, Sequence
 
 import approvals as AP
 import audit as AUDIT
+import fx as FX
 import policy_engine as PE
 from primitives import (
     DomainError,
+    Money,
     SystemClock,
     fingerprint,
     require_ref,
@@ -59,6 +68,8 @@ SUPPLIER_FUNDED, AGENCY_FUNDED = DISCOUNT_KINDS
 AUTHORITY_KEY = "commercial.discount.authority_roles"
 FLOOR_PCT_KEY = "commercial.margin_floor_pct"
 FLOOR_MINOR_KEY = "commercial.margin_floor_minor"
+#: The currency ``FLOOR_MINOR_KEY`` is denominated in — without it the number means nothing.
+FLOOR_CURRENCY_KEY = "commercial.margin_floor_currency"
 
 #: §21 / §56 capability names. The engine never performs either — a human does.
 OVERRIDE_ACTION = "margin_override.approve"
@@ -130,10 +141,24 @@ def override_role() -> str:
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class MarginFloor:
-    """§11's two guards together: a share of the booking and an absolute amount."""
+    """§11's two guards together: a share of the booking and an absolute amount in one currency.
+
+    ``minor`` is always expressed in :attr:`currency` — the currency of the booking it will
+    guard. When the published floor is denominated in something else, :attr:`base_minor` and
+    :attr:`base_currency` keep the number the owner actually published, so an override decision
+    shows both what was declared and what it became.
+    """
 
     pct: Decimal
     minor: int
+    currency: str
+    base_minor: Optional[int] = None
+    base_currency: Optional[str] = None
+
+    @property
+    def converted(self) -> bool:
+        """True when this floor was converted out of the currency it was declared in."""
+        return self.base_currency is not None
 
     def holds(self, *, margin_after_minor: int, revenue_minor: int) -> bool:
         """True when the margin left after the discount clears both guards."""
@@ -141,6 +166,17 @@ class MarginFloor:
             return False
         rate = (Decimal(margin_after_minor) / Decimal(revenue_minor)) * PERCENT_DENOMINATOR
         return rate >= self.pct
+
+    def to_dict(self) -> dict:
+        """JSON-safe view: the guards, and the published number behind them when converted."""
+        return {
+            "pct": str(self.pct),
+            "minor": self.minor,
+            "currency": self.currency,
+            "base_minor": self.base_minor,
+            "base_currency": self.base_currency,
+            "converted": self.converted,
+        }
 
 
 @dataclass(frozen=True)
@@ -178,6 +214,11 @@ class DiscountDecision:
     margin_if_applied_minor: Optional[int] = None
     floor_pct: Optional[Decimal] = None
     floor_minor: Optional[int] = None
+    #: The currency :attr:`floor_minor` is expressed in — the booking's own currency.
+    floor_currency: Optional[str] = None
+    #: The number the owner published, when the floor had to be converted to reach the booking.
+    floor_base_minor: Optional[int] = None
+    floor_base_currency: Optional[str] = None
 
     @property
     def is_applied(self) -> bool:
@@ -204,6 +245,9 @@ class DiscountDecision:
             "margin_if_applied_minor": self.margin_if_applied_minor,
             "floor_pct": None if self.floor_pct is None else str(self.floor_pct),
             "floor_minor": self.floor_minor,
+            "floor_currency": self.floor_currency,
+            "floor_base_minor": self.floor_base_minor,
+            "floor_base_currency": self.floor_base_currency,
             "authority_roles": list(self.authority_roles),
         }
 
@@ -251,11 +295,32 @@ class DiscountEngine:
         """Who may grant a discount, per ``commercial.discount.authority_roles``."""
         return self._resolve(AUTHORITY_KEY, at=at).as_roles()
 
-    def margin_floor(self, *, at: Any = None) -> MarginFloor:
-        """§11's floor: a percentage and an absolute amount, both published or neither used."""
+    def margin_floor(self, *, at: Any = None, currency: Optional[str] = None) -> MarginFloor:
+        """§11's floor, expressed in the currency of the booking it will guard.
+
+        ``commercial.margin_floor_minor`` is one number and one number carries no currency: it is
+        denominated in ``commercial.margin_floor_currency``. A booking in that same currency uses
+        the published number unchanged; a booking in any other currency has the floor converted
+        through ``commercial.fx.rates`` first, so the two sides of the comparison are always the
+        same currency. A floor whose currency was never declared refuses, and so does a pair with
+        no published rate — the engine will not read rupiah as dollars to make a comparison pass.
+        """
         pct = self._resolve(FLOOR_PCT_KEY, at=at).as_decimal()
         minor = self._resolve(FLOOR_MINOR_KEY, at=at).as_int()
-        return MarginFloor(pct=pct, minor=minor)
+        declared = Money.zero(self._resolve(FLOOR_CURRENCY_KEY, at=at).as_text()).currency
+        if currency is None:
+            return MarginFloor(pct=pct, minor=minor, currency=declared)
+        booking_currency = Money.zero(currency).currency
+        if booking_currency == declared:
+            return MarginFloor(pct=pct, minor=minor, currency=declared)
+        table = FX.FxTable.from_policy(self._resolve(FX.FX_RATES_KEY, at=at).as_json())
+        return MarginFloor(
+            pct=pct,
+            minor=table.convert_minor(minor, from_currency=declared, to_currency=booking_currency),
+            currency=booking_currency,
+            base_minor=minor,
+            base_currency=declared,
+        )
 
     def _resolve(self, key: str, *, at: Any = None) -> PE.PolicyValue:
         try:
@@ -272,7 +337,9 @@ class DiscountEngine:
         """Rule evaluation → authority → margin guard → audit. Never applies an overridden discount."""
         kind = self._kind_of(request)
         amount = self._amount_of(request)
-        currency = require_ref(request.currency, "currency")
+        # Normalised and validated through the money primitive: an unknown ISO-4217 code has to
+        # refuse here, before a floor is ever compared in it.
+        currency = Money.zero(require_ref(request.currency, "currency")).currency
         subject_ref = require_ref(request.subject_ref, "subject_ref")
         reason = require_text(request.reason, "reason")
         actor = require_ref(request.actor, "actor")
@@ -319,7 +386,7 @@ class DiscountEngine:
             )
 
         revenue, margin_before = self._basis_of(request)
-        floor = self.margin_floor(at=at)
+        floor = self.margin_floor(at=at, currency=currency)
         margin_after = margin_before - amount
 
         if floor.holds(margin_after_minor=margin_after, revenue_minor=revenue):
@@ -424,6 +491,9 @@ class DiscountEngine:
                 "amount_minor": decision.amount_minor,
                 "margin_after_minor": decision.margin_after_minor,
                 "floor_minor": decision.floor_minor,
+                "floor_currency": decision.floor_currency,
+                "floor_base_minor": decision.floor_base_minor,
+                "floor_base_currency": decision.floor_base_currency,
             },
             at=at,
         )
@@ -521,6 +591,9 @@ class DiscountEngine:
             margin_if_applied_minor=margin_if_applied,
             floor_pct=None if floor is None else floor.pct,
             floor_minor=None if floor is None else floor.minor,
+            floor_currency=None if floor is None else floor.currency,
+            floor_base_minor=None if floor is None else floor.base_minor,
+            floor_base_currency=None if floor is None else floor.base_currency,
         )
         self._append(
             action=action,
@@ -569,6 +642,7 @@ __all__ = [
     "DiscountPolicyNotPublished",
     "DiscountRequest",
     "DISCOUNT_KINDS",
+    "FLOOR_CURRENCY_KEY",
     "FLOOR_MINOR_KEY",
     "FLOOR_PCT_KEY",
     "MarginBasisRequired",

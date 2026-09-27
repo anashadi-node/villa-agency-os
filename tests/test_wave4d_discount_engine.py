@@ -26,6 +26,7 @@ import unittest
 
 import approvals as AP
 import discounts as DE
+import fx as FX
 import policy_engine as PE
 import reservation_kernel as RK
 from primitives import DomainError, FrozenClock, IdFactory, canonical_json
@@ -34,6 +35,8 @@ AGENCY = "agency_default"
 AUTHORITY_KEY = DE.AUTHORITY_KEY
 FLOOR_PCT_KEY = DE.FLOOR_PCT_KEY
 FLOOR_MINOR_KEY = DE.FLOOR_MINOR_KEY
+FLOOR_CURRENCY_KEY = DE.FLOOR_CURRENCY_KEY
+FX_RATES_KEY = FX.FX_RATES_KEY
 
 NOW = "2026-09-26T08:00:00+00:00"
 WINDOW_FROM = "2026-09-01"
@@ -53,7 +56,7 @@ class DiscountEngineHarness(unittest.TestCase):
     """One in-memory kernel per test, with policy published explicitly or deliberately withheld."""
 
     def build(self, *, at: str = NOW, seed: str = "w4d", authority=("owner", "manager"),
-              floor_pct="20", floor_minor=1_000_000):
+              floor_pct="20", floor_minor=1_000_000, floor_currency="IDR", fx_rates=None):
         kernel = RK.ReservationKernel.open(
             ":memory:",
             clock=FrozenClock.at(at),
@@ -71,6 +74,13 @@ class DiscountEngineHarness(unittest.TestCase):
             self.publish(FLOOR_PCT_KEY, str(floor_pct))
         if floor_minor is not None:
             self.publish(FLOOR_MINOR_KEY, str(floor_minor))
+        if floor_currency is not None:
+            # The harness books in IDR (REVENUE is 100,000,000 rupiah) and declares its floor in
+            # the same currency, so the floor is used as published. The conversion path has its
+            # own class below.
+            self.publish(FLOOR_CURRENCY_KEY, floor_currency)
+        if fx_rates is not None:
+            self.publish(FX_RATES_KEY, canonical_json(fx_rates))
         self.engine = DE.DiscountEngine(
             self.conn,
             clock=self.clock,
@@ -468,6 +478,136 @@ class TestDecisionsAreDeterministic(DiscountEngineHarness):
         first = self.engine.evaluate(self.request(amount=1_000_000))
         second = self.engine.evaluate(self.request(amount=1_000_000))
         self.assertNotEqual(first.discount_id, second.discount_id)
+
+
+# --------------------------------------------------------------------------------------
+# §11 — the absolute floor carries a currency, and the booking decides which
+# --------------------------------------------------------------------------------------
+class TestTheAbsoluteFloorCarriesACurrency(DiscountEngineHarness):
+    """One number cannot say what it is worth, so a booking in another currency converts it.
+
+    ``commercial.margin_floor_minor`` is denominated in ``commercial.margin_floor_currency``. A
+    booking in any other currency has the floor converted through ``commercial.fx.rates`` before
+    the §11 guard is applied — 400,000 IDR is not "above 2,500" in any sense that protects the
+    agency, and reading rupiah as dollars *passes* the guard instead of failing it.
+    """
+
+    USD_FLOOR_MINOR = 2_500            # the owner's published floor: USD 25.00
+    USD_IDR = "16250"                  # one USD is worth 16,250 IDR
+    IDR_FLOOR_MINOR = 406_250          # what that floor is worth in the booking's currency
+
+    def build_usd_floor(self, *, floor_pct="0", floor_minor=None):
+        """A USD floor with the rate published, so the conversion has somewhere to come from."""
+        return self.build(
+            floor_pct=floor_pct,
+            floor_minor=self.USD_FLOOR_MINOR if floor_minor is None else floor_minor,
+            floor_currency="USD",
+            fx_rates={"USD/IDR": self.USD_IDR},
+        )
+
+    def test_the_floor_is_read_in_the_currency_it_was_declared_in(self):
+        self.build_usd_floor()
+        floor = self.engine.margin_floor(currency="USD")
+        self.assertEqual(self.USD_FLOOR_MINOR, floor.minor)
+        self.assertEqual("USD", floor.currency)
+        self.assertFalse(floor.converted)
+
+    def test_a_booking_in_another_currency_has_the_floor_converted_into_it(self):
+        self.build_usd_floor()
+        floor = self.engine.margin_floor(currency="IDR")
+        self.assertEqual(self.IDR_FLOOR_MINOR, floor.minor)
+        self.assertEqual("IDR", floor.currency)
+        self.assertTrue(floor.converted)
+        self.assertEqual(self.USD_FLOOR_MINOR, floor.base_minor)   # the number the owner published
+        self.assertEqual("USD", floor.base_currency)
+
+    def test_a_rupiah_booking_is_measured_against_the_converted_floor_not_the_dollar_number(self):
+        """400,000 IDR left: above the published 2,500, below the 406,250 it is actually worth."""
+        self.build_usd_floor()
+        decision = self.engine.evaluate(self.request(
+            amount=600_000, revenue=10_000_000, margin_before=1_000_000))
+        self.assertEqual(DE.OUTCOME_REQUIRES_OVERRIDE, decision.outcome)
+        self.assertEqual("MARGIN_FLOOR_BREACHED", decision.code)
+        self.assertEqual(self.IDR_FLOOR_MINOR, decision.floor_minor)
+        self.assertEqual("IDR", decision.floor_currency)
+
+    def test_a_booking_that_clears_the_converted_floor_is_applied(self):
+        self.build_usd_floor()
+        decision = self.engine.evaluate(self.request(
+            amount=590_000, revenue=10_000_000, margin_before=1_000_000))   # leaves 410,000
+        self.assertEqual(DE.OUTCOME_APPLIED, decision.outcome)
+        self.assertEqual(self.IDR_FLOOR_MINOR, decision.floor_minor)
+
+    def test_the_floor_is_never_rounded_down_when_it_is_converted(self):
+        """25.01 USD at 16,250.5 is 406,425.005 IDR: a floor of 406,425 would be weaker."""
+        self.build_usd_floor(floor_minor=2_501)
+        self.publish(FX_RATES_KEY, canonical_json({"USD/IDR": "16250.5"}))
+        refused = self.engine.evaluate(self.request(
+            amount=593_575, revenue=10_000_000, margin_before=1_000_000))   # leaves 406,425
+        self.assertEqual(DE.OUTCOME_REQUIRES_OVERRIDE, refused.outcome)
+        self.assertEqual(406_426, refused.floor_minor)
+        allowed = self.engine.evaluate(self.request(
+            amount=593_574, revenue=10_000_000, margin_before=1_000_000))   # leaves 406,426
+        self.assertEqual(DE.OUTCOME_APPLIED, allowed.outcome)
+
+    def test_an_unpublished_rates_key_refuses_rather_than_reading_rupiah_as_dollars(self):
+        self.build(floor_pct="0", floor_minor=self.USD_FLOOR_MINOR, floor_currency="USD")
+        with self.assertRaises(DE.DiscountPolicyNotPublished) as caught:
+            self.engine.evaluate(self.request(
+                amount=600_000, revenue=10_000_000, margin_before=1_000_000))
+        self.assertEqual(FX_RATES_KEY, caught.exception.details["policy_key"])
+
+    def test_a_published_table_without_the_pair_refuses_and_names_what_was_published(self):
+        self.build(floor_pct="0", floor_minor=self.USD_FLOOR_MINOR, floor_currency="USD",
+                   fx_rates={"USD/EUR": "0.92"})
+        with self.assertRaises(FX.FxRateNotPublished) as caught:
+            self.engine.evaluate(self.request(
+                amount=600_000, revenue=10_000_000, margin_before=1_000_000))
+        self.assertEqual("FX_RATE_NOT_PUBLISHED", caught.exception.code)
+        self.assertEqual(("USD/EUR",), tuple(caught.exception.details["published"]))
+
+    def test_a_floor_whose_currency_was_never_declared_refuses_rather_than_assuming_one(self):
+        self.build(floor_pct="0", floor_minor=2_500, floor_currency=None)
+        with self.assertRaises(DE.DiscountPolicyNotPublished) as caught:
+            self.engine.evaluate(self.request(
+                amount=600_000, revenue=10_000_000, margin_before=1_000_000))
+        self.assertEqual(FLOOR_CURRENCY_KEY, caught.exception.details["policy_key"])
+
+    def test_a_booking_in_the_declared_currency_needs_no_rate_at_all(self):
+        self.build(floor_pct="0", floor_minor=400_000, floor_currency="IDR")   # nothing published
+        decision = self.engine.evaluate(self.request(
+            amount=600_000, revenue=10_000_000, margin_before=1_000_000))
+        self.assertEqual(DE.OUTCOME_APPLIED, decision.outcome)
+        self.assertEqual(400_000, decision.floor_minor)
+        self.assertEqual("IDR", decision.floor_currency)
+        self.assertIsNone(decision.floor_base_currency)     # nothing was converted
+
+    def test_the_booking_currency_is_normalised_through_the_money_primitive(self):
+        self.build_usd_floor()
+        decision = self.engine.evaluate(self.request(
+            currency="idr", amount=590_000, revenue=10_000_000, margin_before=1_000_000))
+        self.assertEqual("IDR", decision.currency)
+        self.assertEqual(self.IDR_FLOOR_MINOR, decision.floor_minor)
+
+    def test_a_booking_in_a_currency_the_platform_does_not_hold_refuses(self):
+        self.build_usd_floor()
+        with self.assertRaises(DomainError):
+            self.engine.evaluate(self.request(
+                currency="XYZ", amount=590_000, revenue=10_000_000, margin_before=1_000_000))
+
+    def test_the_audit_row_records_both_the_published_number_and_what_it_became(self):
+        self.build_usd_floor()
+        decision = self.engine.evaluate(self.request(
+            amount=600_000, revenue=10_000_000, margin_before=1_000_000))
+        row = self.conn.execute(
+            "SELECT after_state FROM audit_events WHERE entity_id = ? AND entity_type = ?",
+            (decision.discount_id, DE.ENTITY_TYPE),
+        ).fetchone()
+        payload = json.loads(row[0])
+        self.assertEqual(self.IDR_FLOOR_MINOR, payload["floor_minor"])
+        self.assertEqual("IDR", payload["floor_currency"])
+        self.assertEqual(self.USD_FLOOR_MINOR, payload["floor_base_minor"])
+        self.assertEqual("USD", payload["floor_base_currency"])
 
 
 if __name__ == "__main__":
