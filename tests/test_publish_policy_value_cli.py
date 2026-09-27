@@ -9,7 +9,6 @@ engine obeys what was set, and only what was set.
 
 from __future__ import annotations
 
-import datetime
 import os
 import subprocess
 import sys
@@ -33,8 +32,11 @@ FLOOR_PCT = "commercial.margin_floor_pct"
 FLOOR_MINOR = "commercial.margin_floor_minor"
 
 #: A window that is open now, so the assertions do not age.
-TODAY = datetime.date.today().isoformat()
+#: Derived from the frozen clock, never from the wall clock: a revision published "today"
+#: by the wall clock stops covering the resolver's frozen date the moment the calendar
+#: rolls over, and the test starts failing on its own — which is how it was found.
 NOW = "2026-09-26T09:00:00+00:00"
+TODAY = NOW[:10]
 DOC = "Keputusan owner — uji kondisi"
 
 
@@ -272,3 +274,26 @@ def test_the_values_come_from_policy_and_not_from_the_module(db: Path) -> None:
     finally:
         resolver.conn.close()
     assert _evaluate(db, _request()).code == "MARGIN_FLOOR_BREACHED"
+
+
+def _load_cli():
+    """Import the CLI so its pure helpers can be exercised without a subprocess."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("publish_policy_value", SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_an_empty_villa_db_means_unset(monkeypatch) -> None:
+    """Path("") is ".", so an empty variable must not point every read at the cwd."""
+    monkeypatch.setenv("VILLA_DB", "")
+    assert _load_cli()._db_path() == Path(_load_cli().DEFAULT_DB)
+
+
+def test_a_named_villa_db_is_honoured(monkeypatch, tmp_path) -> None:
+    target = tmp_path / "other.db"
+    monkeypatch.setenv("VILLA_DB", str(target))
+    assert _load_cli()._db_path() == target

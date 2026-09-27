@@ -1,7 +1,15 @@
 SHELL := /bin/bash
 PYTHON ?= python3
 
-.PHONY: help test verify syntax lint secret-scan unsafe-scan check schema-parity pg-twin anchor-publish anchor-verify allowance-status policy-status
+# `show`/`status` fall back to data/villa.db when VILLA_DB is unset, so a make variable would
+# be silently ignored: `make policy-status VILLA_DB=other.db` would report on the default file
+# while looking like it reported on other.db. Export it — but only when it is set, because an
+# empty value would override the default with "" and every path would resolve to ".".
+ifneq ($(strip $(VILLA_DB)),)
+export VILLA_DB
+endif
+
+.PHONY: help test verify syntax lint secret-scan unsafe-scan check schema-parity pg-twin anchor-publish anchor-verify allowance-status policy-status migrate-check
 
 help:
 	@echo "make test          - run the full pytest suite"
@@ -18,6 +26,8 @@ help:
 	@echo "                     needs --tools and --approved-by typed out (see README)"
 	@echo "make policy-status - every policy key, and whether an owner has decided it yet (VILLA_DB)"
 	@echo "                     setting a value is an owner act too: NOT a make target (see README)"
+	@echo "make migrate-check - list schema migrations still pending for VILLA_DB (writes nothing)"
+	@echo "                     applying one is an ops act: NOT a make target (see README)"
 	@echo "make check         - syntax + test + secret scan + unsafe scan + schema parity (pre-deploy gate)"
 
 test:
@@ -60,4 +70,8 @@ allowance-status:
 # This reports which keys are still waiting; setting one is an owner act, not a target.
 policy-status:
 	$(PYTHON) scripts/publish_policy_value.py show
+
+# Read-only: applying a migration writes to a database, so it stays an explicit command.
+migrate-check:
+	$(PYTHON) scripts/apply_migrations.py --dry-run
 

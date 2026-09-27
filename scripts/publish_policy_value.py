@@ -66,7 +66,9 @@ _FALSE = ("0", "false", "no", "off")
 
 
 def _db_path() -> Path:
-    return Path(os.environ.get("VILLA_DB", DEFAULT_DB))
+    # An empty VILLA_DB must mean "unset": Path("") is ".", so a stray empty variable would
+    # silently point every read at the working directory instead of the default database.
+    return Path(os.environ.get("VILLA_DB", "").strip() or DEFAULT_DB)
 
 
 def _resolver(conn, agency_id: str) -> PolicyResolver:
