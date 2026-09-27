@@ -70,6 +70,8 @@ The owner asked for the conversion step and for Yogyakarta bookings to be able t
   The float refusal is a real guard, not defence in depth.
 - **This does not replace a supplier cost basis.** The caller still states revenue and margin
   (ADR-0026 open item); the currency step only makes the comparison honest.
-- **One more key waits on the owner:** the catalogue now has seven unpublished keys rather than six,
-  and `commercial.fx.rates` is one of them. `make policy-status` lists them; the engines that read
-  them keep refusing until a decision is published.
+- **One more key waited on the owner:** at the time of writing the catalogue had seven unpublished
+  keys rather than six, and `commercial.fx.rates` was one of them. **ADR-0031 publishes it** (and
+  adds the reader's limit `commercial.fx.max_age_hours`), so the count is six again. `make
+  policy-status` lists the current set; the engines that read them keep refusing until a decision
+  is published.

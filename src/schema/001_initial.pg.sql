@@ -1948,6 +1948,8 @@ INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role,
 
 INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('commercial.fx.rates', 'COMMERCIAL', 'JSON', 'MEDIUM', 'owner', '§11', 'Published FX rates as {"BASE/QUOTE": "rate"}: one unit of BASE is worth this many QUOTE. Used to express the absolute margin floor in the currency of the booking. An unpublished pair refuses — the engine never assumes parity.', '2026-09-27T00:00:00+00:00');
 
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('commercial.fx.max_age_hours', 'COMMERCIAL', 'HOURS', 'MEDIUM', 'owner', '§11', 'How old the effective revision of commercial.fx.rates may be before a conversion refuses. The rate is a day''s price, so the limit is applied in whole days and the tighter day wins (48 h refuses from the third day). An unpublished limit refuses every conversion.', '2026-09-28T00:00:00+00:00');
+
 INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('finance.approval.payment_thresholds_minor', 'FINANCE', 'JSON', 'HIGH', 'owner', '§16', 'Payment amounts in minor units that require approval at each level.', '2026-09-26T00:00:00+00:00');
 
 INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('finance.approval.dual_control_min_approvals', 'FINANCE', 'COUNT', 'HIGH', 'owner', '§16', 'Approvals required for a subject on the dual-control list.', '2026-09-26T00:00:00+00:00');

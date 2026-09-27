@@ -65,7 +65,8 @@ place in it.
    never invented.
 
 5. **Eight catalogue keys were left unpublished when this was written; six remain as of
-   2026-09-27, the three discount values having since been published (ADR-0029).** `retention.records.retention_days_by_class`
+   2026-09-28** (the three discount values were published in ADR-0029, and the two FX keys in
+   ADR-0031 — one published, one added, so the count is unchanged from ADR-0030). `retention.records.retention_days_by_class`
    (the spec itself leaves retention periods OPEN in §49), plus the discount authority, margin
    floor, payment thresholds, booking financial gates, hold reminders, reconfirmation freshness
    and incident escalation. The catalogue names them so they can be decided, and resolution
@@ -103,7 +104,11 @@ place in it.
   `owner`/`finance`. Reconciling them changes approval behaviour, so it is not done here.
 - Open: the transactional outbox and the full twelve-role RBAC remain WAVE 1 foundations not yet
   built.
-- Open: the unpublished catalogue keys — six as of 2026-09-27 — need owner decisions before the finance and availability
-  gates that depend on them can be enforced rather than refused.
+- Open: the unpublished catalogue keys — six as of 2026-09-28 (ADR-0031; the current set is
+  `availability.hold.reminder_minutes`, `availability.reconfirmation.freshness_hours`,
+  `finance.approval.payment_thresholds_minor`, `finance.booking.financial_gates`,
+  `operations.incident.escalation_minutes_by_severity`,
+  `retention.records.retention_days_by_class`) — need owner decisions before the finance and
+  availability gates that depend on them can be enforced rather than refused.
 - Open: only one consumer is wired. The remaining constants (`approvals`, `gates`) are pinned by
   the drift guard but still read from code until their callers are migrated.

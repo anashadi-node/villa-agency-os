@@ -15,6 +15,10 @@ someone published. Bali sells in USD, Yogyakarta may contract in IDR, so both ca
   prevent, and one that *passes* every absolute floor instead of failing it.
 * **It never uses floats.** ``primitives.decimal_of`` rejects them, so a rate written ``0.1``
   cannot arrive as the binary approximation that breaks money arithmetic.
+* **It never uses a rate nobody renewed.** A published rate is a *day's* price, not a
+  constant: :func:`require_fresh` refuses one older than ``commercial.fx.max_age_hours``, so a
+  feed that stopped updating stops converting instead of quietly turning a stale number into a
+  margin. The limit is a value the owner publishes, never a default here.
 * **It never rounds a minimum down.** The default rounding is ``ROUND_CEILING``: the callers
   here convert *minimums*, and a minimum rounded down would hand out margin the owner never
   allowed. A caller converting an amount merely to display it may pass ``ROUND_NEAREST``.
@@ -30,14 +34,20 @@ other direction keeps working without a second row that can drift out of step.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, datetime
 from decimal import ROUND_CEILING, ROUND_HALF_EVEN, Decimal
 from typing import Any, Mapping
 
-from primitives import DomainError, Money, decimal_of, decimal_to_str
+from primitives import DomainError, Money, decimal_of, decimal_to_str, parse_iso_date
 
 #: §16 policy key holding the published rates. JSON: ``{"USD/IDR": "16250"}`` — the value is
 #: read, never written, here.
 FX_RATES_KEY = "commercial.fx.rates"
+
+#: §16 policy key holding how old a published rate may be before a conversion refuses. The
+#: store has no DAYS type, and the owner states the limit in hours (2 days = 48), so the unit
+#: here is hours and the code below reduces it to whole days — see :func:`require_fresh`.
+FX_MAX_AGE_KEY = "commercial.fx.max_age_hours"
 
 #: Separator inside a pair key. ``"USD/IDR"`` reads "one USD is worth this many IDR".
 PAIR_SEPARATOR = "/"
@@ -70,6 +80,12 @@ class FxRateNotPublished(FxError):
     """No rate for this pair exists — refuse, do not assume parity."""
 
     code = "FX_RATE_NOT_PUBLISHED"
+
+
+class FxRateStale(FxError):
+    """The rate is older than the published limit — refuse, do not convert with it."""
+
+    code = "FX_RATE_STALE"
 
 
 # --------------------------------------------------------------------------- #
@@ -154,6 +170,76 @@ def parse_rates(payload: Any) -> dict[str, Decimal]:
             raise FxRateInvalid("two published keys name the same pair", pair=key)
         rates[key] = parse_rate(raw_rate, pair=key)
     return rates
+
+
+def as_day(value: Any) -> date | None:
+    """Read a calendar day out of a date, a datetime, or an ISO date string.
+
+    ``None`` stays ``None``: "no date" is a state the caller distinguishes from "a date",
+    and inventing today's date for it would make an undated rate look fresh.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str) and value.strip():
+        return parse_iso_date(value.strip()[:10])
+    raise FxRateInvalid(
+        "a rate date must be a date, a datetime, or an ISO date string",
+        got=type(value).__name__,
+    )
+
+
+def require_fresh(published_from: Any, *, today: Any, max_age_hours: int, pair: str = "") -> int:
+    """Refuse a rate whose revision is older than ``max_age_hours``; return its age in days.
+
+    **A rate is dated by its revision, and a revision is dated by a day** (``effective_from``
+    is a calendar date — the store refuses a timestamp). So a limit stated in hours is applied
+    in whole days, and where the two disagree the *tighter* day wins: 48 h refuses from the
+    third day, 36 h also refuses from the second. Sub-day precision is not lost by accident —
+    it cannot be honoured by a value that only carries a date, and pretending otherwise would
+    let a rate look fresher than its own record says.
+
+    ``today`` is the day the decision is being made, and ``published_from`` the day the rate
+    took effect. A rate that starts in the future refuses: the platform's clock and the store
+    disagree, and neither of them is a rate.
+    """
+    started = as_day(published_from)
+    if started is None:
+        raise FxRateInvalid(
+            "a rate with no date cannot be judged fresh, so it is not used",
+            pair=pair,
+            policy_key=FX_MAX_AGE_KEY,
+        )
+    day = as_day(today)
+    if day is None:
+        raise FxRateInvalid(
+            "freshness needs the day the decision is made", pair=pair, policy_key=FX_MAX_AGE_KEY
+        )
+    age_days = (day - started).days
+    if age_days < 0:
+        raise FxRateInvalid(
+            f"the rate for {pair or 'the published pairs'} takes effect {started} — in the "
+            f"future, not on {day}",
+            pair=pair,
+            effective_from=started.isoformat(),
+            today=day.isoformat(),
+        )
+    if age_days * 24 > max_age_hours:
+        raise FxRateStale(
+            f"the rate for {pair or 'the published pairs'} has been in force {age_days} days "
+            f"({started}), and the published limit is {max_age_hours} h — refresh it instead of "
+            "converting with a rate nobody renewed",
+            pair=pair,
+            effective_from=started.isoformat(),
+            today=day.isoformat(),
+            age_days=age_days,
+            max_age_hours=max_age_hours,
+            policy_key=FX_MAX_AGE_KEY,
+        )
+    return age_days
 
 
 # --------------------------------------------------------------------------- #
@@ -271,18 +357,22 @@ class FxTable:
 
 
 __all__ = [
+    "FX_MAX_AGE_KEY",
     "FX_RATES_KEY",
     "FxError",
     "FxRate",
     "FxRateInvalid",
     "FxRateNotPublished",
+    "FxRateStale",
     "FxTable",
     "PAIR_SEPARATOR",
     "ROUNDINGS",
     "ROUND_NEAREST",
     "ROUND_UP",
+    "as_day",
     "normalise_currency",
     "pair_key",
     "parse_rate",
     "parse_rates",
+    "require_fresh",
 ]

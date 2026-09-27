@@ -304,6 +304,8 @@ class DiscountEngine:
         through ``commercial.fx.rates`` first, so the two sides of the comparison are always the
         same currency. A floor whose currency was never declared refuses, and so does a pair with
         no published rate — the engine will not read rupiah as dollars to make a comparison pass.
+        A rate older than ``commercial.fx.max_age_hours`` refuses too: the rate is a day's price,
+        and the floor it sets has to be the owner's current one.
         """
         pct = self._resolve(FLOOR_PCT_KEY, at=at).as_decimal()
         minor = self._resolve(FLOOR_MINOR_KEY, at=at).as_int()
@@ -313,7 +315,18 @@ class DiscountEngine:
         booking_currency = Money.zero(currency).currency
         if booking_currency == declared:
             return MarginFloor(pct=pct, minor=minor, currency=declared)
-        table = FX.FxTable.from_policy(self._resolve(FX.FX_RATES_KEY, at=at).as_json())
+        rates = self._resolve(FX.FX_RATES_KEY, at=at)
+        # A rate is a day's price, and this one is being used to set a *minimum*: converting the
+        # floor with a rate nobody renewed would let an old number pass a guard the owner meant
+        # to be current. The limit is published, not defaulted here, and an unpublished one
+        # refuses through _resolve — a conversion that cannot be judged fresh does not happen.
+        FX.require_fresh(
+            rates.effective_from,
+            today=at if at is not None else self._clock.now(),
+            max_age_hours=self._resolve(FX.FX_MAX_AGE_KEY, at=at).as_int(),
+            pair=FX.pair_key(declared, booking_currency),
+        )
+        table = FX.FxTable.from_policy(rates.as_json())
         return MarginFloor(
             pct=pct,
             minor=table.convert_minor(minor, from_currency=declared, to_currency=booking_currency),

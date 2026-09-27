@@ -48,5 +48,6 @@ absolute floor as an integer count of minor units — USD 25 is `2500`, not `25`
      `commercial.margin_floor_currency`, `commercial.fx.rates` and `src/fx.py`.
   2. Six catalogue keys remained unpublished, so the finance, availability and incident gates that
      read them still refuse rather than run on an assumed value. **ADR-0030 adds a seventh**
-     (`commercial.fx.rates`), because converting the floor needs a published rate. The count is
+     (`commercial.fx.rates`), because converting the floor needs a published rate; **ADR-0031
+     publishes it and the limit beside it, leaving six again.** The count is
      runtime state: `make policy-status` reports it, and it is authoritative over this sentence.

@@ -175,12 +175,28 @@ VILLA_DB=data/villa.db python3 scripts/publish_policy_value.py set \
     --key commercial.margin_floor_currency --value USD \
     --source-doc-ref "Keputusan owner 2026-09-27 — harga villa Bali dalam USD" --approved-by owner_anas
 
-# Kurs untuk mengonversi floor ke mata uang booking. Format: {"BASE/QUOTE": "rate"} —
-# satu unit BASE bernilai sekian QUOTE. Selama belum terbit, booking di luar mata uang
-# floor MENOLAK (FX_RATE_NOT_PUBLISHED), bukan memakai kurs karangan:
+# Kurs untuk mengonversi floor ke mata uang booking. Format: {"BASE/QUOTE": "rate"} — satu
+# unit BASE bernilai sekian QUOTE. Selama belum terbit, booking di luar mata uang floor
+# MENOLAK (FX_RATE_NOT_PUBLISHED), bukan memakai kurs karangan.
+#
+# Kurs TIDAK diketik tangan: ia harga nyata satu hari, dan harga yang tak pernah diperbarui
+# tetap "terlihat benar" sambil perlahan menggeser lantai margin. Ambil dari provider, dan
+# sebutkan provider itu di dokumen asalnya (ADR-0031):
+VILLA_DB=data/villa.db python3 scripts/refresh_fx_rate.py --approved-by owner_anas
+
+# Batas umur kurs: berapa lama satu revisi kurs boleh dipakai sebelum konversi MENOLAK.
+# Keputusan owner: dua hari = 48 jam. Tipe nilainya HOURS; batas diterapkan dalam hari utuh
+# (revisi bertanggal hari, bukan jam) dan hari yang lebih ketat yang menang. Tanpa key ini
+# SEMUA konversi menolak — engine tidak mengarang batas:
 VILLA_DB=data/villa.db python3 scripts/publish_policy_value.py set \
-    --key commercial.fx.rates --value '{"USD/IDR": "16250"}' \
-    --source-doc-ref "Keputusan owner 2026-09-27 — kurs acuan USD/IDR" --approved-by owner_anas
+    --key commercial.fx.max_age_hours --value 48 \
+    --source-doc-ref "Keputusan owner 2026-09-28 — batas umur kurs 2 hari" --approved-by owner_anas
+
+# Tanggal efektif selalu memakai jam PLATFORM (UTC), bukan jam lokal WIB. Di sebelah timur
+# UTC hari lokal mulai lebih dulu: revisi bertanggal lokal lahir "besok" bagi platform —
+# hari ini ia tak terlihat (konversi menolak), dan store menolak mundur untuk mengoreksinya.
+# Tugas harian menjalankannya sekali sehari; menjalankan dua kali di hari yang sama hanya
+# melaporkan UNCHANGED tanpa menerbitkan revisi baru.
 
 # Gerbang go-live: menolak jalan bila keputusan bisnis BLOCKING masih OPEN,
 # anker basi, ada data demo di produksi, atau rantai audit tidak utuh

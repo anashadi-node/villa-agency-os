@@ -30,6 +30,29 @@ permintaannya sendiri**, dan **aksi uang/legal butuh dua penyetuju berbeda**
    terlambat, insiden terbuka.
 3. Bersihkan **antrean approval** (bagian 5) dan **rekonsiliasi** (bagian 6) —
    dua antrean ini yang paling mahal kalau menumpuk.
+4. **Perbarui kurs harian** (sekali sehari, ADR-0031):
+
+   ```bash
+   VILLA_DB=data/villa.db python3 scripts/refresh_fx_rate.py --approved-by owner_anas
+   ```
+
+   Kurs adalah harga satu hari, dan lantai margin §11 dikonversi dengannya untuk
+   booking di luar mata uang floor (Bali USD, Yogyakarta IDR). Lewat **dua hari**
+   (batas owner, `commercial.fx.max_age_hours` = 48), konversi **MENOLAK**
+   (`FX_RATE_STALE`) — fail-closed, bukan memakai kurs basi.
+
+   Yang perlu dibaca dari keluarannya:
+   * `FETCHED` — angka dan waktu kutipan dari provider. Kalau provider sendiri
+     melaporkan kutipan lebih tua dari `--max-feed-age-hours`, alat ini menolak
+     menerbitkan: feed yang mati tidak boleh menjadi kurs.
+   * `UNCHANGED` — pasar belum bergerak hari ini; tidak ada revisi baru. Normal.
+   * `REFUSED` — payload dicurigai (lonjakan > `--max-move-pct`, rate bukan
+     desimal eksak, base salah, atau kutipan bertanggal masa depan). **Tidak ada
+     yang tertulis**; periksa provider sebelum mengulang, jangan naikkan batasnya.
+
+   Jangan pernah memberi `--effective-from` bertanggal lokal WIB. Revisi bertanggal
+   lokal lahir "besok" bagi platform (UTC): hari ini tak terlihat, dan store menolak
+   mundur untuk mengoreksinya.
 
 ### Sepanjang hari
 

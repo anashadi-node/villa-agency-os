@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from datetime import date, timedelta
 
 import approvals as AP
 import discounts as DE
@@ -37,6 +38,7 @@ FLOOR_PCT_KEY = DE.FLOOR_PCT_KEY
 FLOOR_MINOR_KEY = DE.FLOOR_MINOR_KEY
 FLOOR_CURRENCY_KEY = DE.FLOOR_CURRENCY_KEY
 FX_RATES_KEY = FX.FX_RATES_KEY
+FX_MAX_AGE_KEY = FX.FX_MAX_AGE_KEY
 
 NOW = "2026-09-26T08:00:00+00:00"
 WINDOW_FROM = "2026-09-01"
@@ -56,7 +58,8 @@ class DiscountEngineHarness(unittest.TestCase):
     """One in-memory kernel per test, with policy published explicitly or deliberately withheld."""
 
     def build(self, *, at: str = NOW, seed: str = "w4d", authority=("owner", "manager"),
-              floor_pct="20", floor_minor=1_000_000, floor_currency="IDR", fx_rates=None):
+              floor_pct="20", floor_minor=1_000_000, floor_currency="IDR", fx_rates=None,
+              fx_from: str | None = None, max_age_hours: str | None = "48"):
         kernel = RK.ReservationKernel.open(
             ":memory:",
             clock=FrozenClock.at(at),
@@ -80,7 +83,14 @@ class DiscountEngineHarness(unittest.TestCase):
             # own class below.
             self.publish(FLOOR_CURRENCY_KEY, floor_currency)
         if fx_rates is not None:
-            self.publish(FX_RATES_KEY, canonical_json(fx_rates))
+            self.publish(FX_RATES_KEY, canonical_json(fx_rates),
+                          effective_from=fx_from or at[:10])
+            # A rate is only usable when the owner's age limit is published beside it
+            # (`src/fx.py` refuses a conversion it cannot date), so a test that publishes a rate
+            # publishes the limit too. `max_age_hours=None` is how a test withholds it — the
+            # class below pins what happens then.
+            if max_age_hours is not None:
+                self.publish(FX_MAX_AGE_KEY, max_age_hours)
         self.engine = DE.DiscountEngine(
             self.conn,
             clock=self.clock,
@@ -89,11 +99,11 @@ class DiscountEngineHarness(unittest.TestCase):
         )
         return self.engine
 
-    def publish(self, key: str, value: str) -> None:
+    def publish(self, key: str, value: str, *, effective_from: str = WINDOW_FROM) -> None:
         self.resolver.publish(
             key,
             value,
-            effective_from=WINDOW_FROM,
+            effective_from=effective_from,
             effective_to=WINDOW_TO,
             source_doc_ref=SOURCE,
             approved_by=OWNER,
@@ -492,6 +502,7 @@ class TestTheAbsoluteFloorCarriesACurrency(DiscountEngineHarness):
     agency, and reading rupiah as dollars *passes* the guard instead of failing it.
     """
 
+    RATE_DAY = NOW[:10]                # a published rate is dated by its day, not by the window
     USD_FLOOR_MINOR = 2_500            # the owner's published floor: USD 25.00
     USD_IDR = "16250"                  # one USD is worth 16,250 IDR
     IDR_FLOOR_MINOR = 406_250          # what that floor is worth in the booking's currency
@@ -503,6 +514,7 @@ class TestTheAbsoluteFloorCarriesACurrency(DiscountEngineHarness):
             floor_minor=self.USD_FLOOR_MINOR if floor_minor is None else floor_minor,
             floor_currency="USD",
             fx_rates={"USD/IDR": self.USD_IDR},
+            fx_from=self.RATE_DAY,
         )
 
     def test_the_floor_is_read_in_the_currency_it_was_declared_in(self):
@@ -541,7 +553,7 @@ class TestTheAbsoluteFloorCarriesACurrency(DiscountEngineHarness):
     def test_the_floor_is_never_rounded_down_when_it_is_converted(self):
         """25.01 USD at 16,250.5 is 406,425.005 IDR: a floor of 406,425 would be weaker."""
         self.build_usd_floor(floor_minor=2_501)
-        self.publish(FX_RATES_KEY, canonical_json({"USD/IDR": "16250.5"}))
+        self.publish(FX_RATES_KEY, canonical_json({"USD/IDR": "16250.5"}), effective_from=self.RATE_DAY)
         refused = self.engine.evaluate(self.request(
             amount=593_575, revenue=10_000_000, margin_before=1_000_000))   # leaves 406,425
         self.assertEqual(DE.OUTCOME_REQUIRES_OVERRIDE, refused.outcome)
@@ -608,6 +620,101 @@ class TestTheAbsoluteFloorCarriesACurrency(DiscountEngineHarness):
         self.assertEqual("IDR", payload["floor_currency"])
         self.assertEqual(self.USD_FLOOR_MINOR, payload["floor_base_minor"])
         self.assertEqual("USD", payload["floor_base_currency"])
+
+
+# --------------------------------------------------------------------------------------
+# §11 — a rate has a birthday, and past the owner's limit it is not a rate any more
+# --------------------------------------------------------------------------------------
+class TestTheRateHasAnAgeLimit(DiscountEngineHarness):
+    """A rate is one day's price, and the floor it sets is only as true as the day it came from.
+
+    ``commercial.fx.max_age_hours`` is the owner's limit — two days. Without it the comparison
+    would still *look* right: the floor would simply be measured at a rate no market has quoted
+    since, and a stale rate that drifts far enough turns a breach into a pass. The limit is
+    applied in whole days, because a revision is dated by a day, and where the two disagree the
+    tighter day wins.
+    """
+
+    USD_FLOOR_MINOR = 2_500            # USD 25.00, the owner's published floor
+    USD_IDR = "17897.896326"           # the rate the provider quoted for 2026-09-27
+    IDR_FLOOR_MINOR = 447_448          # what the floor is worth at that rate, rounded up
+    TODAY = NOW[:10]
+
+    def days_before(self, days: int) -> str:
+        return (date.fromisoformat(self.TODAY) - timedelta(days=days)).isoformat()
+
+    def build_usd_floor(self, *, rate_from: str | None = None, limit: str | None = "48"):
+        """A USD floor with a rate dated ``rate_from`` and the owner's limit published."""
+        return self.build(
+            floor_pct="0",
+            floor_minor=self.USD_FLOOR_MINOR,
+            floor_currency="USD",
+            fx_rates={"USD/IDR": self.USD_IDR},
+            fx_from=rate_from or self.TODAY,
+            max_age_hours=limit,
+        )
+
+    def test_a_rate_published_today_converts_the_floor(self):
+        self.build_usd_floor()
+        floor = self.engine.margin_floor(currency="IDR")
+        self.assertEqual(self.IDR_FLOOR_MINOR, floor.minor)
+        self.assertTrue(floor.converted)
+
+    def test_a_rate_from_yesterday_still_converts(self):
+        self.build_usd_floor(rate_from=self.days_before(1))
+        self.assertEqual(self.IDR_FLOOR_MINOR, self.engine.margin_floor(currency="IDR").minor)
+
+    def test_a_rate_two_days_old_still_converts(self):
+        """Two days is the limit, not the first refusal: 48 h refuses from the *third* day."""
+        self.build_usd_floor(rate_from=self.days_before(2))
+        self.assertEqual(self.IDR_FLOOR_MINOR, self.engine.margin_floor(currency="IDR").minor)
+
+    def test_a_rate_three_days_old_refuses_the_conversion(self):
+        self.build_usd_floor(rate_from=self.days_before(3))
+        with self.assertRaises(FX.FxRateStale) as caught:
+            self.engine.margin_floor(currency="IDR")
+        self.assertEqual("FX_RATE_STALE", caught.exception.code)
+        self.assertEqual("USD/IDR", caught.exception.details["pair"])
+        self.assertEqual(3, caught.exception.details["age_days"])
+        self.assertEqual(48, caught.exception.details["max_age_hours"])
+        self.assertEqual(FX_MAX_AGE_KEY, caught.exception.details["policy_key"])
+
+    def test_a_limit_that_is_not_whole_days_takes_the_tighter_day(self):
+        """36 h cannot be honoured by a rate dated to the day, so it refuses from the second."""
+        self.build_usd_floor(rate_from=self.days_before(2), limit="36")
+        with self.assertRaises(FX.FxRateStale):
+            self.engine.margin_floor(currency="IDR")
+
+    def test_the_limit_is_read_from_policy_and_not_from_this_module(self):
+        """The same rate and the same day: only the published limit changes the answer."""
+        self.build_usd_floor(rate_from=self.days_before(2), limit="24")
+        with self.assertRaises(FX.FxRateStale):
+            self.engine.margin_floor(currency="IDR")
+        self.build_usd_floor(rate_from=self.days_before(3), limit="96")     # four days
+        self.assertEqual(self.IDR_FLOOR_MINOR, self.engine.margin_floor(currency="IDR").minor)
+
+    def test_an_unpublished_limit_refuses_rather_than_assuming_one(self):
+        self.build_usd_floor(limit=None)
+        with self.assertRaises(DE.DiscountPolicyNotPublished) as caught:
+            self.engine.margin_floor(currency="IDR")
+        self.assertEqual(FX_MAX_AGE_KEY, caught.exception.details["policy_key"])
+
+    def test_a_booking_in_the_declared_currency_never_asks_for_a_rate_or_a_limit(self):
+        """The limit guards *conversions*. A USD booking against a USD floor has nothing to date."""
+        self.build(floor_pct="0", floor_minor=self.USD_FLOOR_MINOR, floor_currency="USD",
+                   max_age_hours=None)                                          # no rate, no limit
+        decision = self.engine.evaluate(self.request(
+            currency="USD", amount=600, revenue=10_000, margin_before=8_000))   # leaves 7,400
+        self.assertEqual(DE.OUTCOME_APPLIED, decision.outcome)
+        self.assertEqual(self.USD_FLOOR_MINOR, decision.floor_minor)
+        self.assertIsNone(decision.floor_base_currency)
+
+    def test_a_stale_rate_refuses_the_booking_that_needed_it(self):
+        """End to end: the guest's discount is not applied on a rate nobody renewed."""
+        self.build_usd_floor(rate_from=self.days_before(3))
+        with self.assertRaises(FX.FxRateStale):
+            self.engine.evaluate(self.request(
+                amount=600_000, revenue=10_000_000, margin_before=1_000_000))
 
 
 if __name__ == "__main__":
