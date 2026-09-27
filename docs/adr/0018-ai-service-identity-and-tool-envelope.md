@@ -108,5 +108,6 @@ MISSING — §18/§56/§57".
   `supervisor` by ADR-0028, 2026-09-27) and
   `identity` uses {owner, finance}; reconciling them changes approval behaviour, so it needs
   the owner's decision; (b) §50's "transactional outbox" and the 12-role RBAC are still
-  missing; (c) nine catalogue keys remain unpublished by design (§49 retention is OPEN, and
+  missing; (c) nine catalogue keys were unpublished at the time of writing — six remain as of
+  2026-09-27, the three discount values having since been published (ADR-0029) (§49 retention is OPEN, and
   the finance/ops values have no document fixing them yet).

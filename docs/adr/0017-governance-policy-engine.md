@@ -64,7 +64,8 @@ place in it.
    There is no default value and no "closest" revision: a number that was never published is
    never invented.
 
-5. **Eight catalogue keys are deliberately left unpublished.** `retention.records.retention_days_by_class`
+5. **Eight catalogue keys were left unpublished when this was written; six remain as of
+   2026-09-27, the three discount values having since been published (ADR-0029).** `retention.records.retention_days_by_class`
    (the spec itself leaves retention periods OPEN in §49), plus the discount authority, margin
    floor, payment thresholds, booking financial gates, hold reminders, reconfirmation freshness
    and incident escalation. The catalogue names them so they can be decided, and resolution
@@ -102,7 +103,7 @@ place in it.
   `owner`/`finance`. Reconciling them changes approval behaviour, so it is not done here.
 - Open: the transactional outbox and the full twelve-role RBAC remain WAVE 1 foundations not yet
   built.
-- Open: the eight unpublished keys need owner decisions before the finance and availability
+- Open: the unpublished catalogue keys — six as of 2026-09-27 — need owner decisions before the finance and availability
   gates that depend on them can be enforced rather than refused.
 - Open: only one consumer is wired. The remaining constants (`approvals`, `gates`) are pinned by
   the drift guard but still read from code until their callers are migrated.
