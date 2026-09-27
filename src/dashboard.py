@@ -1124,8 +1124,9 @@ class Dashboard:
                 row["breach_minutes"],
             )
             for row in self._rows(
-                "SELECT * FROM sla_breaches WHERE status = ? ORDER BY due_at LIMIT 20",
-                (OPEN_SLA_STATUS,),
+                "SELECT * FROM sla_breaches WHERE agency_id = ? AND status = ?"
+                " ORDER BY due_at LIMIT 20",
+                (self.agency_id, OPEN_SLA_STATUS),
             )
         ]
         events = self._recent_audit(5)
@@ -1194,7 +1195,8 @@ class Dashboard:
     def view_cases(self, principal: Principal) -> dict[str, Any]:
         rows = self._rows(
             "SELECT c.*, (SELECT COUNT(*) FROM case_messages m WHERE m.case_id = c.case_id) AS msgs "
-            "FROM cases c ORDER BY c.created_at DESC LIMIT 200"
+            "FROM cases c WHERE c.agency_id = ? ORDER BY c.created_at DESC LIMIT 200",
+            (self.agency_id,),
         )
         table_rows = []
         for row in rows:
@@ -1373,13 +1375,19 @@ class Dashboard:
         units = self._rows(
             "SELECT u.*, p.name AS property_name FROM units u "
             "JOIN properties p ON p.property_id = u.property_id "
-            "ORDER BY p.name, u.name"
+            "WHERE u.agency_id = ? AND p.agency_id = ? "
+            "ORDER BY p.name, u.name",
+            (self.agency_id, self.agency_id),
         )
         bookings = self._rows(
-            "SELECT unit_id, check_in, check_out, status FROM bookings WHERE unit_id IS NOT NULL"
+            "SELECT unit_id, check_in, check_out, status FROM bookings"
+            " WHERE agency_id = ? AND unit_id IS NOT NULL",
+            (self.agency_id,),
         )
         holds = self._rows(
             "SELECT unit_id, check_in, check_out, status, expires_at FROM holds"
+            " WHERE agency_id = ?",
+            (self.agency_id,),
         )
 
         booked_index: dict[str, list[Any]] = {}
@@ -1468,7 +1476,10 @@ class Dashboard:
                 and str(row["payment_status"]) != "PAID"
                 else "-",
             )
-            for row in self._rows("SELECT * FROM invoices ORDER BY issued_at DESC LIMIT 200")
+            for row in self._rows(
+                "SELECT * FROM invoices WHERE agency_id = ? ORDER BY issued_at DESC LIMIT 200",
+                (self.agency_id,),
+            )
         ]
         payments = [
             (
@@ -1482,7 +1493,10 @@ class Dashboard:
                 row["settled_at"] or "—",
                 row["provider_status"] or "—",
             )
-            for row in self._rows("SELECT * FROM payments ORDER BY created_at DESC LIMIT 200")
+            for row in self._rows(
+                "SELECT * FROM payments WHERE agency_id = ? ORDER BY created_at DESC LIMIT 200",
+                (self.agency_id,),
+            )
         ]
         recon = [
             (
@@ -1517,7 +1531,9 @@ class Dashboard:
                         " WHERE agency_id = ? AND status = 'OPEN'",
                         (self.agency_id,))),
                     ("Total tagihan (minor)", self._count(
-                        "SELECT COALESCE(SUM(total_minor), 0) FROM invoices WHERE status = 'ISSUED'")),
+                        "SELECT COALESCE(SUM(total_minor), 0) FROM invoices"
+                        " WHERE agency_id = ? AND status = 'ISSUED'",
+                        (self.agency_id,))),
                 ]
             ),
             "invoice_table": table(
@@ -1580,7 +1596,8 @@ class Dashboard:
                 ),
             )
             for row in self._rows(
-                "SELECT * FROM ops_tasks ORDER BY due_at LIMIT 200"
+                "SELECT * FROM ops_tasks WHERE agency_id = ? ORDER BY due_at LIMIT 200",
+                (self.agency_id,),
             )
         ]
         incidents = [
@@ -1602,7 +1619,10 @@ class Dashboard:
                     field_name="incident_summary",
                 ),
             )
-            for row in self._rows("SELECT * FROM incidents ORDER BY detected_at DESC LIMIT 200")
+            for row in self._rows(
+                "SELECT * FROM incidents WHERE agency_id = ? ORDER BY detected_at DESC LIMIT 200",
+                (self.agency_id,),
+            )
         ]
         return {
             "late_tasks": self._count(
@@ -1647,8 +1667,17 @@ class Dashboard:
         }
 
     def view_approvals(self, principal: Principal) -> dict[str, Any]:
-        rows = self._rows("SELECT * FROM approval_requests ORDER BY requested_at DESC LIMIT 200")
-        decisions = self._rows("SELECT * FROM approval_decisions ORDER BY decided_at DESC LIMIT 200")
+        rows = self._rows(
+            "SELECT * FROM approval_requests WHERE agency_id = ? ORDER BY requested_at DESC LIMIT 200",
+            (self.agency_id,),
+        )
+        # Tabel anak tidak membawa agency_id: scope lewat parent, bukan lewat keyakinan.
+        decisions = self._rows(
+            "SELECT * FROM approval_decisions WHERE approval_id IN ("
+            "SELECT approval_id FROM approval_requests WHERE agency_id = ?)"
+            " ORDER BY decided_at DESC LIMIT 200",
+            (self.agency_id,),
+        )
         decision_counts: dict[str, int] = {}
         for row in decisions:
             decision_counts[str(row["approval_id"])] = decision_counts.get(str(row["approval_id"]), 0) + 1
@@ -1694,8 +1723,8 @@ class Dashboard:
         ]
         return {
             "pending_count": self._count(
-                "SELECT COUNT(*) FROM approval_requests WHERE status = ?",
-                (PENDING_APPROVAL_STATUS,),
+                "SELECT COUNT(*) FROM approval_requests WHERE agency_id = ? AND status = ?",
+                (self.agency_id, PENDING_APPROVAL_STATUS),
             ),
             "banner": Markup(""),
             "may_write": principal.may_write,
@@ -2085,7 +2114,10 @@ class Dashboard:
             path.write_text(response.body, encoding="utf-8")
             written.append(path)
         if self.page_allowed("case_detail", principal.role):
-            for row in self._rows("SELECT case_id FROM cases ORDER BY created_at"):
+            for row in self._rows(
+                "SELECT case_id FROM cases WHERE agency_id = ? ORDER BY created_at",
+                (self.agency_id,),
+            ):
                 case_id = str(row["case_id"])
                 response = self.dispatch(
                     _Request(
