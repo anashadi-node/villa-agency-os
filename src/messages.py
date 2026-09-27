@@ -223,7 +223,7 @@ SOURCE_TABLES: dict[str, tuple[str, str]] = {
 DEFAULT_CONTENT_CLASS = "P1"
 
 #: Roles allowed to record that a human sent a draft. Note this is *narrower* than
-#: the approval roles: a supervisor may approve, only front-line staff may send.
+#: the approval roles: a manager may approve, only front-line staff may send.
 SENDER_ROLES: tuple[str, ...] = ("agent", "owner")
 
 #: Actor ids that name a machine, not a person. A draft may be *prepared* by the
@@ -1228,7 +1228,7 @@ class MessageService:
         actor_role: str,
         reason: str,
         idempotency_key: str,
-        required_role: str = "supervisor",
+        required_role: str = "manager",
         at: Optional[datetime] = None,
     ) -> Approval:
         """Open a real ``message_send`` approval request. Never fakes a status."""

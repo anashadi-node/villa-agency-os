@@ -105,7 +105,7 @@ def _set(db: Path, key: str, value: str, **extra: str) -> subprocess.CompletedPr
 
 def _publish_discount_policy(db: Path) -> None:
     """Exactly what the owner does by hand, through the documented command."""
-    assert _set(db, AUTHORITY, '["owner","supervisor"]').returncode == 0
+    assert _set(db, AUTHORITY, '["owner","manager"]').returncode == 0
     assert _set(db, FLOOR_PCT, "20").returncode == 0
     assert _set(db, FLOOR_MINOR, "1000000").returncode == 0
 
@@ -124,7 +124,7 @@ def _evaluate(db: Path, request: DiscountRequest) -> Any:
         conn.close()
 
 
-def _request(role: str = "supervisor", amount: int = 5_000_000) -> DiscountRequest:
+def _request(role: str = "manager", amount: int = 5_000_000) -> DiscountRequest:
     return DiscountRequest(
         kind="AGENCY_FUNDED",
         amount_minor=amount,
@@ -225,10 +225,10 @@ def test_a_published_value_reads_back_with_who_decided_and_why(db: Path) -> None
 
 
 def test_a_role_set_is_published_as_json(db: Path) -> None:
-    assert _set(db, AUTHORITY, '["owner","supervisor"]').returncode == 0
+    assert _set(db, AUTHORITY, '["owner","manager"]').returncode == 0
     resolver = _resolver(db)
     try:
-        assert resolver.resolve(AUTHORITY).as_json() == ["owner", "supervisor"]
+        assert resolver.resolve(AUTHORITY).as_json() == ["owner", "manager"]
     finally:
         resolver.conn.close()
 

@@ -164,7 +164,7 @@ DUAL_CONTROL_SUBJECTS: tuple[str, ...] = ("refund", "payout", "bank_change")
 #: may decide; a lower rank gets ROLE_TOO_LOW.
 ROLE_RANK: Mapping[str, int] = {
     "agent": 1,
-    "supervisor": 2,
+    "manager": 2,
     "accountant": 3,
     "owner": 4,
 }

@@ -41,7 +41,7 @@ WINDOW_TO = "2026-12-31"
 SOURCE = "§11 Pricing, Quote & Discount — owner decision recorded for the pilot"
 
 OWNER = "human_owner_anas"
-SUPERVISOR = "human_supervisor_dewi"
+SUPERVISOR = "human_manager_dewi"
 AGENT = "human_agent_rina"
 
 #: A booking that sells for 100,000,000 with 30,000,000 of agency margin in it.
@@ -52,7 +52,7 @@ MARGIN_BEFORE = 30_000_000
 class DiscountEngineHarness(unittest.TestCase):
     """One in-memory kernel per test, with policy published explicitly or deliberately withheld."""
 
-    def build(self, *, at: str = NOW, seed: str = "w4d", authority=("owner", "supervisor"),
+    def build(self, *, at: str = NOW, seed: str = "w4d", authority=("owner", "manager"),
               floor_pct="20", floor_minor=1_000_000):
         kernel = RK.ReservationKernel.open(
             ":memory:",
@@ -158,7 +158,7 @@ class TestFundingKindsAreSeparated(DiscountEngineHarness):
 class TestAuthorityIsPolicy(DiscountEngineHarness):
     def test_a_role_inside_the_published_set_may_grant(self):
         self.build()
-        decision = self.engine.evaluate(self.request(role="supervisor", amount=1_000_000))
+        decision = self.engine.evaluate(self.request(role="manager", amount=1_000_000))
         self.assertEqual(decision.outcome, DE.OUTCOME_APPLIED)
 
     def test_a_role_outside_the_published_set_is_refused(self):
@@ -199,7 +199,7 @@ class TestAuthorityIsPolicy(DiscountEngineHarness):
                 continue
             lowered = {str(item).lower() for item in value}
             self.assertFalse(
-                lowered & {"owner", "supervisor", "accountant", "agent"},
+                lowered & {"owner", "manager", "accountant", "agent"},
                 f"{name} looks like a role list baked into the engine — it must read the store",
             )
 
@@ -432,12 +432,12 @@ class TestEveryOutcomeIsAudited(DiscountEngineHarness):
 
     def test_the_audit_row_names_the_role_that_granted_it(self):
         self.build()
-        self.engine.evaluate(self.request(role="supervisor", amount=1_000_000))
+        self.engine.evaluate(self.request(role="manager", amount=1_000_000))
         row = self.conn.execute(
             "SELECT actor_role FROM audit_events WHERE action = ? AND entity_type = ?",
             (DE.ACTION_APPLIED, DE.ENTITY_TYPE),
         ).fetchone()
-        self.assertEqual(row[0], "supervisor")
+        self.assertEqual(row[0], "manager")
 
 
 # --------------------------------------------------------------------------------------

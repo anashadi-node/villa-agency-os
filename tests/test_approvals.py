@@ -215,7 +215,7 @@ class ApprovalTestCase(unittest.TestCase):
             subject_type="refund",
             subject_id="booking_777",
             action="refund_guest",
-            reason="Refund penuh untuk tamu batal H-1, sudah dicek supervisor.",
+            reason="Refund penuh untuk tamu batal H-1, sudah dicek manager.",
             payload={"booking_id": "booking_777", "amount_minor": 5_000_000},
             money=Money(5_000_000, "IDR"),
             risk_level="HIGH",
@@ -254,9 +254,9 @@ class TestSchemaContract(ApprovalTestCase):
 
     def test_role_ranks_and_expiry_defaults_cover_every_risk_level(self):
         """Ranking is total and ordered; every risk level has an expiry default."""
-        self.assertEqual(set(ROLE_RANK), {"agent", "supervisor", "accountant", "owner"})
+        self.assertEqual(set(ROLE_RANK), {"agent", "manager", "accountant", "owner"})
         self.assertEqual(
-            [ROLE_RANK[role] for role in ("agent", "supervisor", "accountant", "owner")],
+            [ROLE_RANK[role] for role in ("agent", "manager", "accountant", "owner")],
             [1, 2, 3, 4],
         )
         self.assertEqual(set(EXPIRY_MINUTES), set(RISK_LEVELS))
@@ -410,7 +410,7 @@ class TestRequestValidation(ApprovalTestCase):
         self.refuse(
             "INVALID_APPROVER",
             self.request,
-            requested_role="manager",
+            requested_role="director",
             idempotency_key="idem_role_1",
         )
         self.refuse(
@@ -419,8 +419,16 @@ class TestRequestValidation(ApprovalTestCase):
         self.refuse(
             "INVALID_APPROVER",
             self.request,
-            required_role="manager",
+            required_role="director",
             idempotency_key="idem_role_3",
+        )
+        # `manager` replaced `supervisor` in the 2026-09-27 rename, so the retired name is now
+        # just another role the kernel does not know — a stale caller is refused, never accepted.
+        self.refuse(
+            "INVALID_APPROVER",
+            self.request,
+            required_role="supervisor",
+            idempotency_key="idem_role_retired",
         )
         # A blank identifier is a *missing* field and a malformed one an *invalid*
         # field: the kernel's shape codes, not the semantic approvals codes.
@@ -803,9 +811,9 @@ class TestRoleGate(ApprovalTestCase):
             approver_role="accountant",
         )
         supervisory = self.request(
-            required_role="supervisor",
+            required_role="manager",
             subject_id="quote_7001",
-            idempotency_key="idem_role_supervisor",
+            idempotency_key="idem_role_manager",
         )
         self.refuse(
             "ROLE_TOO_LOW",
@@ -820,16 +828,16 @@ class TestRoleGate(ApprovalTestCase):
 
     def test_a_role_at_or_above_the_required_rank_may_decide(self):
         equal = self.request(
-            required_role="supervisor", subject_id="quote_8001", idempotency_key="idem_rank_eq"
+            required_role="manager", subject_id="quote_8001", idempotency_key="idem_rank_eq"
         )
         self.assertEqual(
             self.approve(
-                equal.approval_id, approver="supervisor_dian", approver_role="supervisor"
+                equal.approval_id, approver="manager_dian", approver_role="manager"
             ).status,
             "APPROVED",
         )
         above = self.request(
-            required_role="supervisor", subject_id="quote_8002", idempotency_key="idem_rank_above"
+            required_role="manager", subject_id="quote_8002", idempotency_key="idem_rank_above"
         )
         self.assertEqual(
             self.approve(
@@ -883,7 +891,7 @@ class TestIdempotency(ApprovalTestCase):
             {"requested_by": "agent_lain"},
             {"reason": "Alasan yang berbeda sekali untuk permintaan yang sama."},
             {"payload": {"percent": 25, "quote_id": "quote_1001"}},
-            {"required_role": "supervisor"},
+            {"required_role": "manager"},
         ):
             with self.subTest(**overrides):
                 self.refuse("IDEMPOTENCY_CONFLICT", self.request, **overrides)
@@ -977,7 +985,7 @@ class TestQueue(ApprovalTestCase):
             subject_type="message_send",
             subject_id="guest_9003",
             action="send_broadcast",
-            required_role="supervisor",
+            required_role="manager",
             risk_level="LOW",
             idempotency_key="idem_q_9003",
         )
@@ -993,7 +1001,7 @@ class TestQueue(ApprovalTestCase):
         self.assertEqual(items[1].risk_level, "HIGH")
         self.assertEqual(items[1].reason, second.reason)
         self.assertEqual(
-            [item.approval_id for item in self.svc.outstanding(required_role="supervisor")],
+            [item.approval_id for item in self.svc.outstanding(required_role="manager")],
             [third.approval_id],
         )
 
@@ -1024,7 +1032,7 @@ class TestQueue(ApprovalTestCase):
         self.clock.advance(minutes=45)
         second = self.request(
             subject_id="quote_9101",
-            required_role="supervisor",
+            required_role="manager",
             required_approvals=2,
             idempotency_key="idem_s_9101_b",
         )
@@ -1032,7 +1040,7 @@ class TestQueue(ApprovalTestCase):
 
         history = self.svc.for_subject("discount", "quote_9101")
         self.assertEqual([item.approval_id for item in history], [first.approval_id, second.approval_id])
-        self.assertEqual(history[1].required_role, "supervisor")
+        self.assertEqual(history[1].required_role, "manager")
         self.assertNotIn(other.approval_id, [item.approval_id for item in history])
         self.assertEqual(self.svc.for_subject("hold", "quote_9101"), [])
         self.refuse("INVALID_SUBJECT_TYPE", self.svc.for_subject, "invoice", "quote_9101")

@@ -104,7 +104,8 @@ MISSING — §18/§56/§57".
   WAVE 8 and ADR-0009 stays PROPOSED for that half. This ADR covers the identity and the
   envelope only; there is still no code path that calls a model.
 - Open, and honestly reported: (a) the role vocabulary is inconsistent — §18 names 12 roles
-  while `approvals.ROLE_RANK` ranks {agent, supervisor, accountant, owner} and
+  while `approvals.ROLE_RANK` ranks {agent, manager, accountant, owner} (renamed from
+  `supervisor` by ADR-0028, 2026-09-27) and
   `identity` uses {owner, finance}; reconciling them changes approval behaviour, so it needs
   the owner's decision; (b) §50's "transactional outbox" and the 12-role RBAC are still
   missing; (c) nine catalogue keys remain unpublished by design (§49 retention is OPEN, and

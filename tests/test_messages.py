@@ -724,7 +724,7 @@ class ApprovalFlowTests(MessageTestCase):
         self.assertEqual("message_send", approval.subject_type)
         self.assertEqual(draft.draft_id, approval.subject_id)
         self.assertEqual("PENDING", approval.status)
-        self.assertEqual("supervisor", approval.required_role)
+        self.assertEqual("manager", approval.required_role)
         self.assertEqual(
             ("message_send", draft.draft_id, "PENDING", SENDER),
             self.one("SELECT subject_type, subject_id, status, requested_by "
@@ -860,7 +860,7 @@ class SendingTests(MessageTestCase):
 
     def test_roles_outside_agent_and_owner_cannot_mark_sent(self):
         draft = self.approved()
-        for role in ("system", "supervisor", "guest", "", "admin"):
+        for role in ("system", "manager", "guest", "", "admin"):
             with self.subTest(role=role):
                 self.assertRefused("INVALID_SENDER_ROLE", self.svc.mark_sent,
                                    draft.draft_id, actor="someone_else",

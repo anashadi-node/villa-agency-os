@@ -20,7 +20,7 @@ from datetime import timedelta
 import pytest
 
 import dashboard as D
-from approvals import ApprovalService
+from approvals import ROLE_RANK, ApprovalService
 from audit import AuditLog
 from primitives import IdFactory, to_iso
 from schema_loader import connect_sqlite
@@ -525,7 +525,7 @@ def seed(conn, clock) -> None:
     )
     decided = approvals.request(
         subject_type="case", subject_id=SEED_CASE_3, action="relokasi tamu",
-        requested_by="agent-ops-1", requested_role="supervisor",
+        requested_by="agent-ops-1", requested_role="manager",
         reason="unit rusak, tamu dipindahkan", required_role="accountant",
         risk_level="MEDIUM", idempotency_key="idem-approval-2",
     )
@@ -1082,7 +1082,7 @@ def test_xss_in_an_approval_reason_is_escaped(seeded_app, seeded):
         " payload_sha256, required_role, required_approvals, status, expires_at, idempotency_key,"
         " created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         ("approval-xss", "case", SEED_CASE, "aksi mencurigakan", "LOW", "agent-ops-1",
-         "supervisor", to_iso(now), f"{XSS} alasan yang sangat panjang", "[]", "{}", "0" * 64,
+         "manager", to_iso(now), f"{XSS} alasan yang sangat panjang", "[]", "{}", "0" * 64,
          "owner", 1, "PENDING", to_iso(now + timedelta(hours=1)), "idem-approval-xss",
          to_iso(now)),
     )
@@ -1539,4 +1539,15 @@ def test_auditor_has_no_approval_role():
     assert D.Principal("auditor-external-1", "auditor").approval_role is None
     assert D.Principal("agent-finance-1", "finance").approval_role == "accountant"
     assert not D.Principal("auditor-external-1", "auditor").may_write
+
+
+def test_every_approval_role_the_dashboard_names_exists_in_the_kernel():
+    """The rename trap: a mapping value the kernel does not know silences a whole role.
+
+    ``operations`` maps to the approval role its holders act as. When that name is missing
+    from ``approvals.ROLE_RANK`` the dashboard still authenticates the person, the kernel
+    refuses every request they make, and nothing in the refusal says the name was retired.
+    """
+    assert set(D.APPROVAL_ROLE_BY_ROLE.values()) <= set(ROLE_RANK)
+    assert "manager" in D.APPROVAL_ROLE_BY_ROLE.values()
 

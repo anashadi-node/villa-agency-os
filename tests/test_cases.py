@@ -212,7 +212,7 @@ class TestContractSurface(CaseTestBase):
                 self.assertEqual(set(targets) - set(C.CASE_STATUSES), set())
                 if status != "CLOSED_DUPLICATE":
                     # ``CLOSED_DUPLICATE`` is the one status a case may re-enter
-                    # (a supervisor correcting a wrong duplicate verdict).
+                    # (a manager correcting a wrong duplicate verdict).
                     self.assertNotIn(status, targets)
         for closed in C.CLOSED_STATUSES:
             self.assertEqual(tuple(C.CASE_TRANSITIONS[closed]), ("CLOSED_DUPLICATE",))
@@ -318,7 +318,7 @@ class TestEventLogIntegrity(CaseTestBase):
         )
         self.assertEqual(self.svc.get(case.case_id).status, "ESCALATED")
         self.svc.transition(
-            case.case_id, "TRIAGED", actor="supervisor_01", actor_role="supervisor",
+            case.case_id, "TRIAGED", actor="manager_01", actor_role="manager",
             reason="ambil alih", command_id="cmd_case_0502",
         )
         self.assertEqual(self.svc.get(case.case_id).status, "TRIAGED")
@@ -372,7 +372,7 @@ class TestClosedCases(CaseTestBase):
         )
         self.assertEqual(self.counts(), before)
         corrected = self.svc.transition(
-            case.case_id, "CLOSED_DUPLICATE", actor="supervisor_01", actor_role="supervisor",
+            case.case_id, "CLOSED_DUPLICATE", actor="manager_01", actor_role="manager",
             reason="ternyata duplikat", command_id="cmd_case_0703",
         )
         self.assertEqual(corrected.status, "CLOSED_DUPLICATE")
@@ -421,14 +421,14 @@ class TestClosedCases(CaseTestBase):
         self.assertEqual(self.counts(), (1, 1, 8))
         # ... but the duplicate correction is the single exception.
         corrected = self.svc.transition(
-            case.case_id, "CLOSED_DUPLICATE", actor="supervisor_01", actor_role="supervisor",
+            case.case_id, "CLOSED_DUPLICATE", actor="manager_01", actor_role="manager",
             reason="ternyata bukan penjualan ganda", command_id="cmd_case_0811",
         )
         self.assertEqual(corrected.status, "CLOSED_DUPLICATE")
         self.assertEqual(self.counts(), (1, 1, 9))
         self.refuse(
             "CASE_CLOSED", self.svc.transition, case.case_id, "CLOSED_WON",
-            actor="supervisor_01", actor_role="supervisor", reason="batalkan koreksi",
+            actor="manager_01", actor_role="manager", reason="batalkan koreksi",
             command_id="cmd_case_0812",
         )
         self.assertEqual(self.counts(), (1, 1, 9))

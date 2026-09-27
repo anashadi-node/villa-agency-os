@@ -387,7 +387,7 @@ def test_the_audit_row_records_the_policy_that_governed_the_decision(conn):
 
 def test_the_ai_actor_role_is_its_own_role(conn):
     assert AI_ACTOR_ROLE == "ai_service"
-    assert AI_ACTOR_ROLE not in {"owner", "finance", "agent", "supervisor", "accountant"}
+    assert AI_ACTOR_ROLE not in {"owner", "finance", "agent", "manager", "accountant"}
 
 
 # -- 7. the registry is append-only ------------------------------------------- #

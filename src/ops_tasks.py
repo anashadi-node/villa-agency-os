@@ -1011,7 +1011,7 @@ class OpsTaskService:
         ``OPS_TASK_DUPLICATE_IDEMPOTENCY_KEY`` rather than silently mixing two
         jobs. Operator state that drifts afterwards (assignee, priority,
         checklist progress) does not affect the match — a job re-running after a
-        supervisor reassigned the task must not fail.
+        manager reassigned the task must not fail.
         """
         key = _require_idempotency_key(idempotency_key)
         kind_value = _require_kind(kind)

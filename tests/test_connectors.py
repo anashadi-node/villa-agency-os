@@ -254,7 +254,7 @@ class ConnectorCase(unittest.TestCase):
         )
         return draft_id
 
-    def approved_by_a_human(self, draft_id: str, *, role: str = "supervisor") -> str:
+    def approved_by_a_human(self, draft_id: str, *, role: str = "manager") -> str:
         """Raise and decide a real ``message_send`` approval; return the approval id."""
         approvals = ApprovalService(self.conn, self.clock, self.ids)
         request = approvals.request(
@@ -1344,7 +1344,7 @@ class TestOutboundQueue(ConnectorCase):
             requested_by="agent_ana",
             requested_role="agent",
             reason="draft sudah diperiksa, menunggu keputusan",
-            required_role="supervisor",
+            required_role="manager",
             risk_level="LOW",
             idempotency_key=f"appr_key_pending_{draft_id}",
             at=NOW,
@@ -1758,7 +1758,7 @@ def _seed_live_db(db: Path) -> tuple[str, str]:
             requested_by="agent_ana",
             requested_role="agent",
             reason="draft sudah diperiksa dan siap dikirim ke tamu",
-            required_role="supervisor",
+            required_role="manager",
             risk_level="LOW",
             idempotency_key=f"appr_key_cli_{draft_id}",
             at=NOW,
@@ -1766,7 +1766,7 @@ def _seed_live_db(db: Path) -> tuple[str, str]:
         approvals.decide(
             request.approval_id,
             approver="ops_lead",
-            approver_role="supervisor",
+            approver_role="manager",
             decision="APPROVE",
             note="sudah dicek",
             at=NOW,

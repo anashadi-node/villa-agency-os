@@ -125,7 +125,7 @@ ALL_ROLES = ROLES
 APPROVAL_ROLE_BY_ROLE: Mapping[str, str] = MappingProxyType(
     {
         "reservation": "agent",
-        "operations": "supervisor",
+        "operations": "manager",
         "finance": "accountant",
         "owner": "owner",
     }

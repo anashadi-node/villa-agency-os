@@ -97,7 +97,8 @@ place in it.
 - WAVE 4 finance and availability work reads thresholds through `PolicyResolver` instead of
   adding constants.
 - Open: the role vocabulary is inconsistent and needs an owner decision. §18 lists twelve roles;
-  `approvals.ROLE_RANK` ranks `agent`/`supervisor`/`accountant`/`owner`, and `identity` speaks of
+  `approvals.ROLE_RANK` ranks `agent`/`manager`/`accountant`/`owner` (named `supervisor` until
+  ADR-0028, 2026-09-27), and `identity` speaks of
   `owner`/`finance`. Reconciling them changes approval behaviour, so it is not done here.
 - Open: the transactional outbox and the full twelve-role RBAC remain WAVE 1 foundations not yet
   built.

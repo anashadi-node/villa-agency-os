@@ -447,7 +447,7 @@ class ObsCase(unittest.TestCase):
 
 
 class ObsCliTests(unittest.TestCase):
-    """The CLI is the supervisor-facing surface: exit codes must mean something."""
+    """The CLI is the manager-facing surface: exit codes must mean something."""
 
     def setUp(self) -> None:
         import tempfile
