@@ -103,9 +103,17 @@ make pg-twin
 # Siapkan database + data demo (aman: menolak DB yang sudah berisi data nyata)
 python3 scripts/seed_demo.py --db /tmp/demo/villa.db
 
-# Dashboard internal (read-only; POST hanya untuk approval lewat ApprovalService)
-python3 src/dashboard.py --db /tmp/demo/villa.db --host 127.0.0.1 --port 8080 --role owner
-python3 src/dashboard.py --db /tmp/demo/villa.db --dump /tmp/demo/pages   # snapshot HTML statis
+# Dashboard internal (read-only; POST hanya untuk approval lewat ApprovalService).
+# Setiap halaman butuh token. Tanpa token server tetap start, tapi SEMUA permintaan dijawab
+# 401 — token dibaca dari header `X-Dashboard-Token` (atau `Authorization: Bearer ...`).
+# Tanpa `--token`, token dibuat acak per peran tiap kali server start dan hanya muncul di
+# stdout, jadi URL/konfigurasi proxy mati tiap restart. Patok tokennya:
+python3 src/dashboard.py --db /tmp/demo/villa.db --host 127.0.0.1 --port 8080 --role owner \
+    --token "$VILLA_DASHBOARD_TOKEN"
+curl -s -H "X-Dashboard-Token: $VILLA_DASHBOARD_TOKEN" http://127.0.0.1:8080/
+
+# Snapshot HTML statis: menulis berkas lalu keluar, tidak membuka port, tidak butuh token
+python3 src/dashboard.py --db /tmp/demo/villa.db --dump /tmp/demo/pages
 
 # Heartbeat: menagih hold/SLA/approval/tenggat notifikasi/penagihan invoice
 python3 src/scheduler.py --db data/villa.db --dry-run     # lihat rencana, tanpa menulis

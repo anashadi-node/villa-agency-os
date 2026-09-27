@@ -84,7 +84,8 @@ User=villa
 WorkingDirectory=/opt/villa-agency-os
 EnvironmentFile=/etc/villa/villa.env
 ExecStart=/usr/bin/python3 src/dashboard.py --db /var/lib/villa/villa.db \
-          --host 127.0.0.1 --port 8080 --role owner
+          --host 127.0.0.1 --port 8080 --role owner \
+          --token "${VILLA_DASHBOARD_TOKEN}"
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
@@ -93,6 +94,14 @@ ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/villa
 ```
+
+`VILLA_DASHBOARD_TOKEN` dibaca dari `EnvironmentFile` di atas (systemd memperluas `${...}` di
+`ExecStart`). **Jangan menghilangkannya:** tanpa `--token`, dashboard membuat token acak tiap
+kali start dan hanya mencetaknya ke journal, jadi setiap restart mencabut akses semua URL yang
+sudah dipakai dan setiap konfigurasi reverse proxy harus diubah. Token juga terlihat di
+`systemctl status` dan `ps`; karena dashboard hanya bind ke loopback, yang bisa melihatnya
+adalah pengguna lokal — kalau itu tidak dapat diterima, taruh token di proxy dan batasi akses
+ke unit-nya.
 
 > Dashboard **read-only** untuk data. Satu-satunya aksi tulis adalah approval,
 > dan itu lewat `ApprovalService` (satu penulis) dengan `idempotency_key` wajib.

@@ -11,6 +11,7 @@ documented command, a real file, the documented exit code.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -18,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from approvals import _payload_digest
 from schema_loader import connect_sqlite
 
 REPO = Path(__file__).resolve().parent.parent
@@ -114,6 +116,40 @@ def test_a_database_holding_real_rows_is_refused(seeded: Path):
     result = _run(seeded)
     assert result.returncode == 1
     assert "non-demo rows" in result.stderr
+
+
+def _scheduler(db: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(REPO / "src")
+    return subprocess.run(
+        [sys.executable, str(REPO / "src" / "scheduler.py"), "--db", str(db), *args],
+        capture_output=True, text=True, env=env, cwd=str(REPO), timeout=120,
+    )
+
+
+def test_the_demo_approval_is_intact_so_the_scheduler_can_run(seeded: Path):
+    """The demo approval must carry its real digest, or the documented demo step refuses.
+
+    Found 2026-09-28 by the fresh-database audit: the seeder wrote a placeholder
+    ``payload_sha256`` (``"9" * 64``), so ``ApprovalService`` refused the request as tampered —
+    and ``scheduler.py``, which the README and SALES_PACKAGE both show as a demo step, refused
+    the **whole** tick with ``APPROVAL_TAMPERED``. The pending decision could never be approved
+    either, so the demo of the approval queue was dead too. Pinned through the service's own
+    digest, not by re-reading the constant the seeder wrote.
+    """
+    conn = connect_sqlite(str(seeded))
+    try:
+        row = conn.execute(
+            "SELECT payload, payload_sha256 FROM approval_requests WHERE approval_id = ?",
+            ("demo_appr_1",),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None, "the demo dataset no longer carries its pending decision"
+    assert row["payload_sha256"] == _payload_digest(json.loads(row["payload"]))
+
+    run = _scheduler(seeded)
+    assert "APPROVAL_TAMPERED" not in run.stdout + run.stderr
 
 
 def test_dry_run_reports_without_writing_rows(tmp_path: Path):

@@ -113,8 +113,11 @@ pemilik bisnis; dokumen ini tidak menebaknya.
 # 1. Data contoh (Bali + Yogyakarta) — menolak menyentuh database produksi
 python3 scripts/seed_demo.py --db /tmp/demo/villa.db
 
-# 2. Tunjukkan dashboard
-python3 src/dashboard.py --db /tmp/demo/villa.db --host 127.0.0.1 --port 8080 --role owner
+# 2. Tunjukkan dashboard. Halaman butuh token: tanpa token semua permintaan dijawab 401.
+#    `--token` mematoknya, dan curl-nya menunjukkan halaman yang benar-benar dirender.
+python3 src/dashboard.py --db /tmp/demo/villa.db --host 127.0.0.1 --port 8080 --role owner \
+    --token demo-owner &
+sleep 1 && curl -s -H "X-Dashboard-Token: demo-owner" http://127.0.0.1:8080/ | head -5
 
 # 3. Tunjukkan heartbeat: deadline ditagih tanpa ada manusia mengingat
 python3 src/scheduler.py --db /tmp/demo/villa.db --dry-run     # rencana

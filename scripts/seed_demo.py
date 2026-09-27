@@ -31,10 +31,15 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 
+from approvals import _payload_digest  # noqa: E402
 from primitives import FrozenClock, IdFactory, to_iso  # noqa: E402
 from schema_loader import connect_sqlite  # noqa: E402
 
 DEMO_PREFIX = "demo_"
+
+#: The pending decision the demo shows. Hashed for real below: a placeholder digest makes the
+#: approval unapprovable and makes ``scheduler.py`` refuse the whole tick.
+DEMO_APPROVAL_PAYLOAD = {"discount_pct": 8}
 NOW = "2026-09-21T08:00:00+00:00"
 DAY = "2026-09-22T08:00:00+00:00"
 YESTERDAY = "2026-09-20T08:00:00+00:00"
@@ -327,14 +332,19 @@ class DemoSeeder:
             outcome="tukang datang 2 jam",
         )
 
-        # A pending human decision: nothing outbound happens without this.
+        # A pending human decision: nothing outbound happens without this. The digest must be the
+        # real one — `ApprovalService` recomputes it on every read and refuses the request when it
+        # does not match, so a placeholder here makes the demo approval unapprovable *and* makes
+        # `scheduler.py` refuse the whole tick with APPROVAL_TAMPERED. Found 2026-09-28 by the
+        # fresh-database audit: the documented demo step could not run at all.
         self.insert(
             "approval_requests", approval_id=f"{DEMO_PREFIX}appr_1", subject_type="discount",
             subject_id=f"{DEMO_PREFIX}case_rahma", action="discount.override",
             risk_level="MEDIUM", requested_by="agent_demo", requested_role="reservation",
             requested_at=YESTERDAY, reason="tamu menginap 3 malam, minta diskon 8%",
             evidence_refs=json.dumps([f"{DEMO_PREFIX}msg_case_rahma"]),
-            payload=json.dumps({"discount_pct": 8}), payload_sha256="9" * 64,
+            payload=json.dumps(DEMO_APPROVAL_PAYLOAD),
+            payload_sha256=_payload_digest(DEMO_APPROVAL_PAYLOAD),
             money_minor=600_000, currency="IDR", required_role="owner",
             required_approvals=2, status="PENDING", expires_at=NEXT_WEEK,
             idempotency_key=f"{DEMO_PREFIX}idem_appr_1", created_at=YESTERDAY,

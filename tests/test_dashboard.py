@@ -1551,3 +1551,27 @@ def test_every_approval_role_the_dashboard_names_exists_in_the_kernel():
     assert set(D.APPROVAL_ROLE_BY_ROLE.values()) <= set(ROLE_RANK)
     assert "manager" in D.APPROVAL_ROLE_BY_ROLE.values()
 
+
+def test_every_documented_dashboard_server_command_passes_a_token():
+    """A documented server command with no token is a command that answers 401 to its reader.
+
+    Found by the fresh-database audit (2026-09-28): README, DEPLOYMENT and SALES_PACKAGE each
+    showed ``dashboard.py --host … --role owner`` with no token, while the dashboard mints a
+    random token per role per start and prints it to stdout only. A reader following the docs
+    got 401 on every page, and a systemd restart silently revoked every URL pointing at it.
+    The token path itself is pinned above; this pins the docs, because that is where the
+    defect was.
+    """
+    docs = ("README.md", "docs/DEPLOYMENT.md", "docs/SALES_PACKAGE.md")
+    offenders = []
+    for name in docs:
+        text = (REPO_ROOT / name).read_text(encoding="utf-8")
+        # A command may be continued with a backslash (the systemd unit is), so join first:
+        # a per-line scan would flag a unit whose token sits on the next line.
+        for line in text.replace("\\\n", " ").splitlines():
+            if "dashboard.py" not in line or "--host" not in line:
+                continue  # a --dump run writes files and opens no port, so it needs no token
+            if "--token" not in line:
+                offenders.append(f"{name}: {line.strip()[:100]}")
+    assert offenders == [], "a documented dashboard server command without --token"
+
