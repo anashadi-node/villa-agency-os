@@ -1,5 +1,12 @@
 SHELL := /bin/bash
-PYTHON ?= python3
+
+# Gerbang berjalan di interpreter PRODUKSI, bukan pada `python3` yang kebetulan pertama di PATH.
+# Di mesin ini `python3` menunjuk venv Hermes (3.11.16, SQLite 3.53.1) sementara setiap unit
+# systemd menjalankan /usr/bin/python3 (3.12.3, SQLite 3.45.1). SQLite yang tertaut adalah sifat
+# interpreter, jadi gerbang di venv membuktikan Python yang tidak pernah dipakai produksi — dan
+# tes yang bergantung interpreter tetap hijau berbulan-bulan (literal `2_250_000` hanya valid
+# sejak SQLite 3.46). Untuk loop cepat, timpa eksplisit: `make test PYTHON=python3`.
+PYTHON ?= /usr/bin/python3
 
 # `show`/`status` fall back to data/villa.db when VILLA_DB is unset, so a make variable would
 # be silently ignored: `make policy-status VILLA_DB=other.db` would report on the default file
@@ -9,7 +16,7 @@ ifneq ($(strip $(VILLA_DB)),)
 export VILLA_DB
 endif
 
-.PHONY: help test verify syntax lint secret-scan unsafe-scan check schema-parity pg-twin anchor-publish anchor-verify allowance-status policy-status migrate-check
+.PHONY: help test verify syntax lint secret-scan unsafe-scan check interpreter schema-parity pg-twin anchor-publish anchor-verify allowance-status policy-status migrate-check
 
 help:
 	@echo "make test          - run the full pytest suite"
@@ -18,7 +25,7 @@ help:
 	@echo "make unsafe-scan   - scan for unsafe config (live-money switches, shuffled ledgers, stored card data)"
 	@echo "make schema-parity - fail if the PostgreSQL twin drifted from the SQLite source"
 	@echo "make pg-twin       - regenerate src/schema/001_initial.pg.sql from the SQLite source"
-	@echo "make lint          - pyflakes over src/ scripts/ tests/ (needs: pip install pyflakes)"
+	@echo "make lint          - pyflakes over src/ scripts/ tests/ (needs: /usr/bin/python3 -m pip install --user pyflakes)"
 	@echo "make anchor-publish- publish the audit-chain anchor (VILLA_DB, VILLA_ANCHOR_DIR)"
 	@echo "make anchor-verify - verify the live chain against published anchors (exit 1 = suspect)"
 	@echo "make allowance-status- what the §56 medium-risk tool allowance says right now (VILLA_DB)"
@@ -28,10 +35,13 @@ help:
 	@echo "                     setting a value is an owner act too: NOT a make target (see README)"
 	@echo "make migrate-check - list schema migrations still pending for VILLA_DB (writes nothing)"
 	@echo "                     applying one is an ops act: NOT a make target (see README)"
-	@echo "make check         - syntax + test + secret scan + unsafe scan + schema parity (pre-deploy gate)"
+	@echo "make check         - interpreter + syntax + lint + test + secret scan + unsafe scan + schema parity (pre-deploy gate)"
 
+# -q sudah ada di pytest.ini; menambah satu lagi di sini membuatnya -qq, dan pytest 9 tidak
+# mencetak baris hitungan pada -qq. Gerbang yang tidak bisa menyebut berapa test yang berjalan
+# akan tetap bilang PASS kalau seluruh berkas test diam-diam tidak terkumpul.
 test:
-	$(PYTHON) -m pytest tests/ -q --tb=short
+	$(PYTHON) -m pytest tests/ --tb=short
 
 syntax:
 	$(PYTHON) -m compileall -q src tests scripts
@@ -48,12 +58,18 @@ schema-parity:
 pg-twin:
 	$(PYTHON) scripts/generate_pg_twin.py --write
 
-check: syntax test secret-scan unsafe-scan schema-parity
+check: interpreter syntax lint test secret-scan unsafe-scan schema-parity
 	@echo "=== PRE-DEPLOY GATE: PASS ==="
+
+# Dicetak paling awal supaya versi interpreter tidak pernah tersembunyi di balik "PASS":
+# gerbang yang tidak menyebut interpreter-nya tidak bisa dibedakan dari gerbang di venv.
+interpreter:
+	@$(PYTHON) -c "import sys, sqlite3; print(f'gate interpreter: Python {sys.version.split()[0]} / SQLite {sqlite3.sqlite_version} ({sys.executable})')"
 
 lint:
 	@$(PYTHON) -m pyflakes src scripts tests || { \
-		echo "pyflakes tidak tersedia/temuan di atas — install dengan: pip install pyflakes"; exit 1; }
+		echo "pyflakes: ada temuan di atas, ATAU pyflakes belum terpasang untuk $(PYTHON)."; \
+		echo "pasang tanpa sudo (hanya menyentuh ~/.local): /usr/bin/python3 -m pip install --user pyflakes"; exit 1; }
 
 anchor-publish:
 	$(PYTHON) scripts/publish_anchor.py publish
