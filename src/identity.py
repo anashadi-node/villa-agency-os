@@ -82,6 +82,21 @@ STEP_UP_WINDOW = timedelta(minutes=10)
 TOKEN_BYTES = 32
 
 
+def new_session_token() -> str:
+    """A session token that satisfies the platform's own reference rule by construction.
+
+    ``token_hex``, not ``token_urlsafe``: urlsafe base64 can start with ``-`` or ``_``
+    (2 of 64 first characters), and ``primitives._REF_TOKEN`` requires an alphanumeric
+    first character. A token the platform itself refuses ~3% of the time is a login that
+    fails at random. 256 bits either way.
+
+    Both call sites — ``open_session`` and ``rotate`` — must come through here. ``rotate``
+    kept its own ``token_urlsafe`` after ``open_session`` was corrected, so roughly one
+    rotation in thirty died with INVALID_FIELD long after the login that opened it.
+    """
+    return secrets.token_hex(TOKEN_BYTES)
+
+
 # --------------------------------------------------------------------------- #
 # Errors
 # --------------------------------------------------------------------------- #
@@ -517,12 +532,7 @@ class SessionService:
             self.verify_factor_code(who, mfa_code, at=at)
             mfa_satisfied_at = to_iso(moment)
 
-        # token_hex, not token_urlsafe: urlsafe base64 can start with "-" or "_",
-        # which the platform's own opaque-reference rule (`primitives._REF_TOKEN`,
-        # first character must be alphanumeric) rejects. A token that the system
-        # refuses to accept 3% of the time is a login that fails at random, so the
-        # generator must satisfy the validator by construction — 256 bits either way.
-        token = secrets.token_hex(TOKEN_BYTES)
+        token = new_session_token()
         session_id = self.ids.new("sess")
         issued = to_iso(moment)
         idle_until = to_iso(moment + self.idle_timeout)
@@ -582,7 +592,7 @@ class SessionService:
         """Replace a token: the old one stops working in the same transaction."""
         session = self.authenticate(token, at=at, touch=False)
         moment = self._now() if at is None else self._moment(at)
-        new_token = secrets.token_urlsafe(TOKEN_BYTES)
+        new_token = new_session_token()
         self.conn.execute(
             "UPDATE auth_sessions SET token_sha256 = ?, last_seen_at = ?, idle_expires_at = ?"
             " WHERE session_id = ? AND agency_id = ?",

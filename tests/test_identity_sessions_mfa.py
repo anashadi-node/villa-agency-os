@@ -15,6 +15,8 @@ been used cannot be used again**.
 
 from __future__ import annotations
 
+import ast
+import pathlib
 from datetime import timedelta
 
 import pytest
@@ -329,3 +331,44 @@ def test_every_generated_session_token_is_accepted_by_the_reference_rule(conn):
     for _ in range(500):
         token = svc.open_session("agent-1", "reservation", at=START).token
         assert require_ref(token, "token") == token
+
+
+def test_every_rotated_session_token_is_accepted_by_the_reference_rule(conn):
+    """The same rule at the *second* call site.
+
+    ``rotate`` kept its own ``token_urlsafe`` after ``open_session`` was corrected, so
+    the test above stayed green while roughly one rotation in thirty died with
+    INVALID_FIELD — and the failure lands on the *next* request, not on the rotation that
+    caused it. ``rotate`` is driven through the service, not through the helper, so a
+    future call site that bypasses the helper fails here too.
+    """
+    from primitives import require_ref
+
+    svc = service(conn, "agency_bali")
+    token = svc.open_session("agent-1", "reservation", at=START).token
+    for _ in range(500):
+        token = svc.rotate(token, at=START).token
+        assert require_ref(token, "token") == token
+
+
+def test_the_session_token_generator_has_exactly_one_home():
+    """A guard, because the defect was a second call site rather than a wrong rule.
+
+    ``rotate`` carried ``token_urlsafe`` for as long as nobody looked. The scan is over
+    the parsed tree, not the text: the docstring above names the rejected generator on
+    purpose, and a guard that cannot tell prose from a call is a guard that gets deleted.
+    """
+    source = (pathlib.Path(__file__).resolve().parents[1] / "src" / "identity.py").read_text()
+    tree = ast.parse(source)
+    hand_rolled = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "token_urlsafe"
+    ]
+    assert not hand_rolled, "identity.py must issue session tokens only through new_session_token()"
+    definitions = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "new_session_token"
+    ]
+    assert len(definitions) == 1
