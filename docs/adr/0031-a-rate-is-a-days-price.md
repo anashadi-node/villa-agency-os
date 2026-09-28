@@ -91,6 +91,7 @@ is WIB (UTC+7). Between 00:00 and 07:00 WIB those two disagree.
   `finance.booking.financial_gates`, `operations.incident.escalation_minutes_by_severity` and
   `retention.records.retention_days_by_class` — all of them keys no production code reads yet, so
   publishing a value would change no behaviour. `make policy-status` is the live list.
+  **ADR-0032 publishes all six on 2026-09-28, so the count is zero and the catalogue is complete.**
 - The provider's quote is a *day's* close, so the value changes once a day; re-running the tool
   inside the same day reports `UNCHANGED` and publishes no new revision.
 - `scripts/refresh_fx_rate.py` writes to the database named by `VILLA_DB` and refuses to guess one,

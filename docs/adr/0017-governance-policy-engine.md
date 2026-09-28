@@ -64,13 +64,11 @@ place in it.
    There is no default value and no "closest" revision: a number that was never published is
    never invented.
 
-5. **Eight catalogue keys were left unpublished when this was written; six remain as of
-   2026-09-28** (the three discount values were published in ADR-0029, and the two FX keys in
-   ADR-0031 — one published, one added, so the count is unchanged from ADR-0030). `retention.records.retention_days_by_class`
-   (the spec itself leaves retention periods OPEN in §49), plus the discount authority, margin
-   floor, payment thresholds, booking financial gates, hold reminders, reconfirmation freshness
-   and incident escalation. The catalogue names them so they can be decided, and resolution
-   refuses until they are — an honest refusal instead of a plausible-looking constant.
+5. **Eight catalogue keys were left unpublished when this was written; all of them are published
+   as of 2026-09-28** (the three discount values in ADR-0029, the two FX keys in ADR-0031, and the
+   last six in ADR-0032). The catalogue names them so they can be decided, and resolution refuses
+   until they are — an honest refusal instead of a plausible-looking constant. The count was never
+   a defect: `make policy-status` reports it, and it is authoritative over this sentence.
 
 6. **One policy, one home.** Client deposit %, quote validity, hold TTL and the discount
    ceiling stay in `policy_versions`, where they are already versioned, cited and approved.
@@ -104,11 +102,9 @@ place in it.
   `owner`/`finance`. Reconciling them changes approval behaviour, so it is not done here.
 - Open: the transactional outbox and the full twelve-role RBAC remain WAVE 1 foundations not yet
   built.
-- Open: the unpublished catalogue keys — six as of 2026-09-28 (ADR-0031; the current set is
-  `availability.hold.reminder_minutes`, `availability.reconfirmation.freshness_hours`,
-  `finance.approval.payment_thresholds_minor`, `finance.booking.financial_gates`,
-  `operations.incident.escalation_minutes_by_severity`,
-  `retention.records.retention_days_by_class`) — need owner decisions before the finance and
-  availability gates that depend on them can be enforced rather than refused.
+- **Closed 2026-09-28:** the unpublished catalogue keys. Six remained when this ADR was written;
+  **ADR-0032 publishes all six**, so the catalogue is complete at 25 of 25. What is still missing
+  is not a value but the gates that read them — the finance and availability gates that depend on
+  these keys are still to be built, and until they exist the published values decide nothing.
 - Open: only one consumer is wired. The remaining constants (`approvals`, `gates`) are pinned by
   the drift guard but still read from code until their callers are migrated.

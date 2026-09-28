@@ -41,6 +41,8 @@ proceeded wave by wave, each recorded in an ADR rather than by editing these row
 | Gate hardening | the pre-deploy gate now runs on the interpreter that serves production (`/usr/bin/python3`, 3.12.3 / SQLite 3.45.1) rather than whatever `python3` resolves to, and `lint` joined `check`; removing a duplicated `-q` restored the test count, so the gate can no longer print PASS without saying how many tests ran. Its first run under the real interpreter exposed a genuine defect: `identity.rotate()` issued `token_urlsafe` tokens its own validator refuses (~3% of rotations, and the failure landed on the *next* request) | `Makefile`, `src/identity.py`, `tests/test_identity_sessions_mfa.py` |
 | Demo data removed | `data/villa.db` rebuilt without the 48 demo rows, so preflight stops failing on demo markers; the 8 owner-published policy revisions were carried over verbatim (identical fingerprints) and the demo copy is kept as `data/villa.db.demo-20260928.bak` | `data/villa.db` (gitignored), `scripts/preflight.py` |
 
+| Owner act | **The last six catalogue keys are published** (ADR-0032, 2026-09-28): hold reminder 2 h, reconfirmation 2 days, payment approval by Finance+Manager with the owner reading periodic reports only, booking gates taken from each villa's contract, incident escalation 5/20/40/80 min, and retention per class P0–P4 with P3 destroyed 7 days after check-out. The catalogue is complete at **25 of 25**, and no module reads any of the six, so no behaviour changed | `data/villa.db` (gitignored), `docs/adr/0032-*` |
+
 Read a row's classification as "what the baseline found", and the ADRs as "what was decided".
 
 ## Executive assessment

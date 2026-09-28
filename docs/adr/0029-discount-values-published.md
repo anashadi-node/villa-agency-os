@@ -51,3 +51,4 @@ absolute floor as an integer count of minor units — USD 25 is `2500`, not `25`
      (`commercial.fx.rates`), because converting the floor needs a published rate; **ADR-0031
      publishes it and the limit beside it, leaving six again.** The count is
      runtime state: `make policy-status` reports it, and it is authoritative over this sentence.
+     **ADR-0032 then publishes those last six on 2026-09-28, so the count is zero.**
