@@ -35,7 +35,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from policy_engine import (  # noqa: E402  (path setup must run first)
     PolicyError,
     PolicyResolver,
-    PolicyValue,
     PolicyValueNotPublished,
 )
 from primitives import DomainError, IdFactory, SystemClock  # noqa: E402

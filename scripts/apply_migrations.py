@@ -30,6 +30,7 @@ import datetime
 import os
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
@@ -45,7 +46,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 """
 
 
-def fail(message: str, code: int = 2) -> "NoReturn":  # type: ignore[name-defined]
+def fail(message: str, code: int = 2) -> NoReturn:
     print(f"REFUSED: {message}", file=sys.stderr)
     raise SystemExit(code)
 

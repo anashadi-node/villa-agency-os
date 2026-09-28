@@ -927,7 +927,7 @@ class TestOverdueNotifications(IncidentTestCase):
                                   affected_refs=("guest_1",), source="siem_alert", at=at)
 
     def test_exactly_seventy_two_hours_is_not_overdue(self):
-        incident = self.breach()
+        self.breach()
         self.assertEqual(self.svc.overdue_notifications(self.start + 3 * DAY), ())
 
     def test_one_second_past_seventy_two_hours_is_overdue(self):

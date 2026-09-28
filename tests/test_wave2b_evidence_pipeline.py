@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 import evidence as EV
-from primitives import DomainError, FrozenClock, IdFactory
+from primitives import FrozenClock, IdFactory
 from schema_loader import connect_sqlite
 
 START = "2026-09-26T08:00:00+00:00"

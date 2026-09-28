@@ -135,7 +135,6 @@ def test_the_next_step_is_still_accepted_after_a_replay_refusal():
 
 
 def test_a_naive_datetime_is_refused():
-    secret = T.generate_secret()
     with pytest.raises(T.TOTPAlgorithmError):
         T.step_at(__import__("datetime").datetime(2026, 9, 26, 0, 0))
 

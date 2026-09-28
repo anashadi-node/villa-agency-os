@@ -13,8 +13,7 @@ import connectors as K
 import dashboard as D
 import incidents as INC
 import ops_tasks as OT
-from primitives import FrozenClock, IdFactory, canonical_json, sha256_hex, to_iso
-from schema_loader import connect_sqlite
+from primitives import FrozenClock, IdFactory, sha256_hex
 
 NOW = "2026-09-21T08:00:00Z"
 DUE = "2026-09-20T08:00:00+00:00"

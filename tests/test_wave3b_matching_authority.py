@@ -422,7 +422,7 @@ def test_a_case_from_another_agency_is_refused_and_writes_nothing(conn):
 def test_explaining_another_agencys_run_is_refused(conn):
     kernel = seed_base(conn)
     confirm(conn, "case_1", check_in=CHECK_IN, check_out=CHECK_OUT, adults="2")
-    result = M.match(conn, case_id="case_1", facts=None, kernel=kernel, now=NOW, ids=IdFactory(seed="m15"))
+    M.match(conn, case_id="case_1", facts=None, kernel=kernel, now=NOW, ids=IdFactory(seed="m15"))
     run_id = run_ids(conn)[0]
 
     # positive control: the owning agency can explain it

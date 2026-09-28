@@ -17,14 +17,11 @@ GROUP BY label.
 
 from __future__ import annotations
 
-import pytest
-
 import approvals as A
 import documents as DOC
 import invoicing as INV
 import observability as OBS
 from primitives import FrozenClock, IdFactory
-from schema_loader import connect_sqlite
 
 NOW = "2026-09-21T08:00:00+00:00"
 LATER = "2026-09-21T09:00:00+00:00"

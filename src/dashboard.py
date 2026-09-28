@@ -1371,7 +1371,6 @@ class Dashboard:
     def view_inventory(self, principal: Principal) -> dict[str, Any]:
         today = self.clock.today()
         days = [today + timedelta(days=offset) for offset in range(CALENDAR_DAYS)]
-        now = to_iso(self.clock.now())
         units = self._rows(
             "SELECT u.*, p.name AS property_name FROM units u "
             "JOIN properties p ON p.property_id = u.property_id "

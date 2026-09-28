@@ -11,8 +11,6 @@ did not cause, and `ops_tasks.idempotency_key` had the same global shape.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 import ops_tasks as OT

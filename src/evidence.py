@@ -629,7 +629,6 @@ class EvidenceService:
             "SELECT * FROM evidence_access_grants WHERE grant_id = ? AND agency_id = ?",
             (require_ref(grant_id, "grant_id"), self.agency_id),
         ).fetchone()
-        evidence_key = None if row is None else str(row["evidence_id"])
         moment = (self.clock.now() if at is None else parse_iso(at)).astimezone(UTC)
         if row is None:
             self._event(None, "ACCESS_DENIED", actor=actor, actor_role=actor_role,

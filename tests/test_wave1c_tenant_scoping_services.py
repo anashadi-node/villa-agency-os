@@ -15,7 +15,6 @@ import documents as D
 import invoicing as INV
 import payments as PAY
 import primitives as P
-from schema_loader import connect_sqlite
 
 NOW = "2026-09-21T08:00:00+00:00"
 FINGERPRINT = "c" * 64
