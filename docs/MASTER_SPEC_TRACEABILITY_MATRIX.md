@@ -37,6 +37,10 @@ proceeded wave by wave, each recorded in an ADR rather than by editing these row
 | WAVE 4-E | the absolute floor carries a currency (§11): one count cannot say what it is worth, so `commercial.margin_floor_minor` is denominated in a new `commercial.margin_floor_currency`, and a booking in any other currency has the floor converted through a new `commercial.fx.rates` table — published, never assumed. The conversion rounds a *minimum* up, refuses a float, an unknown ISO-4217 code, and a missing pair, and the decision records both the published number and the currency it became | `docs/adr/0030-*`, `src/fx.py`, `src/discounts.py`, `src/schema/004_currency_aware_margin_floor.sql`, `tests/test_fx.py`, `tests/test_wave4d_discount_engine.py` |
 | WAVE 4-F | the rate is a day's price and has a birthday (§11): `scripts/refresh_fx_rate.py` fetches the day's real rate from a public provider and publishes it with the provider's own quote time as its provenance, refusing a payload with no quote time, a provider-reported failure, a foreign base, an inexact or non-positive rate, a quote the provider itself dates past the feed limit, a future-dated quote, and a move larger than the band. A new `commercial.fx.max_age_hours` (owner: 48) is the reader's limit: `src/fx.require_fresh` refuses a conversion on a rate older than that, applied in whole days with the tighter day winning, and an unpublished limit refuses every conversion | `docs/adr/0031-*`, `scripts/refresh_fx_rate.py`, `src/fx.py`, `src/discounts.py`, `src/schema/005_fx_rate_max_age_hours.sql`, `tests/test_refresh_fx_rate.py`, `tests/test_wave4d_discount_engine.py` |
 
+| Owner act | **ADR-0003 … ADR-0010 accepted** (owner decision, 2026-09-28): the brownfield adoption, the runtime/API direction, the migration strategy, the outbox, document security, the AI boundary and the deployment/gate direction are ratified **as written** — no parameter changed, and each ADR's own open items stay open | `docs/adr/0003-*` … `docs/adr/0010-*` |
+| Gate hardening | the pre-deploy gate now runs on the interpreter that serves production (`/usr/bin/python3`, 3.12.3 / SQLite 3.45.1) rather than whatever `python3` resolves to, and `lint` joined `check`; removing a duplicated `-q` restored the test count, so the gate can no longer print PASS without saying how many tests ran. Its first run under the real interpreter exposed a genuine defect: `identity.rotate()` issued `token_urlsafe` tokens its own validator refuses (~3% of rotations, and the failure landed on the *next* request) | `Makefile`, `src/identity.py`, `tests/test_identity_sessions_mfa.py` |
+| Demo data removed | `data/villa.db` rebuilt without the 48 demo rows, so preflight stops failing on demo markers; the 8 owner-published policy revisions were carried over verbatim (identical fingerprints) and the demo copy is kept as `data/villa.db.demo-20260928.bak` | `data/villa.db` (gitignored), `scripts/preflight.py` |
+
 Read a row's classification as "what the baseline found", and the ADRs as "what was decided".
 
 ## Executive assessment
@@ -174,6 +178,7 @@ document quarantine rather than only the relationship/contract/rate skeleton.
 
 ### Wave 0 status
 
-**CONDITIONAL GO** (unchanged in kind). Conditions: ADR-0011…0014 accepted; WAVE 1 foundational
+**CONDITIONAL GO** (unchanged in kind). Conditions: ADR-0003…ADR-0014 accepted (ADR-0011…0014 on
+2026-09-26, ADR-0003…0010 on 2026-09-28); WAVE 1 foundational
 items complete before WAVE 6; explicit owner approval for any payment/stablecoin/reference schema
 change; and the en-US migration scheduled (a locked requirement currently unmet).

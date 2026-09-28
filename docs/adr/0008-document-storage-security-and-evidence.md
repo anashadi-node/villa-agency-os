@@ -1,7 +1,7 @@
 # ADR-0008 — Document Storage, Quarantine, and Evidence Security
 
-- Status: **PROPOSED — pending owner review**
-- Date: 2026-09-22
+- Status: **ACCEPTED** (owner decision, 2026-09-28)
+- Date: 2026-09-22 · accepted 2026-09-28
 
 ## Context
 

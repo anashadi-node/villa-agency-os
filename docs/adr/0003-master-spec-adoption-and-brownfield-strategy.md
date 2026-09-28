@@ -1,7 +1,7 @@
 # ADR-0003 — Master Spec Adoption and Brownfield Strategy
 
-- Status: **PROPOSED — pending owner review**
-- Date: 2026-09-22
+- Status: **ACCEPTED** (owner decision, 2026-09-28)
+- Date: 2026-09-22 · accepted 2026-09-28
 - Source of truth: `Villa Agency OS — Hermes Super Dev Suite Master Specification`, version 1.0 Final Architecture Freeze
 
 ## Context

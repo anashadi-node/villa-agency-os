@@ -1,7 +1,7 @@
 # ADR-0004 — Runtime, API, and Frontend Stack Direction
 
-- Status: **PROPOSED — pending owner review**
-- Date: 2026-09-22
+- Status: **ACCEPTED** (owner decision, 2026-09-28)
+- Date: 2026-09-22 · accepted 2026-09-28
 - Decision type: controlled open decision from Master Spec §38/§52
 
 ## Context
