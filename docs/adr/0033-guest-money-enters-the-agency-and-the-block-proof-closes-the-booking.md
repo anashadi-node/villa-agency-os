@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-09-28
 - Deciders: owner
+- Amended by: ADR-0034 (the three hold stages, and what each one is in the platform)
 - Spec: Master Spec §13, §14, §24, §58; AI Workforce Architecture V1.1 §2A.4, §11, §15, §16
 
 ## Context

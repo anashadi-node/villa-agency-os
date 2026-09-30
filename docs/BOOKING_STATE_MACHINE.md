@@ -36,6 +36,25 @@ langsung dari DDL; kalau DDL berubah dan modul tidak, import akan gagal (fail cl
 (`TERMINAL_STATES`), dan status terminal **tidak pernah** bisa berpindah lagi
 (`TERMINAL_STATE`, diuji untuk 32 target).
 
+### Tahapan hold menurut bahasa bisnis (ADR-0034)
+
+Tim reservasi memakai tiga nama tahap. Ketiganya **label**, bukan status baru — dan
+setiap label mendarat di status kanonik yang sudah ada:
+
+| Tahap (bahasa bisnis) | Status booking | Status hold | Syarat yang harus benar |
+|---|---|---|---|
+| **1. Tentative Holding** | `HOLD_REQUESTED` | `REQUESTED` / `AWAITING_SUPPLIER` | unit ditahan sementara tamu memutuskan; **villa belum mengonfirmasi** hold |
+| **2. Request Hold** | `HOLD_ACTIVE` -> `PAYMENT_PENDING` | `CONFIRMED` | **villa sudah mengonfirmasi** hold — uang tidak pernah diterima atas hold yang belum dikonfirmasi |
+| **3. Holding Booking Confirmed / Villa Booked** | `DEPOSIT_PAID` / `PAID_IN_FULL` -> `CONFIRMED` | `CONVERTED` | dana terverifikasi masuk ke akun agency (ADR-0033); `CONFIRMED` masih menuntut bukti block dari villa |
+| **batal / tamu tidak membayar** | `CANCELLED` | `RELEASE_REQUESTED` -> `RELEASE_CONFIRMED` | Reservation mengirim surat/email release hold ke villa |
+
+**Satu tempat label dan status berbeda — jangan sampai tertukar:** tahap 3 disebut
+*"Booking Confirmed"*, tapi status `CONFIRMED` baru dicapai setelah bukti block dari
+villa diterima (ADR-0033). Dana masuk saja = `DEPOSIT_PAID` / `PAID_IN_FULL`. Laporan
+yang menghitung `CONFIRMED` sebagai "uang masuk" akan **kurang hitung** booking yang
+sudah dibayar; laporan yang menghitung `DEPOSIT_PAID` sebagai "sudah booked penuh"
+akan **lebih hitung**.
+
 ### Status yang menempati slot (occupying)
 
 Delapan status: `CONFIRMED`, `BALANCE_DUE`, `BALANCE_OVERDUE`, `PRE_ARRIVAL`, `IN_STAY`,

@@ -43,6 +43,8 @@ proceeded wave by wave, each recorded in an ADR rather than by editing these row
 
 | Owner act | **The last six catalogue keys are published** (ADR-0032, 2026-09-28): hold reminder 2 h, reconfirmation 2 days, payment approval by Finance+Manager with the owner reading periodic reports only, booking gates taken from each villa's contract, incident escalation 5/20/40/80 min, and retention per class P0–P4 with P3 destroyed 7 days after check-out. The catalogue is complete at **25 of 25**, and no module reads any of the six, so no behaviour changed | `data/villa.db` (gitignored), `docs/adr/0032-*` |
 
+| Owner act | **D1 decided in half, and the hold stages named** (ADR-0033, ADR-0034, 2026-09-28): the agency is the merchant of record — guest money enters the agency, the villa is paid by the agency — and the journey runs `Tentative Holding` → `Request Hold` → `Villa Booked`, with a release letter to the villa when the guest never pays or cancels. **No new state was needed**: the whole journey lands on states the graph already had, and the money flow lands on guards that already demand evidence | `docs/adr/0033-*`, `docs/adr/0034-*`, `docs/BOOKING_STATE_MACHINE.md`, `docs/GO_LIVE_DECISIONS.md` (D1 value recorded, row stays OPEN on the provider half) |
+
 Read a row's classification as "what the baseline found", and the ADRs as "what was decided".
 
 ## Executive assessment
