@@ -27,7 +27,7 @@ ini. Bukti cukup berupa rujukan (mis. `docs/legal/kontrak-owner-2026-09.md`).
 
 | # | Keputusan | Blocking | Status | Nilai yang diputuskan | Diputuskan oleh | Tanggal | Bukti |
 |---|-----------|----------|--------|-----------------------|-----------------|---------|-------|
-| D1 | Provider pembayaran & model merchant-of-record (siapa menerima uang tamu) | BLOCKING | OPEN | | | | |
+| D1 | Provider pembayaran & model merchant-of-record (siapa menerima uang tamu) | BLOCKING | OPEN | **Merchant of record = AGENCY** (uang tamu wajib masuk ke agency; villa dibayar oleh agency). Alur 6 langkah: tamu bayar -> Finance verifikasi & lapor ke Reservation -> Reservation konfirmasi ke tamu (booked) -> Reservation update ke Villa Management/Owner (Booked confirmed, bukan Hold) -> villa WAJIB kirim bukti surat/email unit di-Blocked -> booking CONFIRMED. **Provider per rel masih OPEN.** | owner | 2026-09-28 | `docs/adr/0033-guest-money-enters-the-agency-and-the-block-proof-closes-the-booking.md` |
 | D2 | Daftar property pilot beserta model bisnisnya (agency commission / full management) | BLOCKING | OPEN | | | | |
 | D3 | Peran & orang: siapa reservation, finance, operations, owner, auditor | BLOCKING | OPEN | | | | |
 | D4 | SLA yang disetujui bisnis (first response, quote, rekonsiliasi ≤48 jam, komplain) | BLOCKING | OPEN | | | | |
