@@ -1,7 +1,7 @@
 # ADR-0034 — The three hold stages the business uses, and what each one is in the platform
 
 - Status: Accepted
-- Date: 2026-09-28
+- Date: 2026-09-28 (owner decision) · written 2026-09-30
 - Deciders: owner
 - Amends: ADR-0033 (the money flow), ADR-0020 (the hold lifecycle), ADR-0019 (vocabulary discipline)
 - Spec: Master Spec §7, §11, Appendix A; AI Workforce Architecture V1.1 §16

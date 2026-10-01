@@ -1,7 +1,7 @@
 # ADR-0036 — Money leaves by a human hand, the account changes by a human hand, and the GM agrees first
 
 - Status: Accepted
-- Date: 2026-09-28
+- Date: 2026-09-28 (owner decision) · written 2026-10-01
 - Deciders: owner
 - Amends: ADR-0035 (the approval ladder gains a GM tier), ADR-0033 (the money flow gains an explicit executor step)
 - Spec: Master Spec §13, §24, Appendix A; AI Workforce Architecture V1.1 §2A.3, §11, §16

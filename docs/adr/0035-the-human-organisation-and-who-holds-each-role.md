@@ -1,7 +1,7 @@
-# ADR-0035 — The human organisation: seven holders, three deferred, two reserved for AI, and a new Greeting Service
+# ADR-0035 — The human organisation: seven holders, three deferred, two deleted for the AI maker, and a new Greeting Service
 
 - Status: Accepted
-- Date: 2026-09-28
+- Date: 2026-09-28 (owner decision) · written 2026-10-01
 - Deciders: owner
 - Amends: ADR-0017 and ADR-0018 (both carried "the role vocabulary needs an owner decision" as an open item)
 - Spec: Master Spec §18; AI Workforce Architecture V1.1 §2, §2A.1, §21

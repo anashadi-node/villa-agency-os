@@ -1,7 +1,7 @@
 # ADR-0033 — Guest money enters the agency, and the villa's block proof closes the booking
 
 - Status: Accepted
-- Date: 2026-09-28
+- Date: 2026-09-28 (owner decision) · written 2026-09-30
 - Deciders: owner
 - Amended by: ADR-0034 (the three hold stages, and what each one is in the platform)
 - Spec: Master Spec §13, §14, §24, §58; AI Workforce Architecture V1.1 §2A.4, §11, §15, §16
