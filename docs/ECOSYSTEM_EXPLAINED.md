@@ -162,7 +162,28 @@ Yang dihapus adalah **peran manusianya**. Yang **tidak** boleh dihapus adalah **
 |---|---|---|
 | Uang keluar: refund, bayar villa, ubah rekening | AI | **Ms. FAM** |
 | Harga di bawah batas: diskon | AI | **Ms. RM** |
-| Transaksi harian | — | **Owner TIDAK meng-approve.** Sesuai keputusan Anda di key #3: Owner menerima **laporan berkala** (harian/mingguan/bulanan) dan **mengoreksi anomali**. GM juga menerima laporan, bukan tombol approve. |
+| Transaksi harian | — | **Owner TIDAK meng-approve.** Sesuai keputusan Anda di key #3: Owner menerima **laporan berkala** (harian/mingguan/bulanan) dan **mengoreksi anomali**. GM **memang** meng-approve — lihat bagian di bawah. |
+
+### Tiga aturan uang (keputusan Anda, 2026-09-28)
+
+1. **Transfer dana nyata WAJIB dilakukan manusia.** AI hanya memberi **laporan**: apa yang harus dibayar, ke siapa, berapa, atas kontrak/tagihan mana.
+2. **Ubah nomor rekening / account tujuan transfer WAJIB dilakukan manusia.** AI boleh mencatat permintaannya; tidak boleh mengubah atau menyetujuinya.
+3. **Semuanya wajib persetujuan GM/CEO lebih dulu — APPROVE BERJENJANG.**
+
+| Langkah | Siapa | Menghasilkan |
+|---|---|---|
+| 1 | **AI** (Finance Admin AI, nanti) | laporan: apa yang harus dibayar, ke siapa, berapa, atas dokumen mana |
+| 2 | **Ms. FAM** (Finance & Accounting Manager) | persetujuan tingkat 1 |
+| 3 | **Mr. CEO** (General Manager) | persetujuan tingkat 2 |
+| 4 | **manusia** — Ms. FAM | **transfer benar-benar dieksekusi, dengan tangan** |
+
+**Kabar bagusnya: aturan 1 dan 2 SUDAH berlaku di sistem sekarang** — tidak perlu kode baru. Daftar larangan AI (`security.ai.denied_actions`) sudah memuat `payment.execute`, `payment.approve`, `refund.execute`, `bank.change`, `bank.approve`, `crypto.transfer`, `treasury.control`. Jadi AI di sistem ini memang **tidak bisa** memindahkan uang atau mengubah rekening.
+
+**Yang masih baru: aturan 3.** Tingkat GM belum ada di kode, jadi ini masuk pekerjaan RBAC.
+
+**Kenapa Ms. FAM boleh menyetujui lalu mengeksekusi?** Karena persetujuannya **terikat pada sidik jari permintaan** (`request_fingerprint`): kalau jumlah atau nomor rekening berubah **satu digit pun** setelah disetujui, **persetujuannya batal** dan harus diminta ulang. Bukti di kode: `src/approvals.py:1020` menolak persetujuan yang sidik jarinya tidak lagi cocok. Jadi uang tidak bisa "bergeser" di antara persetujuan dan eksekusi.
+
+**Ongkos aturan 3, saya sebut apa adanya:** GM sekarang ada di **setiap** jalur uang keluar. Persetujuan berisiko tinggi kedaluwarsa dalam **240 menit**, jadi GM yang tidur, terbang, atau rapat akan **menahan pembayaran** — dan permintaan yang kedaluwarsa harus diajukan ulang dari awal. Itu tukar-tambah yang Anda pilih secara sadar: kontrol ditukar dengan kecepatan. Kalau nanti terasa mengganggu, jalan tengah yang standar adalah **ambang nilai** (pembayaran rutin di bawah angka tertentu cukup Finance Manager; di atas itu baru GM). **Belum saya terapkan** — saya catat supaya opsinya terlihat, bukan supaya Anda tersandung nanti.
 
 **Perubahan pada tabel di atas:** baris **Guest Service dihapus** dan digantikan **Greeting Service Team** yang tugasnya berbeda — **mengunjungi tamu di villa** untuk mendapat masukan, sekaligus menjaga hubungan dengan manajemen villa dan kru villa. Ini **peran lapangan**, bukan peran meja: ia perlu melihat data siapa menginap di mana dan kapan (untuk merencanakan kunjungan) serta mencatat hasil kunjungan — dan **tidak** perlu wewenang booking, pembayaran, atau persetujuan.
 
