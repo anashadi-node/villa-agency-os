@@ -253,11 +253,35 @@ class TestSchemaContract(ApprovalTestCase):
         self.assertEqual(DUAL_CONTROL_MIN_APPROVALS, 2)
 
     def test_role_ranks_and_expiry_defaults_cover_every_risk_level(self):
-        """Ranking is total and ordered; every risk level has an expiry default."""
-        self.assertEqual(set(ROLE_RANK), {"agent", "manager", "accountant", "owner"})
+        """Ranking is total and ordered; every risk level has an expiry default.
+
+        The ladder's one home is ``roles`` (ADR-0035 §5 reconciliation): canonical ids,
+        ADR-0036's ``gm`` tier between the Finance Manager and the Owner, and the legacy
+        names kept as aliases so written rows still rank. ``gm`` is new; ranks 1–3 are the
+        integers the ladder already used under their canonical names.
+        """
         self.assertEqual(
-            [ROLE_RANK[role] for role in ("agent", "manager", "accountant", "owner")],
-            [1, 2, 3, 4],
+            set(ROLE_RANK),
+            {
+                "reservation_agent",
+                "reservation_manager",
+                "finance_manager",
+                "gm",
+                "owner",
+            },
+        )
+        self.assertEqual(
+            [
+                ROLE_RANK[role]
+                for role in (
+                    "reservation_agent",
+                    "reservation_manager",
+                    "finance_manager",
+                    "gm",
+                    "owner",
+                )
+            ],
+            [1, 2, 3, 4, 5],
         )
         self.assertEqual(set(EXPIRY_MINUTES), set(RISK_LEVELS))
         self.assertEqual(EXPIRY_MINUTES, {"LOW": 1440, "MEDIUM": 720, "HIGH": 240})

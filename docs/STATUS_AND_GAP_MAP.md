@@ -22,7 +22,7 @@ Satu hal yang saya tegaskan di depan, karena ini akar semua yang di bawah: **pla
 | Domain: booking, hold, pembayaran, policy, bukti, identitas | ✅ **kuat** | 34 ADR, 3018 tes hijau, gerbang PASS, katalog policy 25/25 |
 | Lapisan **AI Workforce** (6 komponen dok Anda) | ⚠️ **0% dibangun** | 0 dari 6 komponen ada di kode |
 | Infrastruktur non-agent | ⚠️ **4 ada, 3 belum** | Policy/Approval/Identity/Audit ada; Outbox/Exception Engine/DLP belum |
-| Organisasi & peran (D3) | ❓ **menunggu Anda** | 3 kosakata hidup bersamaan, belum ada satu sumber |
+| Organisasi & peran (D3) | ✅ **DECIDED, kosakata sudah satu rumah** | ADR-0035 (§5 "3 kosakata hidup bersamaan") direkonsiliasi 2026-10-02 lewat `src/roles.py` + amendment ADR-0035: `approvals.ROLE_RANK` **adalah** `roles.ROLE_RANK`, nama lama tetap resolvable untuk baris historis, dan `gm` masuk tangga (rank 4). Sisa: `gm` belum punya peran halaman/sesi |
 | Kesiapan bisnis (go-live) | ❌ **14 keputusan OPEN** | Preflight: `NO-GO — 14 BLOCKING decision(s) still OPEN: D1…D14` |
 
 **Catatan penting:** `NO-GO` itu **bukan** karena software rusak. Semua 13 pemeriksaan sistem **OK**. Yang menahan adalah **keputusan bisnis** — dan itu memang disengaja: *"the system may be ready while the business is not"*.
@@ -125,8 +125,8 @@ Dokumen itu hanya disebut di `ADR-0033`, `ADR-0034` (yang saya tulis) dan matrik
 | ADR | Item terbuka |
 |---|---|
 | ADR-0016 | Policy engine untuk komunikasi AI ke tamu (§56); item option-set belum berharga |
-| ADR-0017 | Kosakata peran (D3); outbox + RBAC 12 peran; baru 1 konsumen policy engine terpasang |
-| ADR-0018 | Kosakata peran tidak konsisten (sama dengan D3) |
+| ADR-0017 | ~~Kosakata peran (D3)~~ **SELESAI 2026-10-02** (`src/roles.py`, amendment ADR-0035); sisa: outbox + RBAC peran halaman 12→16; baru 1 konsumen policy engine terpasang |
+| ADR-0018 | ~~Kosakata peran tidak konsisten~~ **SELESAI 2026-10-02** (satu rumah + tes matriks per-peran `tests/test_roles.py`) |
 | ADR-0020 | Bukti buatan sendiri di `request_hold`; baris extension menggantung; `verify_expired_hold` belum punya tombol |
 
 ---

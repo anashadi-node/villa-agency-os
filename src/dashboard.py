@@ -120,13 +120,16 @@ WILDCARD_HOSTS = ("0.0.0.0", "::", "[::]", "*", "")
 ROLES: tuple[str, ...] = ("reservation", "finance", "operations", "owner", "auditor")
 ALL_ROLES = ROLES
 
-#: Dashboard role → the role the approval kernel knows (``approvals.ROLE_RANK``).
-#: ``auditor`` is absent on purpose: an auditor reads, never decides.
+#: Dashboard role → the role the approval kernel knows (``approvals.ROLE_RANK``, whose one
+#: home is ``roles``). ``auditor`` is absent on purpose: an auditor reads, never decides.
+#: The values are the canonical ids of ADR-0035; the legacy names (``agent``, ``manager``,
+#: ``accountant``) still resolve through ``roles.ROLE_ALIASES`` so rows written before the
+#: reconciliation keep deciding, but nothing new is written under them.
 APPROVAL_ROLE_BY_ROLE: Mapping[str, str] = MappingProxyType(
     {
-        "reservation": "agent",
-        "operations": "manager",
-        "finance": "accountant",
+        "reservation": "reservation_agent",
+        "operations": "reservation_manager",
+        "finance": "finance_manager",
         "owner": "owner",
     }
 )

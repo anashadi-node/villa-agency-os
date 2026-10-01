@@ -2,6 +2,12 @@
 
 A go-live gate is only worth its output if a *failure* is proven to stop the
 deploy, so most of these tests assert the refusal, not the happy path.
+
+**Every class in this file must start with ``Test``.** pytest collects a plain class
+by the ``python_classes`` prefix (``Test*``), so a class named ``DemoDataTests`` is never
+run — its four refusal tests sat unexecuted until the rename, and one of them had gone
+stale in the meantime. ``unittest.TestCase`` subclasses are exempt: they are collected
+regardless of their name.
 """
 
 from __future__ import annotations
@@ -42,7 +48,7 @@ ONE_OPEN = """# Keputusan
 NO_ROWS = "# Keputusan\n\nbelum ada tabel\n"
 
 
-class DecisionTests:
+class TestDecisions:
     pass
 
 
@@ -83,7 +89,7 @@ def test_the_real_decisions_file_blocks_go_live():
     assert len(open_blocking) >= 10
 
 
-class DemoDataTests(SeedMixin):
+class TestDemoData(SeedMixin):
     def setup_method(self):
         self.conn = connect_sqlite(":memory:")
         self.inventory()
@@ -95,6 +101,10 @@ class DemoDataTests(SeedMixin):
         assert PF.check_demo_data(self.conn).verdict == PF.OK
 
     def test_a_demo_prefixed_id_is_refused(self):
+        # The rename trips a foreign key (units point at the property). This test is about the
+        # demo *detector*, not about referential integrity, so enforcement is relaxed for the
+        # setup — it never ran before because the class did not start with "Test".
+        self.conn.execute("PRAGMA foreign_keys = OFF")
         self.conn.execute(
             "UPDATE properties SET property_id = 'demo_prop_1' WHERE property_id = 'prop_0001'"
         )
@@ -154,7 +164,7 @@ def test_environment_check_reports_missing_names():
         os.environ.pop("VILLA_PREFLIGHT_TEST", None)
 
 
-class CliTests:
+class TestCli:
     """The CLI is what a human runs at 23:00 before a launch."""
 
     def _run(self, *args: str, env: dict | None = None) -> subprocess.CompletedProcess[str]:
@@ -177,7 +187,7 @@ def _make_db(path: Path) -> None:
 def test_no_go_when_decisions_are_open_and_anchor_is_missing(tmp_path):
     db = tmp_path / "villa.db"
     _make_db(db)
-    result = CliTests()._run("--db", str(db), "--anchor-dir", str(tmp_path / "anchors"))
+    result = TestCli()._run("--db", str(db), "--anchor-dir", str(tmp_path / "anchors"))
     assert result.returncode == 1
     assert "NO-GO" in result.stdout
     assert "published anchor" in result.stdout
@@ -209,7 +219,7 @@ def test_go_when_everyhing_checks_out(tmp_path):
     backup = tmp_path / "villa-backup.sqlite"
     backup.write_bytes(b"x" * 8192)
 
-    result = CliTests()._run(
+    result = TestCli()._run(
         "--db", str(db), "--anchor-dir", str(anchors), "--decisions", str(decisions),
         "--backup", str(backup),
     )
@@ -241,3 +251,77 @@ def test_a_stale_anchor_stops_the_deploy(tmp_path, monkeypatch):
         conn.close()
     verdicts = {c.name: c.verdict for c in checks}
     assert verdicts["published anchor"] == PF.FAIL
+
+
+class TestPublishedPolicyLadderRoles:
+    """A published policy value may not name a role the engine cannot rank (ADR-0035/0036).
+
+    The drift this catches was real: ``finance.approval.payment_thresholds_minor`` was
+    published naming ``["finance_manager", "gm"]`` while neither name existed in the approval
+    ladder. Nothing read the value yet, so nothing failed, and the first real payment would
+    have been refused with a cause that named no cause.
+    """
+
+    KEY = PF.PAYMENT_POLICY_KEY
+
+    def _publish(self, conn, value: str, version: int = 1) -> None:
+        from policy_engine import PolicyResolver
+
+        resolver = PolicyResolver(
+            conn, clock=FrozenClock.at("2026-09-26T09:00:00Z"), agency_id="agency_default"
+        )
+        resolver.publish(
+            self.KEY,
+            value,
+            effective_from="2026-09-26",
+            effective_to="9999-12-31",
+            source_doc_ref="ADR-0036 ladder",
+            approved_by="owner_anas",
+        )
+
+    def test_an_unpublished_key_is_a_warning_not_a_failure(self, conn):
+        """The owner has not decided yet — that is a state, not a defect."""
+        check = PF.check_published_ladder_roles(conn)
+        assert check.verdict == PF.WARN
+        assert self.KEY in check.detail
+
+    def test_the_adr_0036_ladder_passes(self, conn):
+        self._publish(conn, '{"ladder": ["finance_manager", "gm"], "min_approvals": 2}')
+        check = PF.check_published_ladder_roles(conn)
+        assert check.verdict == PF.OK, check.detail
+        assert "finance_manager" in check.detail and "gm" in check.detail
+
+    def test_the_pre_reconciliation_shape_still_passes(self, conn):
+        """The older ``levels`` shape names legacy aliases, which must keep resolving."""
+        self._publish(conn, '{"levels": [{"min_minor": 0, "roles": ["finance", "manager"]}]}')
+        check = PF.check_published_ladder_roles(conn)
+        assert check.verdict == PF.OK, check.detail
+
+    def test_a_role_the_ladder_does_not_know_fails(self, conn):
+        self._publish(conn, '{"ladder": ["finance_manager", "head_of_everything"]}')
+        check = PF.check_published_ladder_roles(conn)
+        assert check.verdict == PF.FAIL
+        assert "head_of_everything" in check.detail
+
+    def test_a_role_with_no_rank_fails(self, conn):
+        self._publish(conn, '{"ladder": ["finance_manager", "auditor"]}')
+        check = PF.check_published_ladder_roles(conn)
+        assert check.verdict == PF.FAIL
+        assert "auditor" in check.detail
+
+    def test_a_ladder_that_descends_fails(self, conn):
+        self._publish(conn, '{"ladder": ["gm", "finance_manager"]}')
+        check = PF.check_published_ladder_roles(conn)
+        assert check.verdict == PF.FAIL
+
+    def test_a_value_naming_no_role_fails(self, conn):
+        self._publish(conn, '{"min_approvals": 2}')
+        check = PF.check_published_ladder_roles(conn)
+        assert check.verdict == PF.FAIL
+
+    def test_the_latest_revision_is_the_one_checked(self, conn):
+        """An old revision still governs old decisions, but the gate reads what is in force."""
+        self._publish(conn, '{"ladder": ["nobody"]}', version=1)
+        self._publish(conn, '{"ladder": ["finance_manager", "gm"]}')
+        check = PF.check_published_ladder_roles(conn)
+        assert check.verdict == PF.OK, check.detail

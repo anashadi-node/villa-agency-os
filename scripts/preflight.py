@@ -31,6 +31,7 @@ report can be pasted into a change ticket.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -47,6 +48,8 @@ from audit import AuditLog  # noqa: E402
 from observability import collect_metrics, health_checks  # noqa: E402
 from primitives import DomainError, SystemClock, parse_iso  # noqa: E402
 from schema_loader import SCHEMA_VERSION, applied_version, connect_sqlite  # noqa: E402
+
+import roles  # noqa: E402  (path setup must run first)
 
 OK = "OK"
 FAIL = "FAIL"
@@ -186,6 +189,7 @@ def check_database(db: Path, anchor_dir: Optional[Path]) -> list[Check]:
             checks.append(_check("referential integrity", OK, "no dangling references"))
 
         checks.append(check_demo_data(conn))
+        checks.append(check_published_ladder_roles(conn))
 
         health = health_checks(conn, clock=SystemClock(), anchor_dir=str(anchor_dir) if anchor_dir else None)
         critical = [c for c in health if c.severity == "CRITICAL"]
@@ -252,6 +256,91 @@ def _check_anchor(conn: Any, anchor_dir: Path) -> list[Check]:
 #: this marker, and names the properties in Indonesian so a human spots them too.
 DEMO_ID_PREFIX = "demo_"
 DEMO_NAME_HINTS = ("contoh", "demo")
+
+
+#: The §16 key whose published value names the roles that must approve a payment
+#: (ADR-0036). A value naming a role the engine cannot rank would answer the first real
+#: payment with a refusal that names no cause, so it is checked here and not only in tests:
+#: a fresh checkout has no database for a test to read.
+PAYMENT_POLICY_KEY = "finance.approval.payment_thresholds_minor"
+
+
+def _published_role_names(value: Any) -> list[str]:
+    """Every role name inside a published payment value, in either published shape.
+
+    Two shapes exist: ADR-0036's ``ladder`` (one ordered list) and the shape before it,
+    ``levels`` (a list of ``{min_minor, roles}``). Both are read, because the old revision
+    still governs any decision dated before the new one took effect.
+    """
+    names: list[str] = []
+    if not isinstance(value, dict):
+        return names
+    ladder = value.get("ladder")
+    if isinstance(ladder, list):
+        names.extend(str(entry) for entry in ladder)
+    levels = value.get("levels")
+    if isinstance(levels, list):
+        for level in levels:
+            if isinstance(level, dict) and isinstance(level.get("roles"), list):
+                names.extend(str(entry) for entry in level["roles"])
+    return names
+
+
+def check_published_ladder_roles(conn: Any) -> Check:
+    """The published payment policy must name roles the engine knows and can rank."""
+    row = conn.execute(
+        "SELECT version, value FROM policy_revisions WHERE policy_key = ?"
+        " ORDER BY version DESC LIMIT 1",
+        (PAYMENT_POLICY_KEY,),
+    ).fetchone()
+    if row is None:
+        return _check(
+            "policy role names", WARN, f"{PAYMENT_POLICY_KEY} has no published revision yet",
+        )
+    version, raw = row[0], row[1]
+    try:
+        value = json.loads(raw if isinstance(raw, str) else raw.decode("utf-8"))
+    except (TypeError, ValueError) as exc:
+        return _check(
+            "policy role names", FAIL, f"{PAYMENT_POLICY_KEY} v{version} is unreadable: {exc}",
+        )
+
+    names = _published_role_names(value)
+    if not names:
+        return _check(
+            "policy role names", FAIL,
+            f"{PAYMENT_POLICY_KEY} v{version} names no role at all",
+        )
+    unknown = [name for name in names if not roles.is_known_role(name)]
+    if unknown:
+        return _check(
+            "policy role names", FAIL,
+            f"{PAYMENT_POLICY_KEY} v{version} names {sorted(set(unknown))}, "
+            f"which the ladder does not know",
+        )
+    unranked = [name for name in names if roles.role_rank(name) is None]
+    if unranked:
+        return _check(
+            "policy role names", FAIL,
+            f"{PAYMENT_POLICY_KEY} v{version} names {sorted(set(unranked))}, "
+            f"which cannot decide anything",
+        )
+    ladder = value.get("ladder")
+    if isinstance(ladder, list):
+        try:
+            resolved = roles.approval_ladder(ladder)
+        except DomainError as exc:
+            return _check(
+                "policy role names", FAIL,
+                f"{PAYMENT_POLICY_KEY} v{version}: {exc.code} — {exc}",
+            )
+        return _check(
+            "policy role names", OK, f"v{version} ladder {list(resolved)}",
+        )
+    return _check(
+        "policy role names", OK,
+        f"v{version} names {[roles.canonical_role(name) for name in names]}",
+    )
 
 
 def check_demo_data(conn: Any) -> Check:

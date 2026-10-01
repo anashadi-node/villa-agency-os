@@ -163,3 +163,79 @@ telephoned — *"it's the boss, transfer it now, I'll sign later"* — and that 
 common ways villa and travel agencies lose money. An AI maker cannot be hurried, flattered, or
 pressured. The flip side is just as real: an AI has no judgement about a case that *looks*
 correct but is not, which is exactly why the **human checker matters more here, not less.**
+
+---
+
+## Amendment — 2026-10-02: the three lists are reconciled, and `gm` joins the ladder
+
+§5 recorded that the code held **three disagreeing vocabularies** and left the reconciliation to
+its own commit, with the per-role matrix test §18 requires. This amendment records that commit
+(`WAVE 5-A`), because a reader who finds `reservation_agent` in a row written in October and
+`agent` in one written in September will otherwise conclude the schema drifted.
+
+**One home.** `src/roles.py` is now the only place the human role vocabulary is written down.
+`approvals.ROLE_RANK` **is** `roles.ROLE_RANK` (the same object, not a copy — a second copy is
+free to drift), and the dashboard maps to the canonical ids.
+
+**The ladder** — ADR-0036's table, with only one new tier:
+
+| Rank | Canonical id (what new writes say) | Was | Who |
+|---|---|---|---|
+| 1 | `reservation_agent` | `agent` | the maker tier, **deleted as a human role** (§3) — reserved for `ai_service` |
+| 2 | `reservation_manager` | `manager` | Ms. RM — approves out-of-policy pricing |
+| 3 | `finance_manager` | `accountant` | Ms. FAM — approves money out |
+| 4 | **`gm`** | *(new)* | Mr. CEO — ADR-0036 tier 2 |
+| 5 | `owner` | `owner` | reports and anomalies; top of the ladder |
+
+**A rename is not an authority change**, and that is checkable rather than promised: every
+legacy name resolves to the integer it already had (`agent` 1, `manager` 2, `accountant` 3), so
+this commit changes which *names* the code writes without changing one decision it makes.
+
+**The legacy names are kept forever, not for a transition period.** Approval rows are append-only:
+somewhere in the history there is a row whose `required_role` is literally `accountant`. If the
+alias is ever removed the engine cannot rank that row and the request becomes undecidable — an
+audit trail that cannot be re-decided is not an audit trail. `roles.ROLE_ALIASES` is therefore a
+fact about history, not a grace period.
+
+**Executable matrix.** `roles.ROLE_CAPABILITIES` is the §18/ADR-0035 authority table in code, and
+`tests/test_roles.py` asserts it: `system_admin` holds no finance or bank authority;
+`finance_manager` and `owner` cannot be the maker of what they approve; `reservation_manager`
+cannot approve money out; `auditor` is read-only; `greeting_service` reads stays and writes notes
+and nothing else; and **no AI identity can appear on the ladder or as an approver** — at the
+vocabulary and at the engine (`tests/test_roles.py` exercises both).
+
+**A drift this found and closed.** `finance.approval.payment_thresholds_minor` was published
+(ADR-0036) naming the ladder `["finance_manager", "gm"]` while **neither name existed** in
+`approvals.ROLE_RANK`. Nothing read the value yet, so nothing failed — the first real payment
+would have been refused with a cause that named no cause. `roles.approval_ladder()` now refuses
+such a value loudly, and a test reads the live store to confirm the published ladder names roles
+the engine knows.
+
+**Still open, named rather than implied:**
+
+1. **`gm` has no session yet.** The GM is on the approval ladder, but `dashboard.ROLES` — the
+   five *page* roles — does not include it, so today only a service call can name `gm`. The page
+   vocabulary is its own slice, and it must land **together with** `security.mfa.required_roles`:
+   the GM decides money out, so the GM must owe a second factor before that slice ships.
+2. **`security.mfa.required_roles` still says `["owner", "finance"]`** — a page word, not a
+   canonical id. Reconciling it changes which sessions must hold a second factor, so it needs its
+   own published revision rather than riding along in a rename.
+3. **`documents` and `gates` keep their own words** (`manager`, `admin`, `finance`). They carry
+   their own vocabularies for their own decisions and were deliberately left alone here.
+
+**Two more copies of the same check were found by running the gate, not by reading it.** The full
+suite went red in 81 places the moment `ROLE_RANK` became canonical: `messages._require_human`
+validated `created_by_role` with its own `role_key not in ROLE_RANK`, so every draft prepared under
+an `agent`-named role was refused as an unknown actor. `src/messages.py` now asks `roles` the same
+question `approvals` asks (`roles.role_rank(...) is None`), and the import gate in
+`tests/test_messages.py` — a whitelist of modules that cannot transport a message — grew by exactly
+one name, `roles`, which is a vocabulary and not a transport. `preflight` gained
+`check_published_ladder_roles`, so a published payment ladder that names a role the engine cannot
+rank now fails the go-live gate instead of the first real payment.
+
+**A gate that silently skips tests is not a gate.** Four refusal tests in
+`tests/test_preflight.py` sat inside `class DemoDataTests` — a plain class, which pytest collects
+only when the name starts with `Test` — so they had never executed, and one had gone stale in the
+meantime (a foreign key now blocks the rename it performs). The classes were renamed, the stale
+setup was repaired, and the rule was written into the module docstring where the next author reads
+it.

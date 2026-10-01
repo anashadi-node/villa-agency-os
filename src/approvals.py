@@ -70,6 +70,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Iterator, Optional
 
+import roles
 from primitives import (
     SYSTEM_ACTOR,
     UTC,
@@ -162,12 +163,13 @@ DUAL_CONTROL_SUBJECTS: tuple[str, ...] = ("refund", "payout", "bank_change")
 
 #: Who outranks whom. An approver at or above the request's ``required_role`` rank
 #: may decide; a lower rank gets ROLE_TOO_LOW.
-ROLE_RANK: Mapping[str, int] = {
-    "agent": 1,
-    "manager": 2,
-    "accountant": 3,
-    "owner": 4,
-}
+#:
+#: The content comes from :mod:`roles` — the one home for the human role vocabulary
+#: (ADR-0035 §5 reconciliation, ADR-0036's ``gm`` tier). It is re-exported under this
+#: name because ``discounts`` and the dashboard map read it here. Ranks 1–3 are the
+#: integers the ladder already used; ``gm`` is new between the Finance Manager and the
+#: Owner; ``owner`` still tops it.
+ROLE_RANK: Mapping[str, int] = roles.ROLE_RANK
 
 APPROVAL_STATUSES: tuple[str, ...] = ("PENDING", "APPROVED", "REJECTED", "EXPIRED", "WITHDRAWN")
 
@@ -506,18 +508,36 @@ def _decision_value(value: Any) -> str:
 
 
 def _role(value: Any, field_name: str) -> str:
-    if not isinstance(value, str) or value.strip() not in ROLE_RANK:
+    """Validate a role name that a caller is *writing*.
+
+    Canonical ids and the legacy aliases both pass, and the value is stored as given:
+    rows written before the reconciliation (``agent``, ``manager``, ``accountant``) are
+    append-only history and must keep reading back unchanged, while new callers pass the
+    canonical id. Rank resolution — not this check — is what makes the two equivalent.
+    """
+    if not roles.is_known_role(value):
         raise InvalidApprover(
             f"{field_name} must be one of {sorted(ROLE_RANK)}",
             field=field_name,
             got=repr(value),
         )
+    if roles.role_rank(value) is None:
+        raise InvalidApprover(
+            f"{field_name} has no ladder rank: a request may only require an adjudicator",
+            field=field_name,
+            got=repr(value),
+            ladder=sorted(ROLE_RANK),
+        )
     return value.strip()
 
 
 def _rank(role: str, field_name: str) -> int:
-    """Rank of a role *read from a row* — an unknown role must not KeyError."""
-    rank = ROLE_RANK.get(role)
+    """Rank of a role *read from a row* — an unknown role must not KeyError.
+
+    Resolution goes through :mod:`roles` so a row that names ``accountant`` and a row
+    that names ``finance_manager`` are the same tier, today and after any future rename.
+    """
+    rank = roles.role_rank(role)
     if rank is None:
         raise InvalidApprover(
             f"unknown role {role!r} in {field_name}",

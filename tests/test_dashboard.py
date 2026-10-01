@@ -20,6 +20,7 @@ from datetime import timedelta
 import pytest
 
 import dashboard as D
+import roles as ROLES_MOD
 from approvals import ROLE_RANK, ApprovalService
 from audit import AuditLog
 from primitives import IdFactory, to_iso
@@ -836,7 +837,8 @@ def test_post_creates_an_approval_through_the_service(seeded_http):
         (REQUEST_FORM["idempotency_key"],),
     ).fetchone()
     assert row["requested_by"] == "agent-finance-1"
-    assert row["requested_role"] == "accountant"
+    # The canonical id of ADR-0035 (rank 3, the same tier ``accountant`` held).
+    assert row["requested_role"] == "finance_manager"
     assert row["action"] == REQUEST_FORM["action"]
 
 
@@ -851,7 +853,7 @@ def test_post_ignores_identity_supplied_in_the_body(seeded_http):
         ("idem-dash-0002",),
     ).fetchone()
     assert row["requested_by"] == "agent-reservation-1"
-    assert row["requested_role"] == "agent"
+    assert row["requested_role"] == "reservation_agent"
     assert "system:kernel" not in response.text
 
 
@@ -903,7 +905,7 @@ def test_post_decide_records_a_decision_through_the_service(seeded_http):
         (approval_id,),
     ).fetchone()
     assert row["approver"] == "agent-finance-1"
-    assert row["approver_role"] == "accountant"
+    assert row["approver_role"] == "finance_manager"
     assert row["decision"] == "APPROVE"
     status = seeded_http.db.execute(
         "SELECT status FROM approval_requests WHERE approval_id = ?", (approval_id,)
@@ -1537,7 +1539,7 @@ def test_principal_refuses_an_unknown_role():
 
 def test_auditor_has_no_approval_role():
     assert D.Principal("auditor-external-1", "auditor").approval_role is None
-    assert D.Principal("agent-finance-1", "finance").approval_role == "accountant"
+    assert D.Principal("agent-finance-1", "finance").approval_role == "finance_manager"
     assert not D.Principal("auditor-external-1", "auditor").may_write
 
 
@@ -1549,7 +1551,32 @@ def test_every_approval_role_the_dashboard_names_exists_in_the_kernel():
     refuses every request they make, and nothing in the refusal says the name was retired.
     """
     assert set(D.APPROVAL_ROLE_BY_ROLE.values()) <= set(ROLE_RANK)
-    assert "manager" in D.APPROVAL_ROLE_BY_ROLE.values()
+    assert "reservation_manager" in D.APPROVAL_ROLE_BY_ROLE.values()
+
+
+def test_the_dashboard_map_names_the_canonical_role_and_ranks_it_as_before():
+    """ADR-0035 §5 reconciliation: new writes use the canonical id — the rank is untouched.
+
+    The reconciliation renamed what the dashboard writes (``accountant`` → ``finance_manager``)
+    and added ``gm``. A rename that quietly moved a tier would be an authority change wearing a
+    vocabulary change's clothes, so the rank each dashboard role acts at is pinned here: the
+    reservation desk is tier 1, operations and the finance desk are tiers 2 and 3, and the GM
+    is the new tier between the finance desk and the owner.
+    """
+    roles = {role: ROLES_MOD.role_rank(mapped) for role, mapped in D.APPROVAL_ROLE_BY_ROLE.items()}
+    assert roles == {
+        "reservation": 1,
+        "operations": 2,
+        "finance": 3,
+        "owner": 5,
+    }
+    assert ROLES_MOD.role_rank("gm") == 4
+    # The legacy names still rank where they always did, or written rows would change tier.
+    assert (
+        ROLES_MOD.role_rank("agent"),
+        ROLES_MOD.role_rank("manager"),
+        ROLES_MOD.role_rank("accountant"),
+    ) == (1, 2, 3)
 
 
 def test_every_documented_dashboard_server_command_passes_a_token():

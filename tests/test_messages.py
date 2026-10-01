@@ -56,7 +56,7 @@ DRAFT_ACTIONS = {"message.draft", "message.submit", "message.approve", "message.
 #: module: no SMTP client, no HTTP client, no messaging SDK.
 ALLOWED_IMPORTS = {
     "__future__", "approvals", "audit", "contextlib", "dataclasses", "datetime",
-    "gates", "json", "primitives", "re", "typing", "unicodedata",
+    "gates", "json", "primitives", "re", "roles", "typing", "unicodedata",
 }
 
 

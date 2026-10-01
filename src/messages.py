@@ -43,6 +43,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Iterable, Iterator, Mapping, Optional
 
+import roles
 from approvals import ROLE_RANK, Approval, ApprovalService
 from audit import append_event, contains_direct_identifiers, guard_append_only
 from gates import (
@@ -976,7 +977,7 @@ class MessageService:
     def _require_human(self, actor: str, role: str, *, field_name: str = "actor") -> tuple[str, str]:
         ref = require_ref(actor, field_name)
         role_key = str(role or "").strip().lower()
-        if role_key not in ROLE_RANK:
+        if roles.role_rank(role_key) is None:
             raise InvalidActor(
                 f"{field_name}_role {role!r} is not one of {sorted(ROLE_RANK)}",
                 role=role,
