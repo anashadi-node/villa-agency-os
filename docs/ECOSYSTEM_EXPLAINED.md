@@ -127,12 +127,42 @@ Empat posisi lain belum dipegang manusia, dan semuanya karena keputusan Anda sen
 | **Revenue Manager** | ditunda dulu | laporan Revenue & BI sementara ke GM |
 | **Auditor** | ditunda dulu | **rantai audit tetap jalan otomatis** — yang belum ada hanya orang yang membacanya |
 | **Legal / Compliance** | kemungkinan eksternal | persetujuan legal dicatat **atas nama penasihat eksternal**, dengan surat/kontrak sebagai buktinya |
-| **Finance Staff** | **digantikan AI** | direservasi untuk **Finance Admin AI** — **bukan dihapus** |
-| **Reservation Agent** | **digantikan AI** | direservasi untuk **AI Reservation Service** — **bukan dihapus** |
+| **Finance Staff** | **DIHAPUS, digantikan AI** | peran manusia dihapus; **fungsi pembuat** pindah ke **Finance Admin AI** (belum dibangun) |
+| **Reservation Agent** | **DIHAPUS, digantikan AI** | peran manusia dihapus; **fungsi pembuat** pindah ke **AI Reservation Service** (belum dibangun) |
 
 **Owner dan GM boleh satu orang.** Hari ini Anda memberi dua nama (Mr. Owner dan Mr. CEO), jadi sekarang dua orang.
 
-**Kenapa "digantikan AI" TIDAK berarti perannya dihapus.** Persetujuan berlapis butuh **pembuat** dan **penyetuju** yang berbeda orang. Kalau peran "pembuat" (Finance Staff) dihapus sekarang, yang tersisa hanya penyetuju — dan aturan *"yang membuat tidak boleh menyetujui"* akan diam-diam berhenti berarti, padahal kelihatannya masih berlaku. Sampai kedua pegawai AI itu ada, **tidak ada yang memegang peran tersebut** → sistem **menolak**, bukan memberi (aman). Tapi itu juga **penghalang go-live**: tanpa pembuat, tidak ada pembayaran yang bisa disiapkan. Penghalang ini hilang sendiri begitu pegawai AI #3 dan #5 dibangun.
+**Peran manusianya DIHAPUS — tapi fungsi pembuatnya tidak boleh ikut hilang.** Ini bedanya, dan ini inti jawaban saya.
+
+Yang dihapus adalah **peran manusianya**. Yang **tidak** boleh dihapus adalah **fungsi pembuat**: kalau fungsi pembuat hilang, tidak ada lagi yang bisa *mengajukan* permintaan, sehingga tidak ada apa pun untuk diperiksa oleh penyetuju. **Kontrol tanpa pembuat bukan kontrol — itu pintu terbuka.**
+
+| | Peran manusia | Fungsi pembuat |
+|---|---|---|
+| Finance Staff | **DIHAPUS** | dipindah ke **identitas AI Service** (`ai_service`) |
+| Reservation Agent | **DIHAPUS** | dipindah ke **identitas AI Service** (`ai_service`) |
+
+**Yang tetap MANUSIA selamanya: penyetujunya.** Ms. FAM menyetujui **uang keluar**; Ms. RM menyetujui **diskon di luar batas**. Ini bukan selera saya — dokumen Anda §11 menyebutnya **larangan mutlak**: AI tidak boleh menyetujui atau mengeksekusi pembayaran. Jadi: **AI mengerjakan, manusia menyetujui.**
+
+**Konsekuensi jujurnya:** sampai pegawai AI #3 dan #5 dibangun, tidak ada yang menjalankan fungsi pembuat — jadi **tidak ada permintaan pembayaran dan tidak ada penawaran yang bisa dibuat**. Sistem **menolak**, bukan menyerahkan ke manusia. Artinya: **sisi pembayaran belum bisa go-live sebelum Finance Admin AI ada.**
+
+**Satu keuntungan nyata yang ikut datang:** pembuat manusia bisa **ditelepon** — *"ini bos, transfer sekarang, nanti saya tanda tangan"* — dan itu salah satu cara paling umum agensi villa kehilangan uang. Pembuat AI tidak bisa diburu-buru atau dibujuk. Sisi lain juga nyata: AI tidak punya pertimbangan untuk kasus yang *kelihatan* benar tapi tidak — **justru karena itu penyetuju manusia jadi lebih penting, bukan kurang.**
+
+### Empat contoh ringan nyata — siapa menyetujui apa, untuk siapa
+
+| Kasus ringan nyata | Siapa yang **membuat** | Siapa yang **menyetujui** | Untuk apa persetujuan itu | Kalau satu orang melakukan keduanya |
+|---|---|---|---|---|
+| Tamu batal; DP 50% (Rp 7.500.000) harus dikembalikan | **Finance Admin AI** menyiapkan: hitung sesuai kebijakan pembatalan, lampirkan bukti transfer | **Ms. FAM** (manusia) | **uang keluar** dari rekening agency | Rp 7,5 juta bisa dikirim ke rekening mana pun dengan alasan "refund"; ketahuan saat rekonsiliasi bulanan, uangnya sudah pergi |
+| Email masuk: *"rekening villa berubah, transfer ke nomor baru"* | **AI** mencatat + melampirkan emailnya | **Ms. FAM** (manusia) **+ telepon ke nomor LAMA** | **mengubah tujuan transfer** | DP tamu mendarat di rekening penipu — ini kehilangan paling umum di agensi villa & travel |
+| Tamu minta diskon 25%; batas AI hanya 10% | **AI Reservation Service** menyusun penawaran + alasannya (14 malam, low season) | **Ms. RM** (manusia) | **harga di bawah batas kebijakan** | harga villa ditekan sesuka hati; margin bulanan jebol dan tidak ada yang tahu dari mana |
+| Bayar villa setelah tamu check-out | **AI Finance** menghitung: *nilai booking − komisi agency − PBJT*, dicocokkan ke kontrak | **Ms. FAM** (manusia) | **membayar villa** dengan jumlah benar, sekali saja | villa dibayar terlalu banyak atau dua kali; kerugian baru terlihat berbulan-bulan kemudian |
+
+**Jawaban singkat "siapa approve ke siapa untuk apa":**
+
+| Alur | Pembuat | Penyetuju |
+|---|---|---|
+| Uang keluar: refund, bayar villa, ubah rekening | AI | **Ms. FAM** |
+| Harga di bawah batas: diskon | AI | **Ms. RM** |
+| Transaksi harian | — | **Owner TIDAK meng-approve.** Sesuai keputusan Anda di key #3: Owner menerima **laporan berkala** (harian/mingguan/bulanan) dan **mengoreksi anomali**. GM juga menerima laporan, bukan tombol approve. |
 
 **Perubahan pada tabel di atas:** baris **Guest Service dihapus** dan digantikan **Greeting Service Team** yang tugasnya berbeda — **mengunjungi tamu di villa** untuk mendapat masukan, sekaligus menjaga hubungan dengan manajemen villa dan kru villa. Ini **peran lapangan**, bukan peran meja: ia perlu melihat data siapa menginap di mana dan kapan (untuk merencanakan kunjungan) serta mencatat hasil kunjungan — dan **tidak** perlu wewenang booking, pembayaran, atau persetujuan.
 

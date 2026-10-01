@@ -102,3 +102,64 @@ consequences:
   `system_admin` holds no finance or bank authority; `finance_manager` cannot be the maker of what
   it approves; `reservation_manager` cannot approve its own discount; `auditor` is read-only; and
   `greeting_service` can read stays and write notes and nothing else.
+
+---
+
+## Amendment — 2026-09-28: the two human roles are deleted, and the maker function moves to the AI
+
+The owner reviewed §3 and confirmed the decision with one correction: `finance_staff` and
+`reservation_agent` are **not** merely reserved — **the human roles are deleted**, because the
+AI agents will replace them.
+
+That is adopted. The *effect* of §3 does not change, but the *mechanism* is now sharper, and the
+difference is the whole point:
+
+> **A role and a function are not the same thing.** The human role is deleted. The **maker
+> function** is not, and must not be — a control with no maker is not a control, it is an open
+> door.
+
+### Four real cases, kept small
+
+| A light real case | Who **makes** it | Who **approves** it | What that approval is for | If one actor did both |
+|---|---|---|---|---|
+| Guest cancels; the 50% deposit (Rp 7,500,000) must go back | **Finance Admin AI** prepares it: computes per the cancellation policy, attaches the transfer evidence | **Ms. FAM** (human) | money leaving the agency's account | Rp 7.5 M can be sent to any account under the word "refund"; it surfaces at the monthly reconciliation, by which time the money is gone |
+| An email arrives: *"our villa's bank account has changed, transfer to the new number"* | **AI** records it and attaches the email | **Ms. FAM** (human) **plus a phone call to the OLD number** | changing where money is sent | the guest's deposit lands in a fraudster's account — the single most common loss in travel and villa agencies |
+| Guest asks for 25% off; the AI's ceiling is 10% | **AI Reservation Service** builds the quote with its reason (14 nights, low season) | **Ms. RM** (human) | pricing below the policy floor | villa rates get pressed down at will; the monthly margin breaks and nobody can say where |
+| Paying the villa after the guest checks out | **AI Finance** computes *booking value − agency commission − PBJT*, matched against the contract | **Ms. FAM** (human) | paying the villa the correct amount, once | a villa is overpaid or paid twice; the loss only shows months later |
+
+### Who makes from now on
+
+The **AI service principal** (`ai_service`, ADR-0018) — an actor the platform already has,
+driven by Finance Admin AI and AI Reservation Service once components #5 and #3 are built.
+
+| | Human role | Maker function |
+|---|---|---|
+| `finance_staff` | **DELETED** | held by the AI service principal |
+| `reservation_agent` | **DELETED** | held by the AI service principal |
+
+### Who stays human, permanently
+
+The **approvers**: `finance_manager`, `reservation_manager` and `owner`. Not a preference —
+AI Workforce Architecture §11 makes it an **absolute deny** for an AI to approve or execute a
+payment, and §2A.3 routes *"outgoing money / refund approval / bank-wallet change"* to **human**
+Finance Authority. So: **the AI does the work, the human approves it.**
+
+**Who approves what, in one line:** AI prepares → **Ms. FAM** approves → money going out
+(refunds, villa payments, bank changes). AI prepares → **Ms. RM** approves → price below the
+floor. The **Owner approves no daily transaction** — per the owner's own answer on catalogue key
+#3, the Owner receives periodic reports (daily / weekly / monthly) and corrects anomalies.
+
+### The consequence the deletion creates
+
+Until components #3 and #5 are built, nothing drives the AI maker — so **no payment request and
+no quotation can be created at all**, and the platform refuses rather than falling back to a
+human. That is correct fail-closed behaviour, and it means plainly: **the payment side cannot go
+live before Finance Admin AI does.**
+
+### One honest benefit that comes with it
+
+Replacing the human maker with an AI maker removes a real attack path: a human maker can be
+telephoned — *"it's the boss, transfer it now, I'll sign later"* — and that is one of the most
+common ways villa and travel agencies lose money. An AI maker cannot be hurried, flattered, or
+pressured. The flip side is just as real: an AI has no judgement about a case that *looks*
+correct but is not, which is exactly why the **human checker matters more here, not less.**
