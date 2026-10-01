@@ -107,7 +107,34 @@ Jadi: **seluruh peran manusia di dokumen Anda diadopsi.**
 | **Guest Service** | Melayani tamu saat menginap | — | — |
 | **Auditor** | Memeriksa | **Menyetujui apa pun** (hanya boleh melihat) | ❌ read-only |
 
-**Nama orang: BELUM ADA.** Anda bilang belum ada nama. Maka semua peran saya catat **UNASSIGNED** (belum ada yang memegang). Ini aman, bukan masalah: **kalau tidak ada yang memegang peran, tidak ada yang bisa melakukan tindakan itu** — sistem menolak, bukan memberi. Jadi tidak ada celah yang terbuka karena nama belum diisi.
+**Siapa yang memegang tiap peran (keputusan Anda, 2026-09-28):**
+
+| Peran | Pemegang |
+|---|---|
+| Owner | **Mr. Owner** |
+| General Manager / CEO | **Mr. CEO** |
+| Commercial & Marketing Manager | **Mr. CMM** |
+| Partnership Manager | **Mr. PM** |
+| Operations / Reservation Manager | **Ms. RM** |
+| Finance & Accounting Manager | **Ms. FAM** |
+| Technology / Security Manager | **Mr. TS** |
+| **Greeting Service Team** (peran BARU) | **Ms. Greeting** |
+
+Empat posisi lain belum dipegang manusia, dan semuanya karena keputusan Anda sendiri:
+
+| Posisi | Keputusan Anda | Artinya |
+|---|---|---|
+| **Revenue Manager** | ditunda dulu | laporan Revenue & BI sementara ke GM |
+| **Auditor** | ditunda dulu | **rantai audit tetap jalan otomatis** — yang belum ada hanya orang yang membacanya |
+| **Legal / Compliance** | kemungkinan eksternal | persetujuan legal dicatat **atas nama penasihat eksternal**, dengan surat/kontrak sebagai buktinya |
+| **Finance Staff** | **digantikan AI** | direservasi untuk **Finance Admin AI** — **bukan dihapus** |
+| **Reservation Agent** | **digantikan AI** | direservasi untuk **AI Reservation Service** — **bukan dihapus** |
+
+**Owner dan GM boleh satu orang.** Hari ini Anda memberi dua nama (Mr. Owner dan Mr. CEO), jadi sekarang dua orang.
+
+**Kenapa "digantikan AI" TIDAK berarti perannya dihapus.** Persetujuan berlapis butuh **pembuat** dan **penyetuju** yang berbeda orang. Kalau peran "pembuat" (Finance Staff) dihapus sekarang, yang tersisa hanya penyetuju — dan aturan *"yang membuat tidak boleh menyetujui"* akan diam-diam berhenti berarti, padahal kelihatannya masih berlaku. Sampai kedua pegawai AI itu ada, **tidak ada yang memegang peran tersebut** → sistem **menolak**, bukan memberi (aman). Tapi itu juga **penghalang go-live**: tanpa pembuat, tidak ada pembayaran yang bisa disiapkan. Penghalang ini hilang sendiri begitu pegawai AI #3 dan #5 dibangun.
+
+**Perubahan pada tabel di atas:** baris **Guest Service dihapus** dan digantikan **Greeting Service Team** yang tugasnya berbeda — **mengunjungi tamu di villa** untuk mendapat masukan, sekaligus menjaga hubungan dengan manajemen villa dan kru villa. Ini **peran lapangan**, bukan peran meja: ia perlu melihat data siapa menginap di mana dan kapan (untuk merencanakan kunjungan) serta mencatat hasil kunjungan — dan **tidak** perlu wewenang booking, pembayaran, atau persetujuan.
 
 ---
 
@@ -263,7 +290,7 @@ Pemeriksaan sistem hari ini: **13 dari 13 OK.** Yang menahan: **14 keputusan bis
 
 **Urut dari yang paling cepat dibalas:**
 
-1. **Nama orang per peran** (13 peran di Bab 4) — atau "belum" kalau memang belum ada. *(Satu-satunya hal yang tidak bisa saya analisa.)*
+1. ~~**Nama orang per peran**~~ — ✅ **SUDAH, 2026-09-28.** Delapan pemegang sudah tercatat (Bab 4). *(Satu-satunya hal yang tidak bisa saya analisa, dan benar: hanya Anda yang bisa mengisinya.)*
 2. **Nama provider pembayaran / bank** (Bab 10) — atau "belum".
 3. **D2, D4, D5, D6, D7, D8, D10, D11, D12, D13, D14** (Bab 9).
 4. **D9 sisanya:** siapa yang menjalankan penghapusan data (retensi sudah Anda putuskan).
@@ -298,7 +325,7 @@ Pemeriksaan sistem hari ini: **13 dari 13 OK.** Yang menahan: **14 keputusan bis
 1. **Yang dibangun:** satu sistem operasi villa agency untuk Bali & Yogyakarta, dijalankan **manusia + 6 pegawai AI**.
 2. **Sudah jadi:** "gedungnya" — katalog kebijakan (25/25 terjawab), mesin status booking & hold, mesin pembayaran, mesin bukti, identitas & hak akses, rantai audit, dan gerbang 3.018 tes. Semuanya **hijau**.
 3. **Belum jadi:** **keenam pegawai AI-nya** (0 dari 6), plus 3 alat penopang (outbox, exception engine, DLP) dan 4 rel pembayaran.
-4. **Organisasi manusia** dari dokumen Anda **diadopsi seluruhnya**; Owner & GM boleh satu orang. **Nama belum ada** → semua peran UNASSIGNED (aman, fail-closed).
+4. **Organisasi manusia SUDAH LENGKAP** (keputusan Anda 2026-09-28): delapan pemegang — Mr. Owner, Mr. CEO, Mr. CMM, Mr. PM, Ms. RM, Ms. FAM, Mr. TS, Ms. Greeting. Revenue Manager & Auditor ditunda; Legal eksternal; **Finance Staff & Reservation Agent direservasi untuk AI — bukan dihapus**, supaya maker-checker tetap bermakna; **Guest Service dihapus**, diganti Greeting Service Team.
 5. **Yang menahan go-live bukan software** — 13/13 pemeriksaan sistem OK. Yang menahan: 14 keputusan bisnis.
 6. **Yang saya butuh:** nama orang, nama provider, dan 11 keputusan sisanya.
 7. **Yang saya tidak akan lakukan:** mengarang nama, mengarang vendor, atau mengklaim sesuatu sudah jadi padahal belum.
