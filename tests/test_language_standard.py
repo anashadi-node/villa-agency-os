@@ -26,12 +26,14 @@ Measured 2026-09-26: 484 literal hits in 10 modules + 15 hits in 8 templates.
 from __future__ import annotations
 
 import ast
+import json
 import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC = REPO_ROOT / "src"
 TEMPLATES = REPO_ROOT / "templates"
+MESSAGE_CATALOGUE = TEMPLATES / "messages"
 
 #: Indonesian function words. Chosen to be words that do not occur in English prose,
 #: so a hit is (almost certainly) real Indonesian rather than a coincidence.
@@ -52,8 +54,20 @@ RECORDED_SRC = {
     "incidents.py": 74,
     "intake.py": 40,
     "matching.py": 23,
-    "messages.py": 19,
+    # Guest copy moved out to templates/messages/id-ID.json on 2026-10-02 (§55 ratchet + ADR-0037:
+    # the catalogue is data a tenant may edit, not Python literals). The module is now clean.
+    "messages.py": 0,
     "scheduler.py": 2,
+}
+
+#: Guest-message catalogue -> measured Indonesian hits. **Only ever lowered.**
+#:
+#: This file is visited on purpose: guest copy is Indonesian because the guests are in Bali and
+#: Yogyakarta (the owner's business, ADR-0037), and pinning it here means that decision is
+#: recorded with a number instead of hiding inside a Python module. Adding a template raises the
+#: count, and raising the count is a deliberate act with a reason — not a side effect.
+RECORDED_MESSAGE_CATALOGUE = {
+    "id-ID.json": 42,
 }
 
 #: Template -> measured Indonesian hits. **Only ever lowered.**
@@ -107,6 +121,21 @@ def indonesian_in_template(markup: str) -> int:
     return len(MARKERS.findall(text))
 
 
+def indonesian_in_catalogue(text: str) -> int:
+    """Hits inside one message catalogue: the *values*, never the template names.
+
+    An unreadable catalogue counts everything, so a file that cannot be parsed cannot look
+    clean by accident.
+    """
+    try:
+        raw = json.loads(text)
+    except ValueError:
+        return len(MARKERS.findall(text))
+    if not isinstance(raw, dict):
+        return len(MARKERS.findall(text))
+    return sum(len(MARKERS.findall(str(value))) for value in raw.values())
+
+
 # --------------------------------------------------------------------------- #
 # The ratchet
 # --------------------------------------------------------------------------- #
@@ -133,6 +162,24 @@ def test_no_template_gains_new_indonesian_text():
     assert grew == [], "templates gained Indonesian copy: " + ", ".join(grew)
 
 
+def test_the_message_catalogue_does_not_grow_indonesian_copy():
+    """Guest copy lives here on purpose (ADR-0037); a new template raises the recorded number.
+
+    Raising it is allowed — it is a decision with a reason, made in the open. What this test
+    forbids is the *silent* version: a template added, or a sentence expanded, without the pin
+    moving, which is how a ratchet quietly stops being one.
+    """
+    grew = []
+    for path in sorted(MESSAGE_CATALOGUE.glob("*.json")):
+        measured = indonesian_in_catalogue(path.read_text(encoding="utf-8"))
+        allowed = RECORDED_MESSAGE_CATALOGUE.get(path.name, 0)
+        if measured > allowed:
+            grew.append(f"{path.name}: {measured} (allowed {allowed})")
+    assert grew == [], (
+        "the guest-message catalogue gained Indonesian copy: " + ", ".join(grew)
+    )
+
+
 def test_the_recorded_counts_are_still_honest():
     """A ratchet that over-states its numbers would hide real progress — or hide regression.
 
@@ -148,6 +195,11 @@ def test_the_recorded_counts_are_still_honest():
     for path in sorted(TEMPLATES.glob("*.html")):
         measured = indonesian_in_template(path.read_text(encoding="utf-8"))
         allowed = RECORDED_TEMPLATES.get(path.name, 0)
+        if measured < allowed:
+            stale.append(f"{path.name}: {measured} < {allowed}")
+    for path in sorted(MESSAGE_CATALOGUE.glob("*.json")):
+        measured = indonesian_in_catalogue(path.read_text(encoding="utf-8"))
+        allowed = RECORDED_MESSAGE_CATALOGUE.get(path.name, 0)
         if measured < allowed:
             stale.append(f"{path.name}: {measured} < {allowed}")
     assert stale == [], (

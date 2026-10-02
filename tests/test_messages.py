@@ -56,7 +56,7 @@ DRAFT_ACTIONS = {"message.draft", "message.submit", "message.approve", "message.
 #: module: no SMTP client, no HTTP client, no messaging SDK.
 ALLOWED_IMPORTS = {
     "__future__", "approvals", "audit", "contextlib", "dataclasses", "datetime",
-    "gates", "json", "primitives", "re", "roles", "typing", "unicodedata",
+    "gates", "json", "pathlib", "primitives", "re", "roles", "typing", "unicodedata",
 }
 
 
@@ -225,6 +225,58 @@ class MessageTestCase(unittest.TestCase, SeedMixin):
                 "resolution_due": b("2026-09-25", "date", "policy_version", POLICY_ID),
                 "contact_channel": b("email", "text", "policy_version", POLICY_ID),
             }
+        elif template == "booking_confirmed":
+            data = dict(
+                common,
+                property_name=b("Villa Anantara", "text", "property", PROPERTY_ID),
+                booking_ref=b(BOOKING_ID, "text", "booking", BOOKING_ID),
+                nights=b("4", "number", "booking", BOOKING_ID),
+                check_in_time=b("14:00", "time", "policy_version", POLICY_ID),
+                host_name=b("Ana", "text", "case", CASE_ID),
+                contact_channel=b("email", "text", "policy_version", POLICY_ID),
+            )
+        elif template == "deposit_received":
+            data = {
+                "guest_name": b("Agus Santoso", "text", "case", CASE_ID),
+                "amount_received": b(rp(1_000_000), "money", "invoice", INVOICE_ID),
+                "booking_ref": b(BOOKING_ID, "text", "booking", BOOKING_ID),
+                "invoice_ref": b(INVOICE_ID, "text", "invoice", INVOICE_ID),
+                "check_in": b(CHECK_IN, "date", "booking", BOOKING_ID),
+            }
+        elif template == "balance_due_notice":
+            data = {
+                "guest_name": b("Agus Santoso", "text", "case", CASE_ID),
+                "unit_code": b(UNIT_ID, "text", "unit", UNIT_ID),
+                "check_in": b(CHECK_IN, "date", "booking", BOOKING_ID),
+                "amount_due": b(rp(1_000_000), "money", "invoice", INVOICE_ID),
+                "invoice_ref": b(INVOICE_ID, "text", "invoice", INVOICE_ID),
+                "invoice_due": b("2026-09-20", "date", "invoice", INVOICE_ID),
+                "payment_channel": b("transfer bank", "text", "policy_version", POLICY_ID),
+                "account_name": b("PT Anantara Sakti", "text", "policy_version", POLICY_ID),
+            }
+        elif template == "pre_arrival_reminder":
+            data = dict(
+                common,
+                host_name=b("Ana", "text", "case", CASE_ID),
+                contact_channel=b("email", "text", "policy_version", POLICY_ID),
+            )
+        elif template == "post_stay_feedback":
+            data = {
+                "guest_name": b("Agus Santoso", "text", "case", CASE_ID),
+                "unit_code": b(UNIT_ID, "text", "unit", UNIT_ID),
+                "property_name": b("Villa Anantara", "text", "property", PROPERTY_ID),
+                "check_out": b(CHECK_OUT, "date", "booking", BOOKING_ID),
+                "feedback_channel": b("email", "text", "policy_version", POLICY_ID),
+            }
+        elif template == "refund_in_progress":
+            data = {
+                "guest_name": b("Agus Santoso", "text", "case", CASE_ID),
+                "unit_code": b(UNIT_ID, "text", "unit", UNIT_ID),
+                "booking_ref": b(BOOKING_ID, "text", "booking", BOOKING_ID),
+                "refund_amount": b(rp(500_000), "money", "invoice", INVOICE_ID),
+                "payment_channel": b("transfer bank", "text", "policy_version", POLICY_ID),
+                "resolution_due": b("2026-09-25", "date", "policy_version", POLICY_ID),
+            }
         else:
             data = dict(common)
         data.update(overrides)
@@ -280,12 +332,37 @@ class MessageTestCase(unittest.TestCase, SeedMixin):
 # Templates
 # --------------------------------------------------------------------------- #
 class TemplateTests(MessageTestCase):
-    def test_all_six_templates_exist(self):
+    def test_the_library_covers_the_whole_booking_lifecycle(self):
+        """Owner decision 2026-10-02 (D6): the platform authors the templates, the tenant sets
+        the number. The set below is the lifecycle, and pinning it means a message that guests
+        will need cannot disappear in a refactor without a test going red."""
         self.assertEqual(
             set(MSG.TEMPLATES),
-            {"availability_offer", "quote_offer", "hold_confirmation",
-             "payment_reminder", "arrival_instructions", "complaint_ack"},
+            {
+                # enquiry → offer → hold
+                "availability_offer", "quote_offer", "hold_confirmation",
+                # confirmed → money in
+                "booking_confirmed", "deposit_received", "payment_reminder",
+                "balance_due_notice",
+                # arrival → stay → after
+                "pre_arrival_reminder", "arrival_instructions", "post_stay_feedback",
+                # exceptions a guest must be told about
+                "complaint_ack", "refund_in_progress",
+            },
         )
+
+    def test_no_template_asks_a_guest_to_send_identity_documents(self):
+        """Privacy by design, not by intention: a chat is not a place for a passport scan.
+
+        P3 documents may not travel to a chat destination at all
+        (`gates.POLICY_TABLE`: P3 → deny for chat), so a template that asks for one would be a
+        template the gate refuses — better that it never exists in the library.
+        """
+        banned = ("ktp", "paspor", "passport", "kartu identitas", "scan identitas", "foto identitas")
+        for name, text in MSG.TEMPLATES.items():
+            with self.subTest(template=name):
+                lowered = text.lower()
+                self.assertEqual([word for word in banned if word in lowered], [], text)
 
     def test_every_template_has_named_placeholders(self):
         for name in MSG.TEMPLATES:

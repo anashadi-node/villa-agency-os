@@ -36,11 +36,13 @@ Deliberately *not* here: real delivery, template authoring, retries, scheduling.
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping, Optional
 
 import roles
@@ -75,6 +77,10 @@ __all__ = [
     "DRAFT_STATUSES",
     "GROUNDING_STATUSES",
     "CLAIM_KINDS",
+    "DEFAULT_MESSAGE_LOCALE",
+    "MESSAGE_CATALOGUE_DIR",
+    "MessageCatalogueMissing",
+    "load_message_catalogue",
     "SOURCE_TABLES",
     "DEFAULT_CONTENT_CLASS",
     "CONSTRAINT_GROUNDED_BEFORE_APPROVAL",
@@ -126,42 +132,63 @@ __all__ = [
 #: Named-placeholder skeletons. They are the *only* way text becomes a body, and
 #: (by design) they carry no literal digits: every number a guest may read must be
 #: filled from a binding, so it can be traced back to a row.
-TEMPLATES: dict[str, str] = {
-    "availability_offer": (
-        "Halo {guest_name}, unit {unit_code} masih tersedia untuk {check_in} sampai "
-        "{check_out} ({nights} malam). Tarif {nightly_rate} per malam, total "
-        "{total_amount}. Balas pesan ini bila unit ingin kami tahan untuk Anda."
-    ),
-    "quote_offer": (
-        "Halo {guest_name}, berikut penawaran menginap di {unit_code} untuk {check_in} "
-        "sampai {check_out} ({nights} malam). Akomodasi {accommodation_amount}, biaya "
-        "kebersihan {cleaning_amount}, pajak {tax_amount}, total {total_amount}. "
-        "Penawaran berlaku sampai {valid_until}. Balas pesan ini untuk melanjutkan."
-    ),
-    "hold_confirmation": (
-        "Halo {guest_name}, unit {unit_code} kami tahan atas nama Anda sampai "
-        "{hold_expires_at}. Mohon konfirmasi sebelum waktu tersebut agar unit tetap "
-        "tersedia untuk {check_in} sampai {check_out}."
-    ),
-    "payment_reminder": (
-        "Halo {guest_name}, pengingat pembayaran invoice {invoice_ref} sebesar "
-        "{amount_due} yang jatuh tempo {invoice_due}. Mohon bayar melalui "
-        "{payment_channel} atas nama {account_name}. Balas pesan ini bila sudah bayar."
-    ),
-    "arrival_instructions": (
-        "Halo {guest_name}, petunjuk kedatangan {unit_code}, {property_name}: check-in "
-        "mulai {check_in_time} oleh {host_name}. Kode akses dikirim oleh {host_name} "
-        "melalui {contact_channel}. Bila tiba di luar jam tersebut, hubungi {host_name} "
-        "pada nomor reservasi {booking_ref}."
-    ),
-    "complaint_ack": (
-        "Halo {guest_name}, laporan Anda mengenai {issue_summary} sudah kami terima dan "
-        "kami mohon maaf atas ketidaknyamanannya. Laporan tercatat sebagai {ticket_ref} "
-        "dan ditangani oleh {owner_name} paling lambat {resolution_due}. Kami akan "
-        "mengabari Anda melalui {contact_channel}."
-    ),
-}
+#: The locale the platform ships. Guest copy is Indonesian because the guests are in Bali and
+#: Yogyakarta (the owner's business); the *interface* stays en-US (ADR-0011).
+DEFAULT_MESSAGE_LOCALE = "id-ID"
 
+#: Where the guest-message catalogue lives: a **data file**, not Python literals.
+#:
+#: Two rules put it here. §55/ADR-0011 locks production text to U.S. English behind a ratchet
+#: that pins every module still carrying Indonesian and forbids it from growing — guest copy is
+#: not "more code", it is a *catalogue*, and the ratchet records it with a measured count in
+#: `tests/test_language_standard.py` rather than letting Indonesian hide inside a module. ADR-0037
+#: then makes the same file the place a **tenant** will edit: the platform authors the sentences,
+#: the tenant owns the words it may change, and neither has to touch a Python file to do it.
+MESSAGE_CATALOGUE_DIR = Path(__file__).resolve().parent.parent / "templates" / "messages"
+
+
+class MessageCatalogueMissing(DomainError):
+    """A locale's catalogue is absent or unreadable: templates cannot be guessed."""
+
+    code = "MESSAGE_CATALOGUE_MISSING"
+
+
+def load_message_catalogue(
+    locale: str = DEFAULT_MESSAGE_LOCALE, *, directory: Optional[Path] = None
+) -> dict[str, str]:
+    """Read one locale's templates from disk.
+
+    A missing or malformed catalogue is a **refusal**, never an empty library: a system that
+    silently has no templates would answer "unknown template" for a message the business
+    promised to send, and the reason would be invisible.
+    """
+    base = Path(directory) if directory is not None else MESSAGE_CATALOGUE_DIR
+    path = base / f"{locale}.json"
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise MessageCatalogueMissing(
+            "no message catalogue for this locale", locale=locale, path=str(path)
+        ) from exc
+    except (OSError, ValueError) as exc:
+        raise MessageCatalogueMissing(
+            "the message catalogue is unreadable", locale=locale, path=str(path)
+        ) from exc
+    if not isinstance(raw, dict) or not raw:
+        raise MessageCatalogueMissing("the message catalogue is empty", locale=locale, path=str(path))
+    catalogue: dict[str, str] = {}
+    for name, text in raw.items():
+        if not isinstance(name, str) or not isinstance(text, str) or not text.strip():
+            raise MessageCatalogueMissing(
+                "every template must be a named, non-empty string",
+                locale=locale,
+                template=str(name),
+            )
+        catalogue[name] = text
+    return catalogue
+
+
+TEMPLATES: dict[str, str] = load_message_catalogue()
 TEMPLATE_NAMES: tuple[str, ...] = tuple(sorted(TEMPLATES))
 
 #: ``message_drafts.channel`` CHECK values. No new channel may be invented here:
@@ -250,6 +277,8 @@ _NUMERIC_PLACEHOLDER_KINDS: Mapping[str, str] = {
     "valid_until": "date",
     "hold_expires_at": "date",
     "amount_due": "money",
+    "amount_received": "money",
+    "refund_amount": "money",
     "invoice_due": "date",
     "check_in_time": "time",
     "resolution_due": "date",
