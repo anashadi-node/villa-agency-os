@@ -2225,6 +2225,109 @@ BEGIN
     SELECT RAISE(ABORT, 'quotation_acceptances is append-only (DELETE rejected)');
 END;
 
+-- --------------------------------------------------------------------------- --
+-- §9/§13 AI Reservation Service (2026-10-02): the conversation ledger and the
+-- human-handoff ladder. This is the first §9 component with a caller in the code.
+--
+-- Two tables, because a conversation holds two different kinds of fact:
+--
+--   * `ai_conversations` — the conversation's own identity: the tenant, the
+--     inquiry it belongs to, the channel it arrived on, and **references** to the
+--     records other modules own. It deliberately does not copy requirements
+--     (intake), candidates (matching), prices (quotation) or payment state
+--     (payments): each of those has exactly one owner, and a copy here would be a
+--     second answer to the same question — the failure §15 names. The handoff
+--     package resolves them by reference, at the moment it is built.
+--   * `ai_conversation_events` — the §13 ladder. Append-only, with the current
+--     rung *derived from the newest event* rather than stored as a mutable column,
+--     for the same reason `ai_principal_events` works that way: the log is what
+--     proves who moved the conversation, when, and why.
+--
+-- The guest is `guest_ref`: the opaque reference the agency already uses. No name,
+-- no phone number, no identity document — §9 forbids raw identity documents in
+-- model context, and the cheapest way to keep that promise is never to store one.
+--
+-- One conversation per (inquiry, channel). Two AI conversations answering the same
+-- guest thread is the failure §13's closing paragraph is about, so the schema
+-- refuses the second one instead of trusting a caller to check.
+-- --------------------------------------------------------------------------- --
+CREATE TABLE ai_conversations (
+    conversation_id TEXT NOT NULL,
+    agency_id       TEXT NOT NULL DEFAULT 'agency_default',
+    principal_id    TEXT NOT NULL,
+    case_id         TEXT NOT NULL,
+    guest_ref       TEXT NOT NULL CHECK (length(guest_ref) >= 3),
+    channel         TEXT NOT NULL CHECK (channel IN ('website','email','whatsapp_business','dashboard','phone')),
+    consent_state   TEXT NOT NULL DEFAULT 'UNKNOWN' CHECK (consent_state IN ('UNKNOWN','GRANTED','WITHDRAWN')),
+    quote_ref       TEXT,
+    hold_ref        TEXT,
+    reservation_ref TEXT,
+    opened_at       TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    CONSTRAINT pk_ai_conversations PRIMARY KEY (conversation_id),
+    CONSTRAINT fk_ai_conversations_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    CONSTRAINT fk_ai_conversations_principal FOREIGN KEY (principal_id)
+        REFERENCES ai_principals (principal_id),
+    CONSTRAINT fk_ai_conversations_case FOREIGN KEY (case_id) REFERENCES cases (case_id),
+    CONSTRAINT fk_ai_conversations_quote FOREIGN KEY (quote_ref) REFERENCES quotes (quote_id),
+    CONSTRAINT fk_ai_conversations_hold FOREIGN KEY (hold_ref) REFERENCES holds (hold_id),
+    CONSTRAINT fk_ai_conversations_booking FOREIGN KEY (reservation_ref) REFERENCES bookings (booking_id),
+    CONSTRAINT uq_ai_conversations_thread UNIQUE (agency_id, case_id, channel)
+);
+CREATE INDEX ix_ai_conversations_case ON ai_conversations (agency_id, case_id);
+CREATE INDEX ix_ai_conversations_principal ON ai_conversations (agency_id, principal_id);
+
+-- The §13 ladder. `state` is the rung this event *arrived at*, so the history can
+-- be read without replaying it; the rung a conversation stands on is the newest
+-- event, never a column. The CHECKs pin the shape of the three failures that
+-- matter: an escalation with no named reason is not a handoff, a handoff with no
+-- package is a human being handed a stranger, and a rung that names no human is
+-- not a human taking over.
+CREATE TABLE ai_conversation_events (
+    ai_conversation_event_id TEXT    NOT NULL,
+    conversation_id          TEXT    NOT NULL,
+    seq                      INTEGER NOT NULL CHECK (seq >= 1),
+    kind                     TEXT    NOT NULL CHECK (kind IN (
+                                 'OPENED','ESCALATED','HANDOFF_REQUESTED','HUMAN_TAKEN',
+                                 'WRITES_SUSPENDED','HANDLING_STARTED','RESOLVED',
+                                 'RESUME_ALLOWED','RESUMED')),
+    state                    TEXT    NOT NULL CHECK (state IN (
+                                 'AI_RUNNING','ESCALATION_TRIGGERED','HANDOFF_PENDING',
+                                 'HUMAN_ASSIGNED','AI_WRITE_SUSPENDED','HUMAN_HANDLING',
+                                 'RESOLUTION','AI_RESUME_ALLOWED')),
+    trigger_code             TEXT,
+    handoff_blueprint        TEXT,
+    human_ref                TEXT,
+    package_fingerprint      TEXT CHECK (package_fingerprint IS NULL OR length(package_fingerprint) = 64),
+    actor                    TEXT    NOT NULL CHECK (length(actor) >= 1),
+    actor_role               TEXT    NOT NULL CHECK (length(actor_role) >= 1),
+    reason                   TEXT,
+    occurred_at              TEXT    NOT NULL,
+    CONSTRAINT pk_ai_conversation_events PRIMARY KEY (ai_conversation_event_id),
+    CONSTRAINT fk_ai_conversation_events_conversation FOREIGN KEY (conversation_id)
+        REFERENCES ai_conversations (conversation_id),
+    CONSTRAINT uq_ai_conversation_events_seq UNIQUE (conversation_id, seq),
+    CONSTRAINT ck_ai_conversation_events_trigger CHECK (kind <> 'ESCALATED' OR trigger_code IS NOT NULL),
+    CONSTRAINT ck_ai_conversation_events_handoff CHECK (
+        kind <> 'HANDOFF_REQUESTED' OR (handoff_blueprint IS NOT NULL AND package_fingerprint IS NOT NULL)
+    ),
+    CONSTRAINT ck_ai_conversation_events_human CHECK (
+        kind NOT IN ('HUMAN_TAKEN', 'RESUME_ALLOWED') OR human_ref IS NOT NULL
+    )
+);
+
+CREATE TRIGGER trg_ai_conversation_events_no_update
+BEFORE UPDATE ON ai_conversation_events
+BEGIN
+    SELECT RAISE(ABORT, 'ai_conversation_events is append-only (UPDATE rejected)');
+END;
+
+CREATE TRIGGER trg_ai_conversation_events_no_delete
+BEFORE DELETE ON ai_conversation_events
+BEGIN
+    SELECT RAISE(ABORT, 'ai_conversation_events is append-only (DELETE rejected)');
+END;
+
 -- §16 governance policy catalogue (WAVE 1-H). The vocabulary is data: every
 -- key the platform resolves must be declared here first, with the role that
 -- owns it and the clause it comes from.
@@ -2253,6 +2356,12 @@ INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role,
 INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('security.session.idle_timeout_minutes', 'SECURITY', 'MINUTES', 'HIGH', 'owner', '§18', 'Idle time before a session is treated as expired.', '2026-09-26T00:00:00+00:00');
 INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('security.step_up.high_risk_subjects', 'SECURITY', 'JSON', 'HIGH', 'owner', '§18', 'Subject types that require a fresh step-up.', '2026-09-26T00:00:00+00:00');
 INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('security.step_up.window_minutes', 'SECURITY', 'MINUTES', 'HIGH', 'owner', '§16/§18', 'How long a step-up unlock lasts before it must be repeated.', '2026-09-26T00:00:00+00:00');
+-- §9 "AI uncertainty above configured threshold". The threshold is published, not hard-coded,
+-- and it ships UNPUBLISHED on purpose: until the owner writes the number down, the AI
+-- Reservation Service must not act on a judgement that came from language at all, because
+-- "the model sounded sure" is not a value anybody decided. The platform-default bar lives in
+-- docs/GO_LIVE_DECISIONS.md as an open owner decision, not in this file.
+INSERT INTO policy_defs (policy_key, domain, value_type, risk_level, owner_role, spec_ref, description, created_at) VALUES ('security.ai.escalation_min_confidence', 'SECURITY', 'PCT', 'HIGH', 'owner', '§9/§17', 'The lowest reported confidence at which the AI Reservation Service may act on a judgement that came from language rather than from a deterministic rule; below it, and until it is published, the conversation goes to a human.', '2026-10-02T00:00:00+00:00');
 
 -- Baseline revisions: only values a document already fixes. The rest stay
 -- unpublished on purpose — §49 retention and the commercial authority numbers

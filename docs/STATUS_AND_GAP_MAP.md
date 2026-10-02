@@ -1,5 +1,5 @@
 # Peta Status & Gap — Villa Agency OS
-**Tanggal periksa: 2026-09-28** · Sumber acuan: Master Spec v1.1 (invariant domain) + **AI Workforce Architecture V1.1** (organisasi & lapisan AI) · Bukti: kode, tes, gerbang, preflight
+**Tanggal periksa: 2026-09-28** · **Pembaruan 2026-10-02**: tahap 4 (AI Reservation Service) — inti selesai · Sumber acuan: Master Spec v1.1 (invariant domain) + **AI Workforce Architecture V1.1** (organisasi & lapisan AI) · Bukti: kode, tes, gerbang, preflight
 
 ---
 
@@ -58,7 +58,7 @@ Dokumen Anda mendefinisikan **6 komponen AI**, dan owner menambah **1** lagi pad
 |---|---|---|---|
 | 1 | AI Control Tower / Orchestrator | — | ⚠️ belum ada |
 | 2 | Commercial AI Agent | — | ⚠️ belum ada |
-| 3 | AI Reservation Service | — | ⚠️ belum ada |
+| 3 | AI Reservation Service | `src/reservation_service.py` + `src/schema/012_reservation_service.sql` | 🟡 **inti ada 2026-10-02**: ledger percakapan berisolasi, tangga §13 (8 rung), kosakata eskalasi tertutup, paket handoff berdigest, ambang keyakinan deny-first, handoff hanya ke peran berisi orang. **Belum**: 11 worker RES-W01…W11 + CLI |
 | 4 | Operations AI Agent | — | ⚠️ belum ada |
 | 5 | Finance Admin AI Agent | — | ⚠️ belum ada |
 | 6 | Revenue & Business Intelligence AI Agent | — | ⚠️ belum ada |
@@ -201,7 +201,7 @@ Ini keputusan Anda, dan saya tidak akan memilihkan. Usulan saya di §6.
 |---|---|---|---|---|---|
 | 1 | **AI Control Tower** | CT-W01…W10 (router, workflow, SLA, exception, escalation, health, retry, notif, budget) | General Manager | GM; Owner untuk insiden material | ⚠️ 0% |
 | 2 | **Commercial AI** | COM-W01…W11 (lead intel, scoring, CRM, campaign, content, SEO, social, nurture, B2B, perf, abandoned recovery) | Commercial & Marketing Manager | lewat manager/GM | ⚠️ 0% |
-| 3 | **AI Reservation Service** | RES-W01…W11 (inquiry, matching, availability, pricing, quote, conversation, hold, booking, amend/cancel, pre-arrival, handoff) | Operations / Reservation Manager | lewat manager/GM | ⚠️ 0% |
+| 3 | **AI Reservation Service** | RES-W01…W11 (inquiry, matching, availability, pricing, quote, conversation, hold, booking, amend/cancel, pre-arrival, handoff) | Operations / Reservation Manager | lewat manager/GM | 🟡 inti ada 2026-10-02 (ledger + tangga §13 + eskalasi + handoff); 11 worker belum |
 | 4 | **Operations AI** | OPS-W01…W10 (workflow, SLA, doc completeness, QC, readiness, task, exception, incident, comm QC, compliance) | Operations Manager | GM/Owner per severity | ⚠️ 0% |
 | 5 | **Finance Admin AI** | FIN-W01…W11 (AR, AP, matching, recon, invoice validation, settlement, due monitor, unallocated, duplicate, exception, cash/exposure) | Finance & Accounting Manager | **langsung GM + Owner** | ⚠️ 0% |
 | 6 | **Revenue & BI AI** | RBI-W01…W12 (revenue KPI, conversion, pace, demand, pricing intel, villa/partner/channel perf, forecast, margin, anomaly, exec report) | Revenue Manager, atau GM bila lean | **langsung GM + Owner** | ⚠️ 0% |
@@ -231,7 +231,7 @@ Bukan urutan yang saya karang: ini mengikuti ketergantungan nyata di dokumen And
 | 1 | **D3 peran & orang** + RBAC 12→16 peran + tes matriks per-peran | Tanpa ini, tidak ada `agency_id`/aktor yang bisa dipercaya untuk agent mana pun |
 | 2 | **Outbox + Exception Engine** | §14 melarang free-form antar-agent; tanpa outbox, handoff antar agent tidak boleh dibangun |
 | ~~3~~ | ~~AI Policy Gateway + kill switch berjenjang~~ ✅ **SELESAI 2026-10-02** | `src/ai_gateway.py`: satu pintu wajib (dijaga tes statis: tidak ada modul lain memanggil `authorize`), 5 status §17, circuit breaker, tombol operator `scripts/ai_mode.py` (kemampuan `ai.control` = Owner + Technology-Security Manager); 22 tes gateway + 9 tes CLI |
-| 4 | **AI Reservation Service** (komponen #3) | Nilai bisnis terbesar + tamu berhadapan langsung dengannya |
+| 4 | **AI Reservation Service** (komponen #3) — **SEDANG JALAN 2026-10-02**: inti (ledger + tangga §13 + eskalasi + handoff) ✅; sisa: 11 worker + CLI | Nilai bisnis terbesar + tamu berhadapan langsung dengannya |
 | 5 | **Finance Admin AI** (komponen #5) | Menyambung alur D1 yang baru Anda putuskan |
 | 6 | Control Tower, Operations AI, Commercial AI, Revenue & BI | Setelah 4 & 5 terbukti |
 
