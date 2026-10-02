@@ -19,7 +19,7 @@ Satu hal yang saya tegaskan di depan, karena ini akar semua yang di bawah: **pla
 
 | Area | Status | Bukti ringkas |
 |---|---|---|
-| Domain: booking, hold, pembayaran, policy, bukti, identitas | ✅ **kuat** | 39 ADR, 3.078 tes hijau (+3.780 subtes), gerbang PASS, katalog policy 25/25 |
+| Domain: booking, hold, pembayaran, policy, bukti, identitas | ✅ **kuat** | 40 ADR, 3.080 tes hijau (+3.780 subtes), gerbang PASS, katalog policy 25/25 |
 | Lapisan **AI Workforce** (6 komponen dok Anda + 1 tambahan owner 2026-10-02) | ⚠️ **0% dibangun** | 0 dari 7 komponen ada di kode |
 | Infrastruktur non-agent | ⚠️ **4 ada, 3 belum** | Policy/Approval/Identity/Audit ada; Outbox/Exception Engine/DLP belum |
 | Organisasi & peran (D3) | ✅ **DECIDED, kosakata sudah satu rumah** | ADR-0035 (§5 "3 kosakata hidup bersamaan") direkonsiliasi 2026-10-02 lewat `src/roles.py` + amendment ADR-0035: `approvals.ROLE_RANK` **adalah** `roles.ROLE_RANK`, nama lama tetap resolvable untuk baris historis, dan `gm` masuk tangga (rank 4). **`gm` juga sudah punya halaman** (Command Center/Approvals/Finance/Cases/Properties) dan **wajib MFA** — policy `security.mfa.required_roles` v2 = owner, finance, gm (keputusan owner 2026-10-02). |
@@ -33,7 +33,7 @@ Satu hal yang saya tegaskan di depan, karena ini akar semua yang di bawah: **pla
 
 | # | Yang sudah OK | Bukti |
 |---|---|---|
-| 1 | **39 ADR, semua berstatus terbaca, 0 PROPOSED** | 39 berkas `docs/adr/`; penjaga `tests/test_adr_status.py` |
+| 1 | **40 ADR, semua berstatus terbaca, 0 PROPOSED** | 40 berkas `docs/adr/`; penjaga `tests/test_adr_status.py` |
 | 2 | **Suite tes hijau penuh** | `3064 passed, 4 skipped, 3780 subtests passed` |
 | 3 | **Gerbang pre-deploy bersih** | `SECRET-SCAN: PASS (0/195)`, `UNSAFE-SCAN: PASS (0/195)`, PG twin cocok, tree bersih |
 | 4 | **Katalog policy lengkap & fail-closed** | **25 dari 25 key terbit**; key tanpa revisi **ditolak**, bukan diberi nilai karangan |
@@ -239,7 +239,7 @@ Yang **tidak** saya usulkan sekarang: membangun Commercial AI sebelum reservatio
 
 | Klaim | Perintah |
 |---|---|
-| 39 ADR & statusnya | `for f in docs/adr/*.md; do grep -m1 -iE '^\- ?\*?\*?Status' "$f"; done` |
+| 40 ADR & statusnya | `for f in docs/adr/*.md; do grep -m1 -iE '^\- ?\*?\*?Status' "$f"; done` |
 | 7 komponen AI belum ada | `grep -rl "control_tower\|reservation_service\|commercial_ai\|operations_ai\|finance_admin\|revenue_bi\|security_warden" src/` |
 | ADR-0012 belum dibangun | `grep -c "method_category" src/payments.py` → 0 |
 | Outbox belum ada | `grep -in outbox src/schema/001_initial.sql` → kosong |
@@ -248,4 +248,4 @@ Yang **tidak** saya usulkan sekarang: membangun Commercial AI sebelum reservatio
 
 ---
 
-**Kesimpulan satu paragraf.** Sistem domainnya **sehat dan bisa dipercaya** — 39 ADR, 3.078 tes hijau, katalog policy penuh, invariant ditegakkan kode. Yang **belum** adalah lapisan AI workforce (0 dari 6 komponen) dan tiga infrastruktur penopangnya (outbox, exception engine, DLP), plus dua ADR pembayaran yang sudah diterima tapi belum dieksekusi. Yang **menahan go-live** bukan software, tapi 1 keputusan bisnis (kesiapan tenant, D17). Dan **pendapat saya soal dokumen Anda: setuju, dokumen itu memang acuan yang tepat** — ia satu-satunya sumber yang memisahkan *agent*, *worker*, dan *manusia* dengan tegas, dan itu persis pembedaan yang mencegah sistem ini tumbuh jadi kumpulan chatbot yang saling mengklaim wewenang. Yang perlu ditambahkan hanya satu: dokumen itu harus **tersambung ke traceability repo** supaya jadi acuan proyek, bukan acuan percakapan.
+**Kesimpulan satu paragraf.** Sistem domainnya **sehat dan bisa dipercaya** — 40 ADR, 3.080 tes hijau, katalog policy penuh, invariant ditegakkan kode. Yang **belum** adalah lapisan AI workforce (0 dari 6 komponen) dan tiga infrastruktur penopangnya (outbox, exception engine, DLP), plus dua ADR pembayaran yang sudah diterima tapi belum dieksekusi. Yang **menahan go-live** bukan software, tapi 1 keputusan bisnis (kesiapan tenant, D17). Dan **pendapat saya soal dokumen Anda: setuju, dokumen itu memang acuan yang tepat** — ia satu-satunya sumber yang memisahkan *agent*, *worker*, dan *manusia* dengan tegas, dan itu persis pembedaan yang mencegah sistem ini tumbuh jadi kumpulan chatbot yang saling mengklaim wewenang. Yang perlu ditambahkan hanya satu: dokumen itu harus **tersambung ke traceability repo** supaya jadi acuan proyek, bukan acuan percakapan.

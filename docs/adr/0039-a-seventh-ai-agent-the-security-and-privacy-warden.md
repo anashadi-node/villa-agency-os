@@ -73,12 +73,15 @@ change the locks — and it may not sign off on its own work.*
 
 - **A new AI principal** (`ai_security_warden`) joins the identity model (ADR-0018), with the
   same deny registry, the same audit trail, and no special tier that bypasses either.
-- **Guardrail entries are proposed, not assumed.** The deny registry (v2, 23 entries) already
-  refuses `audit.modify`, `audit.delete`, `permission.change`, `secret.read`, `key.read_raw`.
-  Four entries are *not* there yet and the warden's arrival makes them necessary:
-  `policy.publish`, `security.controls.change`, `ai.allowance.change`, `deploy.production`.
-  **These four are waiting for the owner's approval** before they are published — adding them
-  is an owner act on the same registry they protect.
+- **Guardrail entries are published, not assumed.** The owner approved the four additions on
+  2026-10-02, and `security.ai.denied_actions` **v3** (27 entries, effective 2026-10-02) now
+  refuses them: `policy.publish`, `security.controls.change`, `ai.allowance.change`,
+  `deploy.production`. The registry they protect is the one that holds them — the warden cannot
+  reach it, and the earlier revision keeps answering for decisions dated before that day (the
+  suite proves both: 27 entries today, 23 before, and neither drifts). They name *capabilities*
+  rather than registered tools, so the file that guards the registry records them as the owner's
+  extensions and notes the drift rule: when a tool for one of them is ever registered in
+  `ai_tools`, the entry must name the **tool**, because enforcement compares tool names.
 - **The warden is the sixth and seventh component's problem, in one order:** build the outbox
   first (§14: agents talk in typed, recorded letters), then the warden — because an agent that
   reports incidents needs a channel that cannot lose a report, and that channel does not exist

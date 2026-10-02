@@ -24,6 +24,7 @@
 14. [Pembaruan 2026-10-02: peran satu rumah, GM bisa menyetujui](#bab-14)
 15. [Sistem ini dijual per agency: apa artinya untuk Anda](#bab-15)
 16. [Pegawai AI ke-7: Divisi Security & Privacy](#bab-16)
+17. [Prinsip Anda: Keamanan & Privacy utama dan pertama](#bab-17)
 
 ---
 
@@ -78,8 +79,8 @@ Semua yang di bawah ini **sudah ada dan sudah diuji**, bukan rencana.
 | 5 | **Mesin bukti** | Membedakan bukti kuat (dari sistem villa) dan bukti lemah (screenshot tamu) — level A sampai D | `evidence.py` |
 | 6 | **Identitas & hak akses** | Siapa boleh apa; MFA untuk peran sensitif | `identity.py`, TOTP |
 | 7 | **Rantai audit** | Catatan yang tidak bisa diubah diam-diam | `audit.py` + anchor |
-| 8 | **Gerbang kualitas** | 3.078 tes otomatis (+3.780 subtes) sebelum perubahan apa pun boleh masuk | `make check` → PASS |
-| 9 | **39 keputusan tercatat** | Setiap keputusan teknis/bisnis ditulis + alasannya | `docs/adr/` |
+| 8 | **Gerbang kualitas** | 3.080 tes otomatis (+3.780 subtes) sebelum perubahan apa pun boleh masuk | `make check` → PASS |
+| 9 | **40 keputusan tercatat** | Setiap keputusan teknis/bisnis ditulis + alasannya | `docs/adr/` |
 
 **Analogi bagian ini:** ini semua adalah *sistem saraf + pengaman gedung* — kunci pintu, alarm, CCTV, buku besar. Membosankan, tapi justru inilah yang membuat bisnis tidak bisa dibohongi.
 
@@ -180,7 +181,7 @@ Yang dihapus adalah **peran manusianya**. Yang **tidak** boleh dihapus adalah **
 | 3 | **Mr. CEO** (General Manager) | persetujuan tingkat 2 |
 | 4 | **manusia** — Ms. FAM | **transfer benar-benar dieksekusi, dengan tangan** |
 
-**Kabar bagusnya: aturan 1 dan 2 SUDAH berlaku di sistem sekarang** — tidak perlu kode baru. Daftar larangan AI (`security.ai.denied_actions`) sudah memuat `payment.execute`, `payment.approve`, `refund.execute`, `bank.change`, `bank.approve`, `crypto.transfer`, `treasury.control`. Jadi AI di sistem ini memang **tidak bisa** memindahkan uang atau mengubah rekening.
+**Kabar bagusnya: aturan 1 dan 2 SUDAH berlaku di sistem sekarang** — tidak perlu kode baru. Daftar larangan AI (`security.ai.denied_actions`, **v3 = 27 entri** sejak 2026-10-02) sudah memuat `payment.execute`, `payment.approve`, `refund.execute`, `bank.change`, `bank.approve`, `crypto.transfer`, `treasury.control`. Jadi AI di sistem ini memang **tidak bisa** memindahkan uang atau mengubah rekening.
 
 **Yang masih baru: aturan 3.** Tingkat GM belum ada di kode, jadi ini masuk pekerjaan RBAC.
 
@@ -377,7 +378,7 @@ Pemeriksaan sistem hari ini: **13 dari 13 OK.** Yang menahan: **14 keputusan bis
 ## Bab 13 — Ringkasan satu halaman
 
 1. **Yang dibangun:** satu sistem operasi villa agency untuk Bali & Yogyakarta, dijalankan **manusia + 6 pegawai AI**.
-2. **Sudah jadi:** "gedungnya" — katalog kebijakan (25/25 terjawab), mesin status booking & hold, mesin pembayaran, mesin bukti, identitas & hak akses, rantai audit, dan gerbang 3.078 tes. Semuanya **hijau**.
+2. **Sudah jadi:** "gedungnya" — katalog kebijakan (25/25 terjawab), mesin status booking & hold, mesin pembayaran, mesin bukti, identitas & hak akses, rantai audit, dan gerbang 3.080 tes. Semuanya **hijau**.
 3. **Belum jadi:** **ketujuh pegawai AI-nya** (0 dari 7 — 6 dari dokumen Anda + Security & Privacy Warden), plus 3 alat penopang (outbox, exception engine, DLP) dan 4 rel pembayaran.
 4. **Organisasi manusia SUDAH LENGKAP** (keputusan Anda 2026-09-28): delapan pemegang — Mr. Owner, Mr. CEO, Mr. CMM, Mr. PM, Ms. RM, Ms. FAM, Mr. TS, Ms. Greeting. Revenue Manager & Auditor ditunda; Legal eksternal; **Finance Staff & Reservation Agent: PERAN MANUSIANYA DIHAPUS** (dikoreksi 2026-10-02 — lihat Bab 14), dan **fungsinya (pembuat) pindah ke identitas AI Service**, supaya maker-checker tetap bermakna; **Guest Service dihapus**, diganti Greeting Service Team.
 5. **Yang menahan go-live bukan software** — seluruh pemeriksaan sistem OK (preflight 2026-10-02: 12 OK, 3 WARN lingkungan). Yang menahan: **1 keputusan bisnis BLOCKING** (D17 — kesiapan tenant), dari 13 sebelum jawaban Anda 2026-10-02.
@@ -408,7 +409,7 @@ Aturan 1 dan 2 (transfer & ubah rekening wajib manusia) sudah ditegakkan sejak a
 | Nilai policy Anda (`finance.approval.payment_thresholds_minor`) | terbit v2: `finance_manager → gm`, tapi **kedua nama itu tidak dikenal mesin** | terbit v2, dan **kedua nama itu resmi ada di tangga** — diperiksa preflight |
 | Halaman yang bisa dibuka Mr. CEO | **tidak bisa login sama sekali** | Command Center, Approvals, Finance, Cases, Properties |
 | Wajib faktor kedua (MFA) | hanya Owner & Finance | Owner, Finance, **dan GM** |
-| AI menyetujui/mengeksekusi uang | ditolak | tetap ditolak (23 entri daftar larangan) + **tes matriks per-peran** |
+| AI menyetujui/mengeksekusi uang | ditolak | tetap ditolak (**27 entri** daftar larangan, v3 2026-10-02) + **tes matriks per-peran** |
 
 **Yang penting untuk Anda tahu:** tidak ada satu pun keputusan yang berubah peringkatnya karena penggantian nama ini. `accountant` tetap tingkat 3, `owner` tetap paling atas, dan `gm` benar-benar baru — disisipkan di antara Finance Manager dan Owner, persis seperti keputusan Anda.
 
@@ -490,7 +491,7 @@ D4 (SLA), D7 (ambang shadow mode), D10 (RPO/RTO backup), D13 (siapa yang siaga s
 | Periksa | Hasil |
 |---|---|
 | Keputusan bisnis yang masih menahan go-live | **1** — hanya D17 (kesiapan tenant). Sebelum jawaban Anda 2026-10-02: 13 |
-| `make check` | 3.078 lulus, 4 dilewati, 3.780 subtes; secret-scan & unsafe-scan bersih |
+| `make check` | 3.080 lulus, 4 dilewati, 3.780 subtes; secret-scan & unsafe-scan bersih |
 | Preflight | 12 pemeriksaan sistem OK; yang menahan **keputusan bisnis**, bukan software |
 | ADR | 39 berkas, semua berstatus terbaca |
 
@@ -508,7 +509,7 @@ Anda menambahkan satu pegawai AI lagi pada 2026-10-02. Ini pekerjaannya, dalam b
 | Tugas (kata Anda) | Artinya di sistem |
 |---|---|
 | Melindungi dari **virus, malware & kerusakan** | Memeriksa berkas, basis data, dan rantai audit secara berkala; mengenali berkas/proses yang rusak atau mencurigakan |
-| Menjaga bebas **Bug & Error** | Menjalankan pemeriksaan kualitas (3.078 tes + pemeriksaan gaya penulisan kode) dan melaporkan apa yang merah |
+| Menjaga bebas **Bug & Error** | Menjalankan pemeriksaan kualitas (3.080 tes + pemeriksaan gaya penulisan kode) dan melaporkan apa yang merah |
 | Sistem tetap **terstruktur & rapi** | Menjaga keseragaman susunan: skema SQLite = PostgreSQL, setiap keputusan punya nomor ADR, tidak ada berkas nyasar |
 | **Perbaikan signifikan otomatis** | Menemukan masalah → membuat perbaikan → **mengujinya** → melaporkan; kalau ada kerusakan, memulihkan ke kondisi terakhir yang sudah terbukti baik |
 | Menjaga **data sensitif tidak dicuri** | Menjaga data KTP/paspor, rekening, dan kunci sistem; memutus koneksi keluar yang mencurigakan; mengganti sesi/kunci yang diduga bocor |
@@ -540,4 +541,42 @@ Pegawai ke-7 adalah pelapor insiden. Laporan hanya berguna kalau **tidak bisa hi
 
 ---
 
-*Edisi 2026-09-28 dibuat dari pemeriksaan langsung kode, tes, dan gerbang pada 2026-09-28; **Bab 14, 15 & 16 memperbarui angka dan koreksi pada 2026-10-02**. Setiap angka di sini bisa Anda minta saya periksa ulang di depan Anda.*
+---
+
+<a id="bab-17"></a>
+## Bab 17 — Prinsip Anda: Keamanan & Privacy adalah hal yang UTAMA dan PERTAMA
+
+Anda menetapkan ini pada 2026-10-02, dan saya jadikan **aturan yang bisa gagal diuji** — bukan tulisan di dinding.
+
+### 17.1 Apa artinya di dalam sistem (empat akibat nyata)
+
+| Prinsip | Bentuk teknisnya | Yang membuatnya tidak bisa dilanggar diam-diam |
+|---|---|---|
+| **Tolak secara bawaan** (*deny by default*) | Peran tak dikenal, penulisan tanpa lingkup agency, nilai kebijakan yang belum diterbitkan, kelas data tak dikenal → **ditolak**, bukan ditebak | 4 mesin berbeda menolaknya; masing-masing punya tes |
+| **AI tidak boleh memegang kunci, uang, atau tanda tangan** | AI tidak bisa membayar, menyetujui pembayaran, mengubah rekening, menandatangani transaksi, atau membaca kunci rahasia — **dan penjaga keamanan tidak bisa mengubah pagar pengamannya sendiri** | Daftar larangan **v3 = 27 entri** (23 lama + 4 baru Anda), ditegakkan `ai_service` dengan catatan audit |
+| **Yang tidak boleh mesin, harus manusia** | Uang keluar, ganti rekening, hapus data, setelan tenant, perubahan peran, pemasangan ke produksi | Tangga approval (FAM → GM), matriks penjaga (ADR-0039) |
+| **Privacy adalah batasan rancangan, bukan setelan** | Data diklasifikasi P0–P4; data sensitif disamarkan sebelum sampai ke AI; kelas yang dilarang **tidak disimpan**; ekspor P3 wajib beralasan & tercatat | Gerbang klasifikasi data + pemindai konfigurasi berbahaya |
+
+### 17.2 Harga yang saya tulis terbuka (bukan saya sembunyikan)
+
+Prinsip ini **kadang memperlambat** — dan itu memang pilihannya:
+
+- GM yang tidur menahan pembayaran (permintaan berisiko tinggi kedaluwarsa **240 menit**).
+- Peran keuangan wajib mengambil kode faktor kedua sebelum bekerja.
+- Setiap perubahan harus lulus **3.080 tes** sebelum boleh dipasang.
+
+Semua itu **biaya keamanan**, dan biaya itu tertulis di ADR — bukan disembunyikan. Kalau suatu hari biaya ini terasa terlalu mahal, keputusannya milik Anda, dan saya akan tunjukkan angkanya sebelum menyarankan apa pun.
+
+### 17.3 Yang **tidak** berarti
+
+- **Bukan "tolak semuanya".** Sistem yang tidak bisa dipakai bukan aman, tapi gagal dengan cara lain.
+- **Bukan sistem membeku.** Aturannya soal **beban bukti**: mengetatkan pengaman itu murah (boleh langsung); **melonggarkan** pengaman wajib keputusan Anda tertulis.
+- **Bukan platform mengambil alih kebijakan data tenant.** Tenant mengisi setelannya sendiri (Bab 15); lantai keamanan tetap milik platform.
+
+### 17.4 Satu kalimat yang merangkum semuanya
+
+> **Penjaga rumah boleh memperbaiki rumah. Penjaga rumah tidak boleh mengganti kunci rumahnya sendiri, dan tidak boleh menandatangani pekerjaannya sendiri.**
+
+---
+
+*Edisi 2026-09-28 dibuat dari pemeriksaan langsung kode, tes, dan gerbang pada 2026-09-28; **Bab 14–17 memperbarui angka dan koreksi pada 2026-10-02**. Setiap angka di sini bisa Anda minta saya periksa ulang di depan Anda.*
