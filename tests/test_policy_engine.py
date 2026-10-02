@@ -354,5 +354,70 @@ class TestImmutability(unittest.TestCase):
         self.assertEqual(r.min_stay_nights, 2)
 
 
+class TestStoredPolicyVersion(unittest.TestCase):
+    """``as_row`` -> ``from_row`` must be identity, because a price is pinned to a stored row.
+
+    The reader is the missing inverse of the writer: without it, pricing could only be handed a
+    version object a test built, never one a tenant actually has in force.
+    """
+
+    def test_a_stored_version_reads_back_as_the_version_that_was_written(self):
+        written = version()
+        read = PE.PolicyVersion.from_row(written.as_row())
+
+        self.assertEqual(read.policy_version_id, written.policy_version_id)
+        self.assertEqual(read.property_id, written.property_id)
+        self.assertEqual(read.unit_scope, written.unit_scope)
+        self.assertEqual(read.version, written.version)
+        self.assertEqual(read.effective_from, written.effective_from)
+        self.assertEqual(read.effective_to, written.effective_to)
+        self.assertEqual(read.created_at, written.created_at)
+        self.assertEqual(read.source_doc_ref, written.source_doc_ref)
+        self.assertEqual(read.approved_by, written.approved_by)
+        self.assertEqual(read.rules.as_dict(), written.rules.as_dict())
+        self.assertEqual(read.fingerprint, written.fingerprint)
+        self.assertEqual(read.currency, written.currency)
+
+    def test_the_reader_does_not_trust_a_stored_fingerprint_column(self):
+        """A drifted fingerprint column must not become the fingerprint of a live version."""
+
+        row = version().as_row()
+        row["fingerprint"] = "0" * 64
+
+        read = PE.PolicyVersion.from_row(row)
+
+        self.assertEqual(read.fingerprint, version().fingerprint)
+        self.assertNotEqual(read.fingerprint, row["fingerprint"])
+
+    def test_a_row_whose_payload_is_not_readable_json_is_refused(self):
+        row = version().as_row()
+        row["payload"] = "{not json"
+
+        with self.assertRaises(DomainError) as ctx:
+            PE.PolicyVersion.from_row(row)
+
+        self.assertEqual(ctx.exception.code, "POLICY_PAYLOAD_UNREADABLE")
+
+    def test_a_row_whose_rules_break_the_bounds_is_refused_not_coerced(self):
+        """The same validation the writer passed runs on the way in, so drift cannot be priced."""
+
+        row = version().as_row()
+        row["deposit_pct"] = "900"
+
+        with self.assertRaises(DomainError) as ctx:
+            PE.PolicyVersion.from_row(row)
+
+        self.assertEqual(ctx.exception.code, "POLICY_PERCENT_OUT_OF_RANGE")
+
+    def test_a_payload_that_is_not_an_object_is_refused(self):
+        row = version().as_row()
+        row["payload"] = "[1, 2]"
+
+        with self.assertRaises(DomainError) as ctx:
+            PE.PolicyVersion.from_row(row)
+
+        self.assertEqual(ctx.exception.code, "POLICY_PAYLOAD_INVALID")
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

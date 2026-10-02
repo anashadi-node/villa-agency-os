@@ -40,6 +40,10 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
 
+import matching as MATCHING
+import policy_engine as PE
+import quote_calculator as QC
+
 from ai_service import require_tool_authority
 from audit import AuditLog, append_event
 from availability import (
@@ -186,7 +190,6 @@ AVAILABILITY_REQUEST_TOOL = "availability.request"
 #: §56 lists "tentative-hold requests" beside availability requests, so the hold
 #: path is gated by the same policy value family.
 HOLD_REQUEST_TOOL = "hold.request_tentative"
-
 #: The chain's starting value. 64 zeros rather than a word, because the schema
 #: requires every ``prev_hash`` to look like a SHA-256 hex digest.
 
@@ -587,6 +590,105 @@ class ReservationKernel:
                 tuple(row[column] for column in columns),
             )
         return str(row["quote_id"])
+
+    def quote_stay(
+        self,
+        *,
+        unit_id: Any,
+        check_in: Any,
+        check_out: Any,
+        adults: Any,
+        children: Any = 0,
+        infants: Any = 0,
+        extras: Optional[Sequence[Mapping[str, Any]]] = None,
+        discount_minor: int = 0,
+        discount_reason: Optional[str] = None,
+    ) -> Any:
+        """Derive the price of a stay from the versions in force — §9's pricing step.
+
+        This method **assembles**, it does not price: the policy version covering the stay comes
+        from :func:`matching.policy_for` (the same version the ranking applied), the rate card
+        from :func:`matching.rate_card_for`, and the arithmetic from
+        :func:`quote_calculator.calculate_quote`. Re-deriving "which card wins" here would be a
+        second price for the same stay, so no query in this method chooses a version — every
+        choice is delegated to the rule that already makes it.
+
+        It also **records nothing**. §56 tiers the AI's acts toward the outside, and this one has
+        no outside: it reads the agency's own rows and returns a figure. The priced stay becomes
+        a row through :meth:`persist_quote`, which the offer path takes after its door — so a
+        kill switch that leaves the AI able to answer a price still leaves it unable to start an
+        offer.
+
+        Nothing is guessed. An unknown unit, no policy in force, or no rate card in force refuses
+        with a machine-readable code instead of producing a number from an absent basis; the
+        card's own refusals (a season outside the card window, say) propagate unchanged. Guest
+        counts and money are handed to the request object, which validates them — this method
+        does not coerce a caller's value into a valid one.
+        """
+        unit_id = require_ref(unit_id, "unit_id")
+        window_start = parse_iso_date(check_in)
+        window_end = parse_iso_date(check_out)
+        # Refuses a window that does not move forward, with the same code the availability
+        # and hold paths raise: one mistake keeps one name across the flows.
+        nights_between(window_start, window_end)
+
+        issued_at = self._now()
+        with self.transaction() as conn:
+            unit = conn.execute(
+                "SELECT * FROM units WHERE unit_id = ? AND agency_id = ?",
+                (unit_id, self.agency_id),
+            ).fetchone()
+            if unit is None:
+                raise DomainError(f"unknown unit: {unit_id}", code="UNIT_NOT_FOUND", unit_id=unit_id)
+
+            policy_row = MATCHING.policy_for(
+                conn, unit, window_start.isoformat(), window_end.isoformat()
+            )
+            if policy_row is None:
+                raise DomainError(
+                    "no policy version covers this stay",
+                    code="QUOTE_NO_POLICY",
+                    unit_id=unit_id,
+                    property_id=str(unit["property_id"]),
+                    check_in=window_start.isoformat(),
+                    check_out=window_end.isoformat(),
+                )
+            policy = PE.PolicyVersion.from_row(policy_row)
+
+            card, card_note = MATCHING.rate_card_for(
+                conn, unit, window_start.isoformat(), window_end.isoformat()
+            )
+            if card is None:
+                raise DomainError(
+                    "no rate card covers this stay",
+                    code="QUOTE_NO_RATE_CARD",
+                    unit_id=unit_id,
+                    property_id=str(unit["property_id"]),
+                    check_in=window_start.isoformat(),
+                    check_out=window_end.isoformat(),
+                    note=card_note,
+                )
+
+            request = QC.QuoteRequest(
+                quote_date=parse_iso(issued_at).date().isoformat(),
+                check_in=window_start.isoformat(),
+                check_out=window_end.isoformat(),
+                adults=adults,
+                children=children,
+                infants=infants,
+                extras=tuple(extras or ()),
+                discount_minor=discount_minor,
+                discount_reason=discount_reason,
+            )
+            facts = QC.UnitFacts(
+                unit_id=unit_id,
+                property_id=str(unit["property_id"]),
+                base_capacity=int(unit["base_capacity"]),
+                max_guests=int(unit["max_guests"]),
+            )
+        return QC.calculate_quote(
+            request, policy, card, facts, quote_id=self.ids.new("quote"), issued_at=issued_at
+        )
 
     # -- evidence ----------------------------------------------------------- #
     def record_evidence(

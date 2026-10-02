@@ -25,9 +25,15 @@ Three things follow, and each one is a claim pinned in
 consults it (§56: conversation text cannot raise privilege), so pasting what a guest wrote
 into it would put guest text into the audit chain in exchange for nothing.
 
-Scope: the first three workers — inquiry (RES-W01), matching (RES-W02), availability
-(RES-W03). The rest of §9's job list arrives with the modules it needs and follows the same
-three steps: guard, door, delegate.
+Scope: five of §9's jobs — inquiry (RES-W01), matching (RES-W02), availability (RES-W03),
+pricing (RES-W04) and the offer (RES-W05). The rest of the job list arrives with the modules it
+needs and follows the same three steps: guard, door, delegate.
+
+Two of the five are worth reading together with §56. Pricing has no capability of its own — §56
+names the *answer* (``villa.answer_verified``) — so RES-W04 writes nothing; the priced stay
+becomes a row inside RES-W05, whose one act is the one §56 names for the offer
+(``quotation.send``, MEDIUM, owner allow-listed). A kill switch that leaves the AI able to answer
+a price therefore still leaves it unable to start an offer.
 """
 
 from __future__ import annotations
@@ -39,6 +45,7 @@ from typing import Any, Mapping, Optional, Sequence
 import crm as CRM
 import intake as IN
 import matching as M
+import quotation as Q
 import reservation_kernel as RK
 from primitives import DomainError, sha256_hex
 from reservation_service import Conversation, ReservationService
@@ -49,13 +56,25 @@ from reservation_service import Conversation, ReservationService
 INQUIRY_WORKER = "RES-W01"
 MATCHING_WORKER = "RES-W02"
 AVAILABILITY_WORKER = "RES-W03"
+PRICING_WORKER = "RES-W04"
+QUOTATION_WORKER = "RES-W05"
 
 #: The catalogue names, spelled once here and pinned against :data:`ai_service`'s ``ai_tools``
 #: rows by ``test_the_tools_the_workers_hold_are_the_tools_the_catalogue_declares``. A typo must
 #: fail the suite, not be discovered by the door at run time.
 INTAKE_TOOL = "inquiry.intake"
 SEARCH_TOOL = "villa.search"
-AVAILABILITY_TOOL = "availability.request"
+#: Named through the module that enforces each of these, so a rename cannot leave one
+#: file gating a tool the other no longer knows about.
+AVAILABILITY_TOOL = RK.AVAILABILITY_REQUEST_TOOL
+QUOTE_TOOL = Q.SEND_TOOL
+
+#: Pricing is §56's *answer* capability, not a commercial act of its own: the AI tells a
+#: verified figure about this villa's rates. §56 has no separate name for the arithmetic (or for
+#: opening a version the guest cannot see), and the catalogue is the closed §56 list — so the
+#: spelling here is the answer's, and what the step must not do is made true by the code instead:
+#: RES-W04 writes nothing at all.
+PRICING_TOOL = "villa.answer_verified"
 
 #: How a model-derived proposal is labelled in ``intake_proposals.method``. §16 is the reason it
 #: is not ``"rule"``: these fields are extracted from a guest's words and are *proposals* until a
@@ -122,6 +141,7 @@ class ReservationWorkers:
         kernel: Optional[Any] = None,
         crm: Optional[Any] = None,
         intake: Optional[Any] = None,
+        quotation: Optional[Any] = None,
     ) -> None:
         self.service = service
         self.conn: sqlite3.Connection = service.conn
@@ -132,6 +152,7 @@ class ReservationWorkers:
         self._kernel = kernel
         self._crm = crm
         self._intake = intake
+        self._quotation = quotation
 
     # -- the collaborators, constructed on first use ------------------------- #
 
@@ -159,6 +180,15 @@ class ReservationWorkers:
         if self._intake is None:
             self._intake = IN.IntakeService(self.conn, clock=self.clock, ids=self.ids)
         return self._intake
+
+    def quotation(self) -> Any:
+        """The module that owns the version chain of an offer (``quotation``)."""
+
+        if self._quotation is None:
+            self._quotation = Q.QuotationService(
+                self.conn, clock=self.clock, ids=self.ids, agency_id=self.agency_id
+            )
+        return self._quotation
 
     # -- the three steps, in one place -------------------------------------- #
 
@@ -308,7 +338,9 @@ class ReservationWorkers:
         conversation = self.service.require_thread(
             conversation_id, what=f"{AVAILABILITY_WORKER} asking about availability"
         )
-        window_in, window_out = self._window(conversation, check_in=check_in, check_out=check_out)
+        window_in, window_out = self._window(
+            conversation, check_in=check_in, check_out=check_out, worker=AVAILABILITY_WORKER
+        )
         self._door(
             conversation,
             AVAILABILITY_TOOL,
@@ -329,10 +361,174 @@ class ReservationWorkers:
             notes=notes,
         )
 
+    # -- RES-W04: price the stay from the versions in force ----------------- #
+
+    def price_stay(
+        self,
+        conversation_id: str,
+        *,
+        unit_id: str,
+        check_in: Any = None,
+        check_out: Any = None,
+        adults: Any = None,
+        children: Any = None,
+        infants: Any = None,
+        extras: Optional[Sequence[Mapping[str, Any]]] = None,
+        discount_minor: int = 0,
+        discount_reason: Optional[str] = None,
+        at: Any = None,
+    ) -> Any:
+        """Answer what the inquiry's stay costs, from the versions in force (RES-W04).
+
+        The window is the inquiry's **confirmed** stay unless the caller names another, and the
+        guest counts default to the confirmed ones; a count the caller passes is handed through
+        unchanged, so the request object is what refuses a bad value rather than this worker
+        repairing it into a valid one. No guest count at all is refused here — a stay nobody
+        agreed to is not priced.
+
+        The answer is §56's ``villa.answer_verified``: the AI may tell a verified figure about
+        this villa's own rates, and that is all this step is. It **records nothing** — the priced
+        stay becomes a row inside RES-W05, after that step's door — so a kill switch that leaves
+        the AI able to answer a price still leaves it unable to start an offer. No arithmetic
+        happens in this file either: ``kernel.quote_stay`` chooses the policy version and the rate
+        card through the rules the ranking already used and computes with ``quote_calculator``
+        (§9: the commercial truth of a price comes from verified rate/contract versions, never
+        from a model's memory).
+        """
+
+        conversation = self.service.require_thread(
+            conversation_id, what=f"{PRICING_WORKER} pricing the stay"
+        )
+        window_in, window_out = self._window(
+            conversation, check_in=check_in, check_out=check_out, worker=PRICING_WORKER
+        )
+        facts = self._requirements(conversation.case_id)
+        guests = {
+            "adults": adults if adults is not None else facts.get("adults"),
+            "children": children if children is not None else facts.get("children", 0),
+            "infants": infants if infants is not None else facts.get("infants", 0),
+        }
+        if guests["adults"] is None:
+            raise MissingRequirements(
+                "this inquiry has no confirmed guest count yet, so there is no stay to price; "
+                "the worker will not assume how many people are coming",
+                conversation_id=conversation.conversation_id,
+                case_id=conversation.case_id,
+                worker=PRICING_WORKER,
+                missing=["adults"],
+            )
+        self._door(
+            conversation,
+            PRICING_TOOL,
+            worker=PRICING_WORKER,
+            what=f"pricing {unit_id} for {window_in}..{window_out}",
+            at=at,
+        )
+        return self.kernel().quote_stay(
+            unit_id=unit_id,
+            check_in=window_in,
+            check_out=window_out,
+            adults=guests["adults"],
+            children=guests["children"],
+            infants=guests["infants"],
+            extras=tuple(extras or ()),
+            discount_minor=discount_minor,
+            discount_reason=discount_reason,
+        )
+
+    # -- RES-W05: make the offer stand -------------------------------------- #
+
+    def send_quote(
+        self,
+        conversation_id: str,
+        *,
+        unit_id: str,
+        check_in: Any = None,
+        check_out: Any = None,
+        adults: Any = None,
+        children: Any = None,
+        infants: Any = None,
+        extras: Optional[Sequence[Mapping[str, Any]]] = None,
+        discount_minor: int = 0,
+        discount_reason: Optional[str] = None,
+        at: Any = None,
+    ) -> Any:
+        """Price, record, open and send the offer — §9's quotation step (RES-W05).
+
+        One step, because §56 names one act: ``quotation.send``, MEDIUM, owner allow-listed. The
+        four things it does are not four capabilities — pricing is the answer RES-W04 gives (and
+        this step gives it again from the same basis, so the recorded figure and the answer
+        cannot disagree), recording the priced stay writes the agency's own row, opening the
+        version writes one the guest cannot see, and sending is what the guest sees. Splitting
+        "draft but do not send" off would name an act the catalogue does not name.
+
+        The order is the guarantee: the door is asked **before** anything is written, so a
+        refused send leaves no quote row, no version and nothing a guest could ever be shown.
+        A later send opens a new version and supersedes the one the guest held — which is why the
+        previous version is untouched until the new one actually goes out.
+        """
+
+        conversation = self.service.require_thread(
+            conversation_id, what=f"{QUOTATION_WORKER} sending the offer"
+        )
+        window_in, window_out = self._window(
+            conversation, check_in=check_in, check_out=check_out, worker=QUOTATION_WORKER
+        )
+        facts = self._requirements(conversation.case_id)
+        guests = {
+            "adults": adults if adults is not None else facts.get("adults"),
+            "children": children if children is not None else facts.get("children", 0),
+            "infants": infants if infants is not None else facts.get("infants", 0),
+        }
+        if guests["adults"] is None:
+            raise MissingRequirements(
+                "this inquiry has no confirmed guest count yet, so there is no offer to make; "
+                "the worker will not assume how many people are coming",
+                conversation_id=conversation.conversation_id,
+                case_id=conversation.case_id,
+                worker=QUOTATION_WORKER,
+                missing=["adults"],
+            )
+        self._door(
+            conversation,
+            QUOTE_TOOL,
+            worker=QUOTATION_WORKER,
+            what=f"sending the offer for {unit_id} {window_in}..{window_out}",
+            at=at,
+        )
+
+        kernel = self.kernel()
+        quote = kernel.quote_stay(
+            unit_id=unit_id,
+            check_in=window_in,
+            check_out=window_out,
+            adults=guests["adults"],
+            children=guests["children"],
+            infants=guests["infants"],
+            extras=tuple(extras or ()),
+            discount_minor=discount_minor,
+            discount_reason=discount_reason,
+        )
+        quote_id = kernel.persist_quote(quote)
+        version = self.quotation().draft(
+            quote_id, actor=self.service.actor, actor_role=self.service.actor_role
+        )
+        return self.quotation().send(
+            version.quotation_version_id,
+            actor=self.service.actor,
+            actor_role=self.service.actor_role,
+            principal_id=self.service.principal(),
+        )
+
     def _window(
-        self, conversation: Conversation, *, check_in: Any, check_out: Any
+        self, conversation: Conversation, *, check_in: Any, check_out: Any, worker: str
     ) -> tuple[str, str]:
-        """The window to ask about: what the caller passed, else the inquiry's confirmed stay."""
+        """The window to ask about: what the caller passed, else the inquiry's confirmed stay.
+
+        ``worker`` is the code of the caller, because this rule is shared: a refusal has to
+        name the worker that actually asked, or an operator reading the incident would chase
+        the wrong part of the workforce.
+        """
 
         if check_in is not None and check_out is not None:
             return _iso_date(check_in, field="check_in"), _iso_date(check_out, field="check_out")
@@ -345,7 +541,7 @@ class ReservationWorkers:
                 "the worker will not guess the dates",
                 conversation_id=conversation.conversation_id,
                 case_id=conversation.case_id,
-                worker=AVAILABILITY_WORKER,
+                worker=worker,
                 missing=[
                     name
                     for name, value in (("check_in", resolved_in), ("check_out", resolved_out))

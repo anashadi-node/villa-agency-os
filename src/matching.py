@@ -94,6 +94,8 @@ __all__ = [
     "MatchExplanation",
     "match",
     "explain",
+    "policy_for",
+    "rate_card_for",
 ]
 
 #: Bumped whenever the gate set, the weights or the criteria shape change.
@@ -754,17 +756,21 @@ def _load_inventory(conn: sqlite3.Connection, agency_id: str) -> tuple[dict[str,
     return tuple(dict(row) for row in rows)
 
 
-def _policy_for(conn: sqlite3.Connection, unit: Mapping[str, Any], check_in: str, check_out: str) -> Optional[dict[str, Any]]:
+def policy_for(conn: sqlite3.Connection, unit: Mapping[str, Any], check_in: str, check_out: str) -> Optional[dict[str, Any]]:
     """The effective policy version covering the whole stay, if one exists.
 
     The ``policy_versions`` table carries no unit column (``unit_scope`` is
     ``property``/``unit``), so a unit-scoped version is treated as a refinement
     of the property-wide one and wins; then the newest version wins.
+
+    Public because the price of a stay must be pinned to the **same** version the
+    ranking applied: a quote priced under a version the search never used would be
+    a second answer to "which rules govern this stay". The whole row is returned
+    (not a projection) so a caller can rebuild the version object it names.
     """
     row = conn.execute(
         """
-        SELECT policy_version_id, unit_scope, version, effective_from, effective_to,
-               currency, payload
+        SELECT *
         FROM policy_versions
         WHERE property_id = ?
           AND unit_scope IN ('property', 'unit')
@@ -780,12 +786,15 @@ def _policy_for(conn: sqlite3.Connection, unit: Mapping[str, Any], check_in: str
     return None if row is None else dict(row)
 
 
-def _rate_card_for(conn: sqlite3.Connection, unit: Mapping[str, Any], check_in: str, check_out: str) -> tuple[Optional[RateCard], Optional[str]]:
+def rate_card_for(conn: sqlite3.Connection, unit: Mapping[str, Any], check_in: str, check_out: str) -> tuple[Optional[RateCard], Optional[str]]:
     """The rate card covering the whole stay, rebuilt from its dated rows.
 
     Returns ``(card, note_code)``: a card the rule set refused to build (e.g. a
     season outside the card window) yields ``(None, <code>)`` — the missing basis
     is written down instead of being guessed at.
+
+    Public for the same reason as :func:`policy_for`: the ranking's min-stay basis
+    and the quote's price must come from one card, chosen once.
     """
     header = conn.execute(
         """
@@ -956,7 +965,7 @@ def _evaluate_unit(
         denies.append("CAPACITY_EXCEEDED")
 
     # -- gate 5: minimum stay ----------------------------------------------- #
-    policy = _policy_for(conn, unit, to_iso_date(check_in), to_iso_date(check_out))
+    policy = policy_for(conn, unit, to_iso_date(check_in), to_iso_date(check_out))
     min_stays: list[int] = []
     min_stay_sources: list[str] = []
     if policy is not None:
@@ -967,7 +976,7 @@ def _evaluate_unit(
             min_stays.append(policy_min)
             min_stay_sources.append(f"policy:{policy['policy_version_id']}")
 
-    card, card_note = _rate_card_for(conn, unit, to_iso_date(check_in), to_iso_date(check_out))
+    card, card_note = rate_card_for(conn, unit, to_iso_date(check_in), to_iso_date(check_out))
     if card is None and card_note:
         notes.append({"code": card_note})
     accommodation: Optional[int] = None

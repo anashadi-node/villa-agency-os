@@ -204,6 +204,11 @@ class QuotationService:
         of the same quotation rather than a second, unrelated offer. The previous
         version is not touched here: it is superseded when the new one is *sent*,
         because until then it is still the offer the guest holds.
+
+        Drafting is not a §56 capability on its own: nothing leaves the agency when a
+        version starts in ``DRAFT``, and the catalogue names the act that does —
+        :data:`SEND_TOOL`, which :meth:`send` gates. A caller that wants an offer to
+        exist must hold that capability, not this method.
         """
         who = require_ref(actor, "actor", max_len=64)
         role = require_ref(actor_role, "actor_role", max_len=64)

@@ -58,7 +58,7 @@ Dokumen Anda mendefinisikan **6 komponen AI**, dan owner menambah **1** lagi pad
 |---|---|---|---|
 | 1 | AI Control Tower / Orchestrator | — | ⚠️ belum ada |
 | 2 | Commercial AI Agent | — | ⚠️ belum ada |
-| 3 | AI Reservation Service | `src/reservation_service.py` + `src/schema/012_reservation_service.sql` | 🟡 **inti ada 2026-10-02**: ledger percakapan berisolasi, tangga §13 (8 rung), kosakata eskalasi tertutup, paket handoff berdigest, ambang keyakinan deny-first, handoff hanya ke peran berisi orang. **Ada juga**: 3 worker pertama RES-W01 (inquiry), RES-W02 (matching), RES-W03 (availability) lewat pintu `ai_gateway` + `src/reservation_workers.py`. **Belum**: 8 worker sisanya + CLI |
+| 3 | AI Reservation Service | `src/reservation_service.py` + `src/schema/012_reservation_service.sql` | 🟡 **inti ada 2026-10-02**: ledger percakapan berisolasi, tangga §13 (8 rung), kosakata eskalasi tertutup, paket handoff berdigest, ambang keyakinan deny-first, handoff hanya ke peran berisi orang. **Ada juga**: 5 worker RES-W01…RES-W05 (inquiry, matching, availability, pricing, versi penawaran) lewat pintu `ai_gateway` + `src/reservation_workers.py`, pricing di `reservation_kernel.quote_stay` (mengumpulkan aturan yang sudah ada, **tidak menulis**) dan penawaran lewat satu tindakan `quotation.send` (MEDIUM) — keduanya memakai nama §56 yang sudah ada, katalog tidak ditambah. **Belum**: 6 worker sisanya + CLI |
 | 4 | Operations AI Agent | — | ⚠️ belum ada |
 | 5 | Finance Admin AI Agent | — | ⚠️ belum ada |
 | 6 | Revenue & Business Intelligence AI Agent | — | ⚠️ belum ada |
@@ -201,7 +201,7 @@ Ini keputusan Anda, dan saya tidak akan memilihkan. Usulan saya di §6.
 |---|---|---|---|---|---|
 | 1 | **AI Control Tower** | CT-W01…W10 (router, workflow, SLA, exception, escalation, health, retry, notif, budget) | General Manager | GM; Owner untuk insiden material | ⚠️ 0% |
 | 2 | **Commercial AI** | COM-W01…W11 (lead intel, scoring, CRM, campaign, content, SEO, social, nurture, B2B, perf, abandoned recovery) | Commercial & Marketing Manager | lewat manager/GM | ⚠️ 0% |
-| 3 | **AI Reservation Service** | RES-W01…W11 (inquiry, matching, availability, pricing, quote, conversation, hold, booking, amend/cancel, pre-arrival, handoff) | Operations / Reservation Manager | lewat manager/GM | 🟡 inti ada 2026-10-02 (ledger + tangga §13 + eskalasi + handoff); RES-W01…W03 ada, 8 worker belum |
+| 3 | **AI Reservation Service** | RES-W01…W11 (✅ inquiry, matching, availability, pricing, quote · belum: conversation, hold, booking, amend/cancel, pre-arrival, handoff) | Operations / Reservation Manager | lewat manager/GM | 🟡 inti ada 2026-10-02 (ledger + tangga §13 + eskalasi + handoff); RES-W01…W05 ada, 6 worker belum |
 | 4 | **Operations AI** | OPS-W01…W10 (workflow, SLA, doc completeness, QC, readiness, task, exception, incident, comm QC, compliance) | Operations Manager | GM/Owner per severity | ⚠️ 0% |
 | 5 | **Finance Admin AI** | FIN-W01…W11 (AR, AP, matching, recon, invoice validation, settlement, due monitor, unallocated, duplicate, exception, cash/exposure) | Finance & Accounting Manager | **langsung GM + Owner** | ⚠️ 0% |
 | 6 | **Revenue & BI AI** | RBI-W01…W12 (revenue KPI, conversion, pace, demand, pricing intel, villa/partner/channel perf, forecast, margin, anomaly, exec report) | Revenue Manager, atau GM bila lean | **langsung GM + Owner** | ⚠️ 0% |

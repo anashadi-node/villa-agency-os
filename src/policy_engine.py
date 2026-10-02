@@ -478,6 +478,57 @@ class PolicyVersion:
             "created_at": self.created_at,
         }
 
+    @classmethod
+    def from_row(cls, row: Mapping[str, Any]) -> "PolicyVersion":
+        """The inverse of :meth:`as_row`: a stored row back into the version it came from.
+
+        Every field is passed through the same ``__post_init__`` validation the writer
+        went through, so a row that drifted cannot become an object that prices a stay.
+
+        ``fingerprint`` is deliberately **not** read: it is a derived value, and a
+        stored column that disagrees with the rules it claims to describe is exactly
+        what a caller would want to notice. Re-derive it with :attr:`fingerprint` and
+        compare against the column to check a row rather than trust it.
+        """
+        payload = row["payload"]
+        if isinstance(payload, (str, bytes)):
+            try:
+                payload = json.loads(payload)
+            except (TypeError, ValueError) as exc:
+                raise DomainError(
+                    "policy payload is not readable JSON",
+                    code="POLICY_PAYLOAD_UNREADABLE",
+                    policy_version_id=str(row["policy_version_id"]),
+                ) from exc
+        if not isinstance(payload, Mapping):
+            raise DomainError(
+                "policy payload must be a JSON object",
+                code="POLICY_PAYLOAD_INVALID",
+                policy_version_id=str(row["policy_version_id"]),
+            )
+        return cls(
+            policy_version_id=str(row["policy_version_id"]),
+            property_id=str(row["property_id"]),
+            unit_scope=str(row["unit_scope"]),
+            version=int(row["version"]),
+            effective_from=str(row["effective_from"]),
+            effective_to=str(row["effective_to"]),
+            rules=PolicyRules(
+                currency=str(row["currency"]),
+                deposit_pct=str(row["deposit_pct"]),
+                service_fee_pct=str(row["service_fee_pct"]),
+                tax_pbjt_pct=str(row["tax_pbjt_pct"]),
+                max_discount_pct=str(row["max_discount_pct"]),
+                quote_valid_hours=int(row["quote_valid_hours"]),
+                hold_ttl_minutes=int(row["hold_ttl_minutes"]),
+                max_hold_extensions=int(row["max_hold_extensions"]),
+                payload=dict(payload),
+            ),
+            created_at=str(row["created_at"]),
+            source_doc_ref=str(row["source_doc_ref"]),
+            approved_by=str(row["approved_by"]),
+        )
+
 
 # --------------------------------------------------------------------------- #
 # Lookup

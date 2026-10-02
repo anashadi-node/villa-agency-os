@@ -37,6 +37,7 @@ from primitives import DomainError, FrozenClock, IdFactory
 
 import test_reservation_service as RST
 from test_matching import seed_property, seed_unit
+from test_wave4c_quotation_versions import policy as version_fixture
 
 AGENCY = RST.AGENCY
 HUMAN = RST.HUMAN
@@ -52,6 +53,37 @@ GUEST_WORD = "Canggu"
 
 STAY_IN = "2026-11-10"
 STAY_OUT = "2026-11-14"
+
+#: The rate card a stay is priced from: one property, one season covering 2026, IDR. The rows
+#: are spelled here because ``insert_rate_card`` takes database rows, not dataclasses — the
+#: dataclass itself is built by ``quote_calculator`` inside the kernel.
+CARD_ROW = {
+    "rate_card_id": "card_v1",
+    "property_id": "prop_1",
+    "unit_scope": "property",
+    "name": "Public 2026",
+    "version": 1,
+    "effective_from": "2026-01-01",
+    "effective_to": "2026-12-31",
+    "currency": "IDR",
+    "weekly_discount_pct": "0",
+    "monthly_discount_pct": "0",
+    "source_doc_ref": "rates/2026-public.pdf",
+    "approved_by": "user:owner-1",
+    "created_at": RST.AT,
+}
+
+SEASON_ROW = {
+    "season_id": "season_regular",
+    "rate_card_id": "card_v1",
+    "name": "Regular",
+    "start_date": "2026-01-01",
+    "end_date": "2026-12-31",
+    "nightly_rate_minor": 1_500_000,
+    "min_stay_nights": 1,
+    "priority": 0,
+    "created_at": RST.AT,
+}
 
 
 class ReservationWorkersTestCase(unittest.TestCase):
@@ -102,9 +134,13 @@ class ReservationWorkersTestCase(unittest.TestCase):
         *,
         check_in: str = STAY_IN,
         check_out: str = STAY_OUT,
-        adults: int = 2,
+        adults: int | None = 2,
     ):
-        """Confirm the inquiry's stay through the §6 authority — CRM, not the proposal layer."""
+        """Confirm the inquiry's stay through the §6 authority — CRM, not the proposal layer.
+
+        ``adults=None`` confirms the dates and no guest count, which is the state a pricing
+        attempt must refuse rather than fill in.
+        """
 
         crm = CRM.CrmService(
             fixture.conn,
@@ -112,11 +148,10 @@ class ReservationWorkersTestCase(unittest.TestCase):
             ids=IdFactory(deterministic=True, seed="crm"),
             agency_id=AGENCY,
         )
-        for name, value, kind in (
-            ("check_in", check_in, "date"),
-            ("check_out", check_out, "date"),
-            ("adults", str(adults), "integer"),
-        ):
+        facts = [("check_in", check_in, "date"), ("check_out", check_out, "date")]
+        if adults is not None:
+            facts.append(("adults", str(adults), "integer"))
+        for name, value, kind in facts:
             crm.record_requirement(
                 fixture.case.case_id,
                 field_name=name,
@@ -137,6 +172,38 @@ class ReservationWorkersTestCase(unittest.TestCase):
             source_doc_ref="§56 medium-risk policy-controlled tools",
             approved_by=HUMAN,
         )
+
+    def versions_in_force(self, fixture, *, policy: bool = True, card: bool = True):
+        """The policy version and the rate card a stay must be priced from (§11's basis).
+
+        Both are stored through the kernel, which is the module that owns those tables, so the
+        test cannot seed a shape the platform would refuse to write.
+        """
+
+        kernel = fixture.workers.kernel()
+        if policy:
+            kernel.insert_policy_version(version_fixture().as_row())
+        if card:
+            kernel.insert_rate_card(CARD_ROW, [SEASON_ROW])
+        return kernel
+
+    def priced(self, fixture, **kwargs):
+        """Price the inquiry's stay for the seeded unit through the RES-W04 worker."""
+
+        kwargs.setdefault("unit_id", "unit_1")
+        return fixture.workers.price_stay(fixture.conversation.conversation_id, **kwargs)
+
+    def sent(self, fixture, **kwargs):
+        """Make the offer through the RES-W05 worker: price, record, open, send."""
+
+        kwargs.setdefault("unit_id", "unit_1")
+        return fixture.workers.send_quote(fixture.conversation.conversation_id, **kwargs)
+
+    @staticmethod
+    def quote_row(fixture, quote_id: str):
+        return fixture.conn.execute(
+            "SELECT * FROM quotes WHERE quote_id = ?", (quote_id,)
+        ).fetchone()
 
     @staticmethod
     def fields(*specs):
@@ -448,7 +515,290 @@ class ReservationWorkersTestCase(unittest.TestCase):
         self.assertEqual(self.count(fixture, "match_runs"), 0)
         self.assertEqual(self.count(fixture, "availability_checks"), 0)
 
-    # -- 5. the tools the workers hold --------------------------------------- #
+
+    # -- 5. RES-W04: answer what the stay costs from the versions in force --- #
+
+    def test_the_pricing_worker_answers_the_confirmed_stay_from_the_versions_in_force(self):
+        """The answer is a figure pinned to the basis in force — and it writes nothing."""
+
+        fixture = self.running(seed="w04")
+        self.inventory(fixture)
+        self.versions_in_force(fixture)
+        self.confirm_stay(fixture)
+
+        quote = self.priced(fixture)
+
+        self.assertEqual(quote.unit_id, "unit_1")
+        self.assertEqual(quote.check_in, STAY_IN)
+        self.assertEqual(quote.check_out, STAY_OUT)
+        self.assertEqual(quote.adults, 2)
+        self.assertEqual(quote.nights, 4)
+        self.assertGreater(quote.total.amount_minor, 0)
+        self.assertEqual(quote.policy_version_id, "policy_v1")
+        self.assertEqual(quote.rate_card_id, "card_v1")
+        # §56 names the *answer*, so answering must not record a priced stay: the row is born in
+        # RES-W05, after that step's door. Nothing here may leave a trace a guest could be shown.
+        self.assertEqual(self.count(fixture, "quotes"), 0)
+        rows = self.door_rows(fixture, tool=RW.PRICING_TOOL)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].trace_id, fixture.conversation.conversation_id)
+        self.assertTrue(self.allowed_reasons(fixture, tool=RW.PRICING_TOOL)[0].startswith(RW.PRICING_WORKER))
+
+    def test_the_same_basis_answers_the_same_price(self):
+        """Pricing is a function of the versions in force — not of the clock or of an id."""
+
+        fixture = self.running(seed="w04b")
+        self.inventory(fixture)
+        self.versions_in_force(fixture)
+        self.confirm_stay(fixture)
+
+        first = self.priced(fixture)
+        second = self.priced(fixture)
+
+        self.assertNotEqual(first.quote_id, second.quote_id)
+        self.assertEqual(first.total.amount_minor, second.total.amount_minor)
+        self.assertEqual(first.policy_version_id, second.policy_version_id)
+        self.assertEqual(first.rate_card_id, second.rate_card_id)
+        self.assertEqual(self.count(fixture, "quotes"), 0)
+
+    def test_the_pricing_worker_answers_for_the_confirmed_guest_count(self):
+        """The count comes from the §6 authority in typed form — text in, number out."""
+
+        fixture = self.running(seed="w04c")
+        self.inventory(fixture)
+        self.versions_in_force(fixture)
+        self.confirm_stay(fixture, adults=3)
+
+        self.assertEqual(self.priced(fixture).adults, 3)
+
+    def test_the_pricing_worker_will_not_price_a_stay_without_a_confirmed_guest_count(self):
+        """Dates but no count is still no stay to price: the worker refuses before the door."""
+
+        fixture = self.running(seed="w04d")
+        self.inventory(fixture)
+        self.versions_in_force(fixture)
+        self.confirm_stay(fixture, adults=None)
+
+        with self.assertRaises(DomainError) as raised:
+            self.priced(fixture)
+
+        self.assertEqual(raised.exception.details["worker"], RW.PRICING_WORKER)
+        self.assertEqual(list(raised.exception.details["missing"]), ["adults"])
+        self.assertEqual(self.count(fixture, "quotes"), 0)
+        self.assertEqual(self.door_rows(fixture, tool=RW.PRICING_TOOL), [])
+
+    def test_the_pricing_worker_will_not_price_a_stay_without_dates(self):
+        """With nothing confirmed the shared window rule refuses, and it names *this* worker."""
+
+        fixture = self.running(seed="w04d2")
+        self.inventory(fixture)
+        self.versions_in_force(fixture)
+
+        with self.assertRaises(DomainError) as raised:
+            self.priced(fixture)
+
+        self.assertEqual(raised.exception.details["worker"], RW.PRICING_WORKER)
+        self.assertEqual(list(raised.exception.details["missing"]), ["check_in", "check_out"])
+        self.assertEqual(self.count(fixture, "quotes"), 0)
+        self.assertEqual(self.door_rows(fixture, tool=RW.PRICING_TOOL), [])
+
+    def test_pricing_refuses_a_stay_no_rate_card_covers(self):
+        """An absent basis is refused by name, never priced at zero."""
+
+        fixture = self.running(seed="w04e")
+        self.inventory(fixture)
+        self.versions_in_force(fixture, card=False)
+        self.confirm_stay(fixture)
+
+        with self.assertRaises(DomainError) as raised:
+            self.priced(fixture)
+
+        self.assertEqual(raised.exception.code, "QUOTE_NO_RATE_CARD")
+        self.assertEqual(self.count(fixture, "quotes"), 0)
+
+    def test_pricing_refuses_a_stay_no_policy_covers(self):
+        fixture = self.running(seed="w04f")
+        self.inventory(fixture)
+        self.versions_in_force(fixture, policy=False)
+        self.confirm_stay(fixture)
+
+        with self.assertRaises(DomainError) as raised:
+            self.priced(fixture)
+
+        self.assertEqual(raised.exception.code, "QUOTE_NO_POLICY")
+        self.assertEqual(self.count(fixture, "quotes"), 0)
+
+    def test_pricing_refuses_a_unit_this_tenant_does_not_have(self):
+        fixture = self.running(seed="w04g")
+        self.inventory(fixture)
+        self.versions_in_force(fixture)
+        self.confirm_stay(fixture)
+
+        with self.assertRaises(DomainError) as raised:
+            self.priced(fixture, unit_id="unit_9")
+
+        self.assertEqual(raised.exception.code, "UNIT_NOT_FOUND")
+        self.assertEqual(self.count(fixture, "quotes"), 0)
+
+    def test_a_read_only_mode_still_answers_a_price_and_still_writes_nothing(self):
+        """READ_ONLY reaches what changes nothing — and pricing is exactly that (§17)."""
+
+        fixture = self.running(seed="w04h")
+        self.inventory(fixture)
+        self.versions_in_force(fixture)
+        self.confirm_stay(fixture)
+        fixture.gateway.set_mode(
+            fixture.principal.principal_id,
+            AIS.AI_STATUS_READ_ONLY,
+            actor=HUMAN,
+            actor_role="owner",
+            reason="drill",
+        )
+
+        self.assertGreater(self.priced(fixture).total.amount_minor, 0)
+        self.assertEqual(self.count(fixture, "quotes"), 0)
+
+    def test_a_suspended_principal_cannot_answer_a_price(self):
+        """The ladder's lower rungs stop it: §17 leaves a suspended AI no voice at all."""
+
+        fixture = self.running(seed="w04h2")
+        self.inventory(fixture)
+        self.versions_in_force(fixture)
+        self.confirm_stay(fixture)
+        fixture.gateway.set_mode(
+            fixture.principal.principal_id,
+            AIS.AI_STATUS_SUSPENDED,
+            actor=HUMAN,
+            actor_role="owner",
+            reason="drill",
+        )
+
+        with self.assertRaises(DomainError) as raised:
+            self.priced(fixture)
+
+        self.assertEqual(raised.exception.code, "AI_PRINCIPAL_NOT_ACTIVE")
+        self.assertEqual(self.count(fixture, "quotes"), 0)
+
+    def test_a_caller_cannot_hand_the_price_a_guest_count_it_would_have_to_repair(self):
+        """The worker passes the caller's value on; the request object is what refuses it."""
+
+        fixture = self.running(seed="w04i")
+        self.inventory(fixture)
+        self.versions_in_force(fixture)
+        self.confirm_stay(fixture)
+
+        with self.assertRaises(DomainError) as raised:
+            self.priced(fixture, adults="three")
+
+        self.assertEqual(raised.exception.code, "GUESTS_INVALID")
+        self.assertEqual(self.count(fixture, "quotes"), 0)
+
+    # -- 6. RES-W05: make the offer stand ------------------------------------ #
+
+    def test_the_offer_worker_prices_records_and_sends_in_one_gated_step(self):
+        """§56 names one act for the offer; with the allowance published, all four parts land."""
+
+        fixture = self.running(seed="w05")
+        self.inventory(fixture)
+        self.versions_in_force(fixture)
+        self.confirm_stay(fixture)
+        self.allow_medium(fixture, tools=(RW.QUOTE_TOOL,))
+
+        quotation = self.sent(fixture)
+
+        self.assertEqual(quotation.status, "SENT")
+        self.assertEqual(quotation.version, 1)
+        self.assertIsNotNone(quotation.sent_at)
+        self.assertEqual(quotation.check_in, STAY_IN)
+        self.assertEqual(quotation.check_out, STAY_OUT)
+        self.assertEqual(self.count(fixture, "quotes"), 1)
+        self.assertEqual(self.count(fixture, "quotation_versions"), 1)
+        price_row = fixture.conn.execute("SELECT * FROM quotes").fetchone()
+        self.assertEqual(str(price_row["agency_id"]), AGENCY)
+        self.assertEqual(str(price_row["policy_version_id"]), "policy_v1")
+        self.assertEqual(str(price_row["rate_card_id"]), "card_v1")
+        rows = self.door_rows(fixture, tool=RW.QUOTE_TOOL)
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(self.allowed_reasons(fixture, tool=RW.QUOTE_TOOL)[0].startswith(RW.QUOTATION_WORKER))
+
+    def test_the_offer_worker_refuses_before_it_writes_anything_with_no_allowance(self):
+        """Deny-first: no published allowance, no quote row, no version, nothing to show a guest."""
+
+        fixture = self.running(seed="w05b")
+        self.inventory(fixture)
+        self.versions_in_force(fixture)
+        self.confirm_stay(fixture)
+
+        with self.assertRaises(DomainError) as raised:
+            self.sent(fixture)
+
+        self.assertEqual(raised.exception.code, "AI_MEDIUM_TOOL_NOT_ALLOWED")
+        self.assertEqual(self.count(fixture, "quotes"), 0)
+        self.assertEqual(self.count(fixture, "quotation_versions"), 0)
+
+    def test_a_read_only_mode_cannot_send_an_offer_even_with_the_allowance(self):
+        """The other half of the §17 pair: the answer still comes, the offer does not start."""
+
+        fixture = self.running(seed="w05c")
+        self.inventory(fixture)
+        self.versions_in_force(fixture)
+        self.confirm_stay(fixture)
+        self.allow_medium(fixture, tools=(RW.QUOTE_TOOL,))
+        fixture.gateway.set_mode(
+            fixture.principal.principal_id,
+            AIS.AI_STATUS_READ_ONLY,
+            actor=HUMAN,
+            actor_role="owner",
+            reason="drill",
+        )
+
+        with self.assertRaises(DomainError) as raised:
+            self.sent(fixture)
+
+        self.assertEqual(raised.exception.code, "AI_MODE_REFUSED")
+        self.assertEqual(self.count(fixture, "quotes"), 0)
+        self.assertEqual(self.count(fixture, "quotation_versions"), 0)
+
+    def test_sending_again_opens_the_next_version_and_supersedes_the_one_the_guest_held(self):
+        """The stay is the lineage, and only a *sent* version takes the previous one out."""
+
+        fixture = self.running(seed="w05d")
+        self.inventory(fixture)
+        self.versions_in_force(fixture)
+        self.confirm_stay(fixture)
+        self.allow_medium(fixture, tools=(RW.QUOTE_TOOL,))
+
+        first = self.sent(fixture)
+        second = self.sent(fixture)
+
+        self.assertEqual((first.version, second.version), (1, 2))
+        self.assertEqual(self.count(fixture, "quotation_versions"), 2)
+        self.assertEqual(self.count(fixture, "quotation_versions WHERE status = 'SENT'"), 1)
+        self.assertEqual(
+            self.count(fixture, "quotation_versions WHERE status = 'SUPERSEDED'"), 1
+        )
+        self.assertEqual(str(second.supersedes_id), first.quotation_version_id)
+        # Two prices, because each offer records the stay it was made from.
+        self.assertEqual(self.count(fixture, "quotes"), 2)
+
+    def test_the_offer_worker_will_not_make_an_offer_without_a_confirmed_guest_count(self):
+        """No count, no offer — and the refusal happens before the door, so nothing is recorded."""
+
+        fixture = self.running(seed="w05e")
+        self.inventory(fixture)
+        self.versions_in_force(fixture)
+        self.confirm_stay(fixture, adults=None)
+
+        with self.assertRaises(DomainError) as raised:
+            self.sent(fixture)
+
+        self.assertEqual(raised.exception.details["worker"], RW.QUOTATION_WORKER)
+        self.assertEqual(list(raised.exception.details["missing"]), ["adults"])
+        self.assertEqual(self.count(fixture, "quotes"), 0)
+        self.assertEqual(self.count(fixture, "quotation_versions"), 0)
+        self.assertEqual(self.door_rows(fixture, tool=RW.QUOTE_TOOL), [])
+
+    # -- 7. the tools the workers hold --------------------------------------- #
 
     def test_the_tools_the_workers_hold_are_the_tools_the_catalogue_declares(self):
         """A typo in a tool name fails here, in review — not at the door, in production."""
@@ -462,11 +812,13 @@ class ReservationWorkersTestCase(unittest.TestCase):
             (RW.INQUIRY_WORKER, RW.INTAKE_TOOL),
             (RW.MATCHING_WORKER, RW.SEARCH_TOOL),
             (RW.AVAILABILITY_WORKER, RW.AVAILABILITY_TOOL),
+            (RW.PRICING_WORKER, RW.PRICING_TOOL),
+            (RW.QUOTATION_WORKER, RW.QUOTE_TOOL),
         ):
             with self.subTest(worker=worker):
                 self.assertIn(tool, declared)
 
-    # -- 6. what the audit carries ------------------------------------------ #
+    # -- 8. what the audit carries ------------------------------------------ #
 
     def test_the_audit_carries_the_worker_code_and_never_the_guest_words(self):
         fixture = self.running(seed="audit")
