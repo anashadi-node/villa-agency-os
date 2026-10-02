@@ -35,7 +35,8 @@ Aturan tambahan:
 - **Pinjaman akses sementara** (mis. marketing perlu lihat kontrak) harus berbatas waktu + tercatat di `audit_events`.
 - **Owner tidak boleh melihat data tamu properti lain**, walau se-grup.
 - **Akses finansial tidak otomatis memberi akses identitas**, dan sebaliknya.
-- Export data (CSV/PDF) mewarisi tier tertinggi di dalamnya; export P3 hanya oleh Admin/Finance dengan alasan tercatat.
+- Export data (CSV/PDF) mewarisi tier tertinggi di dalamnya; export P3 hanya oleh Admin/Finance/GM dengan alasan tercatat.
+- **GM/CEO** (ditambahkan 2026-10-02, keputusan owner): boleh membuka halaman audit dan mengekspor P2 maupun P3, **dengan alasan yang tercatat** (`gates.P2_AUTH_ROLES`, `gates.P3_AUTH_ROLES`). Auditor tetap **tidak** boleh ekspor: auditor melihat, tidak mengambil.
 
 ## 3. Aturan pemakaian AI (paling sering dilanggar)
 

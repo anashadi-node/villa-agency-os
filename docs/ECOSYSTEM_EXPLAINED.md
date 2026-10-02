@@ -22,6 +22,7 @@
 12. [Kamus istilah: teknis → bahasa awam](#bab-12)
 13. [Ringkasan satu halaman](#bab-13)
 14. [Pembaruan 2026-10-02: peran satu rumah, GM bisa menyetujui](#bab-14)
+15. [Sistem ini dijual per agency: apa artinya untuk Anda](#bab-15)
 
 ---
 
@@ -77,7 +78,7 @@ Semua yang di bawah ini **sudah ada dan sudah diuji**, bukan rencana.
 | 6 | **Identitas & hak akses** | Siapa boleh apa; MFA untuk peran sensitif | `identity.py`, TOTP |
 | 7 | **Rantai audit** | Catatan yang tidak bisa diubah diam-diam | `audit.py` + anchor |
 | 8 | **Gerbang kualitas** | 3.064 tes otomatis (+3.780 subtes) sebelum perubahan apa pun boleh masuk | `make check` → PASS |
-| 9 | **36 keputusan tercatat** | Setiap keputusan teknis/bisnis ditulis + alasannya | `docs/adr/` |
+| 9 | **37 keputusan tercatat** | Setiap keputusan teknis/bisnis ditulis + alasannya | `docs/adr/` |
 
 **Analogi bagian ini:** ini semua adalah *sistem saraf + pengaman gedung* — kunci pintu, alarm, CCTV, buku besar. Membosankan, tapi justru inilah yang membuat bisnis tidak bisa dibohongi.
 
@@ -439,4 +440,59 @@ ADR-0033, 0034, 0035, 0036 ditulis pada 30-Sep (dua yang pertama) dan 1-Okt (dua
 
 *Bab ini dibuat dari pemeriksaan langsung kode, tes, dan gerbang pada 2026-10-02.*
 
-*Edisi 2026-09-28 dibuat dari pemeriksaan langsung kode, tes, dan gerbang pada 2026-09-28; **Bab 14 memperbarui angka dan dua koreksi pada 2026-10-02**. Setiap angka di sini bisa Anda minta saya periksa ulang di depan Anda.*
+---
+
+<a id="bab-15"></a>
+## Bab 15 — Sistem ini dijual per agency: apa artinya untuk Anda
+
+Bab ini menjawab satu kalimat Anda pada 2026-10-02: *"sistem ini akan saya jual atau dibuat berlangganan, jadi yang memakainya nanti yang membelinya — provider, nomor WA, nama villa, pajak, semua diisi sendiri oleh agency yang berlangganan, bukan saya."*
+
+Kalimat itu mengubah **siapa yang mengisi apa**. Sebelumnya banyak hal tercatat sebagai "keputusan owner yang menahan go-live". Sekarang jelas: itu bukan keputusan Anda untuk setiap pelanggan — itu **setelan milik masing-masing agency**.
+
+### 15.1 Yang jadi milik platform (dibuat oleh pembuat sistem)
+
+| Hal | Kenapa milik platform |
+|---|---|
+| **Template pesan** WhatsApp/email | Agency tidak bisa diminta mengarang nada bicara dan jaminan privasi. Anda yang menyediakan; tenant boleh menyunting |
+| Kontrol keamanan: AI **tidak boleh** membayar/menyetujui/mengubah rekening | Berlaku sama untuk semua tenant, tidak bisa dimatikan |
+| Alur kerja: permintaan → persetujuan manusia → eksekusi manusia | Sama untuk semua; bukan setelan |
+| Angka bawaan: SLA, masa retensi 7 tahun, level bukti A–D | Cetak biru awal; tenant menyetel ulang bila perlu |
+
+### 15.2 Yang jadi milik masing-masing agency (diisi lewat setelan)
+
+| Setelan | Bentuknya |
+|---|---|
+| Provider pembayaran (D1) | dipilih tenant; sistem hanya **tidak pernah** menyimpan data kartu (hosted page) |
+| Daftar villa + model bisnisnya (D2) | **dua cara:** isi manual satu per satu, **atau impor berkas sekaligus** (CSV/XLSX gelondongan) |
+| Tarif pajak PBJT (D5) | per kabupaten/kota per villa; **disahkan Ms. FAM, di-approve GM/CEO berjenjang** |
+| Nomor WhatsApp Business (D6) | diisi tenant |
+| Refund/kompensasi (D11) | mengikuti **kontrak & rate card villa** masing-masing, approve Finance Manager → GM/CEO |
+
+### 15.3 Dua hal baru yang jadi blokir jujur
+
+1. **D17 — Kesiapan Tenant.** Platform boleh siap lebih dulu, tetapi **tiap agency wajib lolos pemeriksaan sendiri** (provider, nomor WA, daftar villa, pajak, rate, peran) sebelum dipakai dengan uang & tamu nyata. Layar "Kesiapan Tenant" belum dibangun — dicatat sebagai pekerjaan, bukan disembunyikan.
+2. **Peran dapat diedit (D3).** Peran di ADR-0035 sekarang berstatus **cetak biru**: tenant boleh menambah, mengganti nama, atau menonaktifkan peran pemakainya sendiri. Batasnya jelas — tenant tidak boleh mengubah aturan yang membuat sistem aman (AI dilarang membayar, wajib approve manusia) dan tidak boleh menaikkan peran di atas Owner.
+
+### 15.4 Dua koreksi izin yang Anda putuskan hari ini
+
+| Perubahan | Sebelum | Sekarang |
+|---|---|---|
+| **Halaman Audit + ekspor data** | hanya Owner & Auditor yang bisa melihat; ekspor P2/P3 hanya Admin/Finance | **GM/CEO boleh membuka halaman Audit dan mengekspor P2 & P3** — ekspor P3 tetap **wajib beralasan dan tercatat**. Auditor tetap hanya melihat |
+| **MFA (faktor kedua)** | ditulis `owner, finance` (kata halaman) | **`owner, finance_manager, gm`** (nama resmi). Sistem tetap menangkap sesi yang login sebagai `finance`, jadi tidak ada peran yang diam-diam lepas dari faktor kedua |
+
+### 15.5 Sisa keputusan yang masih menunggu Anda (5)
+
+D4 (SLA), D7 (ambang shadow mode), D10 (RPO/RTO backup), D13 (siapa yang siaga saat alarm), D14 (siapa menerbitkan anker rantai audit). Semuanya sudah saya jelaskan dalam bahasa awam **beserta usulan angkanya**; begitu Anda setujui, angkanya langsung menjadi setelan bawaan.
+
+### 15.6 Nomor yang terverifikasi 2026-10-02 (setelah bab ini)
+
+| Periksa | Hasil |
+|---|---|
+| Keputusan bisnis yang masih menahan go-live | **6** — dari 13 sebelum jawaban Anda hari ini |
+| `make check` | 3.076 lulus, 4 dilewati, 3.780 subtes; secret-scan & unsafe-scan bersih |
+| Preflight | 12 pemeriksaan sistem OK; yang menahan **keputusan bisnis**, bukan software |
+| ADR | 37 berkas, semua berstatus terbaca |
+
+---
+
+*Edisi 2026-09-28 dibuat dari pemeriksaan langsung kode, tes, dan gerbang pada 2026-09-28; **Bab 14 & 15 memperbarui angka dan koreksi pada 2026-10-02**. Setiap angka di sini bisa Anda minta saya periksa ulang di depan Anda.*
