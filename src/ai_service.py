@@ -48,7 +48,17 @@ AI_ACTOR_ROLE = "ai_service"
 AI_TIERS: tuple[str, ...] = ("LOW", "MEDIUM", "HIGH")
 
 #: The lifecycle events a principal can have. Status is derived from the newest one.
-AI_PRINCIPAL_EVENT_KINDS: tuple[str, ...] = ("REGISTERED", "SUSPENDED", "REINSTATED", "RETIRED")
+#: §17: the event vocabulary of the kill-switch ladder. Growing this list is a schema change
+#: (the DDL CHECK mirrors it), which is why the two live together in one migration.
+AI_PRINCIPAL_EVENT_KINDS: tuple[str, ...] = (
+    "REGISTERED",
+    "SUSPENDED",
+    "REINSTATED",
+    "ACTIVATED",
+    "DEGRADED",
+    "READ_ONLY",
+    "RETIRED",
+)
 
 #: Policy keys this module reads. Both are §16 policy, not constants.
 DENIED_ACTIONS_KEY = "security.ai.denied_actions"
@@ -56,16 +66,57 @@ MEDIUM_ALLOWANCE_KEY = "security.ai.medium_tool_allowance"
 
 #: Status values derived from the event log.
 AI_STATUS_ACTIVE = "ACTIVE"
+AI_STATUS_DEGRADED = "DEGRADED"
+AI_STATUS_READ_ONLY = "READ_ONLY"
 AI_STATUS_SUSPENDED = "SUSPENDED"
 AI_STATUS_RETIRED = "RETIRED"
 
-_ACTIVE_KINDS = ("REGISTERED", "REINSTATED")
+#: §17's five statuses, from most capable to terminal. The ladder is a *narrowing*: each step down
+#: removes capability and never adds any, and RETIRED is the only step that does not come back.
+AI_STATUS_LADDER: tuple[str, ...] = (
+    AI_STATUS_ACTIVE,
+    AI_STATUS_DEGRADED,
+    AI_STATUS_READ_ONLY,
+    AI_STATUS_SUSPENDED,
+    AI_STATUS_RETIRED,
+)
+
+_ACTIVE_KINDS = ("REGISTERED", "REINSTATED", "ACTIVATED")
 
 
 class AiServiceError(DomainError):
     """Base class for AI service refusals."""
 
     code = "AI_SERVICE_ERROR"
+
+
+class AiLadderRefused(AiServiceError):
+    """A §17 transition that would *widen* capability through the wrong door.
+
+    Narrowing is free; widening has exactly one door per state. Without this rule, ``degrade``
+    called on a suspended principal would quietly hand capability back.
+    """
+
+    code = "AI_LADDER_ORDER"
+
+
+class AiPrincipalRetired(AiServiceError):
+    """Retirement is terminal: the log is the proof of why it stays that way."""
+
+    code = "AI_PRINCIPAL_RETIRED"
+
+
+#: Which current statuses each lifecycle event may be applied to. Repeats are allowed (an operator
+#: pressing the same button twice is not an incident); anything that adds capability must use the
+#: one verb that adds it.
+_LADDER_ALLOWED: dict[str, tuple[str, ...]] = {
+    "SUSPENDED": (AI_STATUS_ACTIVE, AI_STATUS_DEGRADED, AI_STATUS_READ_ONLY, AI_STATUS_SUSPENDED),
+    AI_STATUS_DEGRADED: (AI_STATUS_ACTIVE, AI_STATUS_DEGRADED),
+    AI_STATUS_READ_ONLY: (AI_STATUS_ACTIVE, AI_STATUS_DEGRADED, AI_STATUS_READ_ONLY),
+    "ACTIVATED": (AI_STATUS_ACTIVE, AI_STATUS_DEGRADED, AI_STATUS_READ_ONLY),
+    "REINSTATED": (AI_STATUS_SUSPENDED, AI_STATUS_ACTIVE),
+    "RETIRED": (AI_STATUS_ACTIVE, AI_STATUS_DEGRADED, AI_STATUS_READ_ONLY, AI_STATUS_SUSPENDED),
+}
 
 
 class UnknownAiPrincipal(AiServiceError):
@@ -118,6 +169,16 @@ class AiPrincipal:
     @property
     def is_active(self) -> bool:
         return self.status == AI_STATUS_ACTIVE
+
+    @property
+    def may_act(self) -> bool:
+        """§17: the *acting band* is ACTIVE, DEGRADED and READ_ONLY.
+
+        Two layers, two questions. This one is "may this identity act at all"; how far it may go
+        is the mode ceiling, which the gateway enforces. Collapsing them would make DEGRADED and
+        READ_ONLY indistinguishable from SUSPENDED.
+        """
+        return self.status in (AI_STATUS_ACTIVE, AI_STATUS_DEGRADED, AI_STATUS_READ_ONLY)
 
 
 @dataclass(frozen=True)
@@ -261,6 +322,24 @@ class AiService:
     ) -> AiPrincipal:
         return self._lifecycle(principal_id, "REINSTATED", actor=actor, reason=reason, at=at)
 
+    def degrade(
+        self, principal_id: str, *, actor: str, reason: Optional[str] = None, at: Optional[Any] = None
+    ) -> AiPrincipal:
+        """§17: narrow this principal to low-tier tools until a human widens it again."""
+        return self._lifecycle(principal_id, AI_STATUS_DEGRADED, actor=actor, reason=reason, at=at)
+
+    def read_only(
+        self, principal_id: str, *, actor: str, reason: Optional[str] = None, at: Optional[Any] = None
+    ) -> AiPrincipal:
+        """§17: this principal may look and report, and may change nothing at all."""
+        return self._lifecycle(principal_id, AI_STATUS_READ_ONLY, actor=actor, reason=reason, at=at)
+
+    def activate(
+        self, principal_id: str, *, actor: str, reason: Optional[str] = None, at: Optional[Any] = None
+    ) -> AiPrincipal:
+        """Widen a degraded or read-only principal back to ACTIVE. Retired is terminal."""
+        return self._lifecycle(principal_id, "ACTIVATED", actor=actor, reason=reason, at=at)
+
     def retire(
         self, principal_id: str, *, actor: str, reason: Optional[str] = None, at: Optional[Any] = None
     ) -> AiPrincipal:
@@ -277,6 +356,22 @@ class AiService:
     ) -> AiPrincipal:
         principal = self.principal(principal_id)
         clean_actor = require_ref(actor, "actor")
+        if principal.status == AI_STATUS_RETIRED:
+            raise AiPrincipalRetired(
+                "a retired AI principal is not brought back",
+                code="AI_PRINCIPAL_RETIRED",
+                principal_id=principal.principal_id,
+            )
+        allowed = _LADDER_ALLOWED.get(kind, ())
+        if principal.status not in allowed:
+            raise AiLadderRefused(
+                f"{kind} is not a step from {principal.status}: capability widens only through "
+                f"the verb that widens it",
+                code="AI_LADDER_ORDER",
+                principal_id=principal.principal_id,
+                from_status=principal.status,
+                event=kind,
+            )
         self._record_event(principal.principal_id, kind, actor=clean_actor, reason=reason, at=at)
         self.audit.append(
             action=f"AI_PRINCIPAL_{kind}",
@@ -320,7 +415,9 @@ class AiService:
         kind = row["kind"]
         if kind in _ACTIVE_KINDS:
             return AI_STATUS_ACTIVE
-        return AI_STATUS_SUSPENDED if kind == "SUSPENDED" else AI_STATUS_RETIRED
+        if kind in (AI_STATUS_DEGRADED, AI_STATUS_READ_ONLY, AI_STATUS_SUSPENDED):
+            return kind
+        return AI_STATUS_RETIRED
 
     # -- tools -------------------------------------------------------------- #
 
@@ -390,7 +487,7 @@ class AiService:
                 ),
             )
 
-        if not principal.is_active:
+        if not principal.may_act:
             self._refuse(
                 principal,
                 definition,

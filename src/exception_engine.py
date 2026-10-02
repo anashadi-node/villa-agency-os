@@ -170,6 +170,16 @@ FAILURE_ROUTES: Mapping[str, FailureRoute] = MappingProxyType(
             personal_data_involved=False,
             description="A scheduled job failed: hygiene until it is shown to have guest impact.",
         ),
+        "AI_BREAKER": FailureRoute(
+            category="AI_BREAKER",
+            playbook="PROVIDER_FAILURE",
+            severity="SEV3",
+            personal_data_involved=False,
+            description=(
+                "The AI circuit breaker tripped: one principal failed repeatedly and was narrowed, "
+                "so a human must look before capability is handed back."
+            ),
+        ),
     }
 )
 

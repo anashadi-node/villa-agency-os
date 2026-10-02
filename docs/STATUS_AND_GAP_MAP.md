@@ -118,9 +118,11 @@ Dokumen itu hanya disebut di `ADR-0033`, `ADR-0034` (yang saya tulis) dan matrik
 |---|---|
 | ACTIVE | ✅ |
 | SUSPENDED | ✅ (`ai_service.py`, per principal) |
-| **DEGRADED** | ⚠️ belum |
-| **READ_ONLY** | ⚠️ belum |
-| DISABLED / RETIRED | ✅ (RETIRED) |
+| **DEGRADED** | ✅ (hanya alat tingkat LOW; menolak MEDIUM walau policy mengizinkan) |
+| **READ_ONLY** | ✅ (hanya alat berefek READ; menolak tulis berisiko rendah sekalipun) |
+| DISABLED / RETIRED | ✅ (RETIRED, terminal) |
+
+Circuit breaker: ✅ `AiGateway.record_failure` — 3 kegagalan berturut dalam 15 menit → `READ_ONLY` otomatis + insiden SEV3.
 
 ### 3.7 Item terbuka yang sudah tercatat di ADR (jujur, belum ditutup)
 
@@ -228,7 +230,7 @@ Bukan urutan yang saya karang: ini mengikuti ketergantungan nyata di dokumen And
 |---|---|---|
 | 1 | **D3 peran & orang** + RBAC 12→16 peran + tes matriks per-peran | Tanpa ini, tidak ada `agency_id`/aktor yang bisa dipercaya untuk agent mana pun |
 | 2 | **Outbox + Exception Engine** | §14 melarang free-form antar-agent; tanpa outbox, handoff antar agent tidak boleh dibangun |
-| 3 | **AI Policy Gateway + kill switch berjenjang** (DEGRADED/READ_ONLY) | §3: agent hanya boleh lewat gateway; §17 butuh 5 status |
+| ~~3~~ | ~~AI Policy Gateway + kill switch berjenjang~~ ✅ **SELESAI 2026-10-02** | `src/ai_gateway.py`: satu pintu wajib (dijaga tes statis: tidak ada modul lain memanggil `authorize`), 5 status §17, circuit breaker; 22 tes |
 | 4 | **AI Reservation Service** (komponen #3) | Nilai bisnis terbesar + tamu berhadapan langsung dengannya |
 | 5 | **Finance Admin AI** (komponen #5) | Menyambung alur D1 yang baru Anda putuskan |
 | 6 | Control Tower, Operations AI, Commercial AI, Revenue & BI | Setelah 4 & 5 terbukti |

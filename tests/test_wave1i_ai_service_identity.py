@@ -318,7 +318,17 @@ def test_registration_names_the_human_who_did_it(conn):
 
 
 def test_the_principal_event_kinds_are_closed(conn):
-    assert AI_PRINCIPAL_EVENT_KINDS == ("REGISTERED", "SUSPENDED", "REINSTATED", "RETIRED")
+    # §17 needs five statuses, so the vocabulary grew by the two middle rungs and the verb
+    # that returns to ACTIVE. Pinned here so widening it is always a deliberate edit.
+    assert AI_PRINCIPAL_EVENT_KINDS == (
+        "REGISTERED",
+        "SUSPENDED",
+        "REINSTATED",
+        "ACTIVATED",
+        "DEGRADED",
+        "READ_ONLY",
+        "RETIRED",
+    )
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
             "INSERT INTO ai_principal_events (ai_principal_event_id, principal_id, seq, kind,"

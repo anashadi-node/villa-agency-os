@@ -1434,7 +1434,7 @@ CREATE TABLE ai_principal_events (
         REFERENCES ai_principals (principal_id),
     CONSTRAINT uq_ai_principal_events_seq UNIQUE (principal_id, seq),
     CONSTRAINT ck_ai_principal_events_kind
-        CHECK (kind IN ('REGISTERED', 'SUSPENDED', 'REINSTATED', 'RETIRED'))
+        CHECK (kind IN ('REGISTERED', 'SUSPENDED', 'REINSTATED', 'ACTIVATED', 'DEGRADED', 'READ_ONLY', 'RETIRED'))
 );
 
 -- The §56 capability envelope. Platform-wide on purpose: a per-agency copy would let a

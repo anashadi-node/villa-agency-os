@@ -491,7 +491,7 @@ D4 (SLA), D7 (ambang shadow mode), D10 (RPO/RTO backup), D13 (siapa yang siaga s
 | Periksa | Hasil |
 |---|---|
 | Keputusan bisnis yang masih menahan go-live | **1** — hanya D17 (kesiapan tenant). Sebelum jawaban Anda 2026-10-02: 13 |
-| `make check` | 3.208 lulus, 4 dilewati, 3.780 subtes; secret-scan & unsafe-scan bersih |
+| `make check` | **3.235 lulus**, 4 dilewati, 3.870 subtes; secret-scan 0/226 berkas; unsafe-scan 0/226; twin PostgreSQL cocok |
 | Preflight | 12 pemeriksaan sistem OK; yang menahan **keputusan bisnis**, bukan software |
 | ADR | 39 berkas, semua berstatus terbaca |
 
@@ -580,3 +580,76 @@ Semua itu **biaya keamanan**, dan biaya itu tertulis di ADR — bukan disembunyi
 ---
 
 *Edisi 2026-09-28 dibuat dari pemeriksaan langsung kode, tes, dan gerbang pada 2026-09-28; **Bab 14–17 memperbarui angka dan koreksi pada 2026-10-02**. Setiap angka di sini bisa Anda minta saya periksa ulang di depan Anda.*
+
+---
+
+## Bab 18 — Tombol penghenti AI: lima tingkat, dan siapa yang boleh menekan
+
+**Ditulis:** 2026-10-02 · **Bukti:** `src/ai_gateway.py`, `src/ai_service.py`, 22 tes + 3 tes skema
+
+### 18.1 Satu pintu, atau tidak ada pintu
+
+Semua pegawai AI nanti bekerja lewat **satu pintu** (`AiGateway`). Bukan karena konvensi — ada
+tesnya: kalau ada modul lain yang mencoba minta izin ke layanan AI secara langsung, suite langsung
+merah. Alasannya sederhana: satu pintu berarti satu tempat untuk memeriksa, menolak, dan mencatat.
+Dua pintu berarti dua kebijakan, dan cepat atau lambat keduanya berbeda.
+
+### 18.2 Lima tingkat, bukan tiga
+
+Sebelumnya sistem hanya bisa **hidup** atau **mati**. Itu terlalu kasar: mematikan pegawai AI
+karena satu gangguan berarti tamu tidak dilayani sama sekali. Sekarang ada lima tingkat:
+
+| Tingkat | Artinya dalam kalimat sehari-hari | Yang masih bisa dikerjakan |
+|---|---|---|
+| **ACTIVE** | Normal | Apa pun yang memang diizinkan |
+| **DEGRADED** | "Bekerja seadanya" | Hanya tindakan **risiko rendah** — tanya-jawab villa, intake pertanyaan, tindak lanjut rutin |
+| **READ_ONLY** | "Hanya melihat dan melaporkan" | Hanya tindakan yang **tidak mengubah apa pun** — pencarian villa, jawaban terverifikasi |
+| **SUSPENDED** | Berhenti | Tidak ada |
+| **RETIRED** | Berhenti permanen | Tidak ada, selamanya |
+
+Dua tingkat tengah itu yang penting, dan bedanya **nyata** — bukan label:
+
+- Di **DEGRADED**, pegawai AI masih boleh *menulis* (misalnya menindaklanjuti tamu), tapi **tidak**
+  boleh menyentuh hal tingkat menengah seperti mengirim penawaran harga — **walaupun Anda sudah
+  mengizinkannya lewat policy**. Tingkat yang lebih sempit selalu menang.
+- Di **READ_ONLY**, pegawai AI boleh membaca dan menjawab, tapi **tidak boleh mengubah apa pun** —
+  termasuk tindakan berisiko rendah sekalipun.
+
+Kalau dua tingkat itu berperilaku sama, keduanya tidak ada gunanya. Itulah yang diuji.
+
+### 18.3 Naik dan turun punya aturan
+
+Tangga ini hanya bisa **menyempit** dengan bebas. Melebarkan wewenang punya **satu pintu saja**
+(`activate` atau `reinstate`) — supaya "kembalikan kemampuan" selalu jadi tindakan yang disengaja
+manusia, bukan efek samping dari tindakan lain. Contoh yang saya kunci dengan tes: menekan
+`DEGRADED` pada pegawai yang sedang **SUSPENDED** ditolak, karena itu akan diam-diam mengembalikan
+kemampuan. Dan `RETIRED` benar-benar akhir: tidak ada jalan kembali, apa pun yang dilakukan
+sesudahnya.
+
+### 18.4 Circuit breaker: sistem menyempitkan dirinya sendiri
+
+Kalau satu pegawai AI gagal **3 kali berturut-turut dalam 15 menit**, sistem:
+
+1. menurunkannya sendiri ke **READ_ONLY** (pegawai tetap bisa membaca, tapi tidak mengubah apa pun);
+2. membuka **insiden SEV3** lewat mesin pengecualian yang sama dengan insiden lain — jadi ada
+   pemilik yang mengejar, bukan catatan pribadi di sudut;
+3. mengirim **peristiwa outbox** `ai.breaker_tripped`.
+
+Dua detail yang saya pilih dengan sadar:
+
+- **Hitungannya dibaca dari rantai audit, bukan dari memori.** Circuit breaker yang lupa setelah
+  sistem restart tidak melindungi apa pun.
+- **Penolakan kebijakan bukan kegagalan.** Kalau pegawai AI ditolak karena aturan, itu sistemnya
+  **bekerja**, bukan rusak — jadi tidak menambah hitungan. Yang dihitung adalah **kesalahan**:
+  tindakan yang sudah diizinkan lalu gagal.
+
+Mengembalikan kemampuan setelah breaker menyala **hanya bisa oleh manusia**, dengan alasan tercatat:
+`python3 scripts/... set-mode ... --reason "akar masalah sudah diperbaiki"`.
+
+### 18.5 Satu hal yang saya perbaiki sambil jalan (dan saya catat)
+
+Menaikkan kosakata status dari 3 ke 5 mengubah **CHECK** di tabel. SQLite tidak bisa mengubah CHECK,
+jadi tabelnya dibangun ulang lewat migrasi `011_ai_ladder`. Saat proses itu, nama-nama constraint
+sempat tertinggal berakhiran `_new` di database yang sudah ada — dan **suite paritas skema langsung
+menangkapnya** (3 tes merah). Saya rapikan database itu, regenerasi twin PostgreSQL, lalu hijau lagi.
+Ini contoh bagus bahwa penjaga otomatis bekerja: saya tidak perlu ingat, tesnya yang ingat.

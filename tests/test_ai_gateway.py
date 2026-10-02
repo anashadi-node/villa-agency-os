@@ -1,0 +1,330 @@
+"""The gateway is the single door (§3) and the §17 ladder is its width.
+
+The tests are grouped the way the claims fail:
+
+1. **The door is the only door.** No other module calls ``AiService.authorize`` (a static guard),
+   and every tool in the catalogue has a classified effect in both directions.
+2. **The ladder narrows, never widens.** DEGRADED reaches low-tier tools and nothing else, even
+   when the owner has published the medium-tool allowance; READ_ONLY reaches tools that change
+   nothing, even when they are low risk. That pair is the whole point of having five statuses
+   instead of three — a switch that does not change behaviour is decoration.
+3. **Every decision is readable afterwards.** Allowed actions are audited, refusals are audited
+   *with the mode that refused them*, and only WRITE actions leave an outbox event.
+4. **The breaker narrows on its own, and never widens.** Three consecutive failures inside the
+   window narrow a principal, open an incident through the same engine as every other failure, and
+   hand capability back only to a human.
+"""
+
+from __future__ import annotations
+
+import datetime as _dt
+import json
+import pathlib
+import re
+
+import pytest
+
+import outbox as OB
+from ai_gateway import (
+    AUTHORISED_ACTION,
+    BREAKER_FAILURES,
+    FAILURE_ACTION,
+    READ,
+    TOOL_EFFECTS,
+    WRITE,
+    AiGateway,
+    ModeRefused,
+    ToolEffectUnknown,
+    UnknownMode,
+    effect_of,
+)
+from ai_service import (
+    AI_STATUS_ACTIVE,
+    AI_STATUS_DEGRADED,
+    AI_STATUS_READ_ONLY,
+    AI_STATUS_SUSPENDED,
+    MEDIUM_ALLOWANCE_KEY,
+    AiPrincipalNotActive,
+    AiService,
+)
+from audit import AuditLog
+from exception_engine import ExceptionEngine
+from policy_engine import PolicyResolver
+from primitives import DomainError, IdFactory
+
+NOW = "2026-10-05T08:00:00+00:00"
+AGENCY = "agency_default"
+LOW_READ = "villa.search"
+LOW_READ_2 = "booking.status"
+LOW_WRITE = "inquiry.intake"
+LOW_WRITE_2 = "followup.routine"
+MEDIUM = "availability.request"
+MEDIUM_2 = "quotation.send"
+HIGH = "payment.approve"
+
+SRC = pathlib.Path(__file__).resolve().parents[1] / "src"
+
+
+class SteppingClock:
+    """A clock the test moves, so "inside the window" is a fact rather than a sleep."""
+
+    def __init__(self, start: str) -> None:
+        self._now = _dt.datetime.fromisoformat(start)
+
+    def now(self) -> _dt.datetime:
+        return self._now
+
+    def advance(self, **kwargs) -> None:
+        self._now = self._now + _dt.timedelta(**kwargs)
+
+
+class World:
+    def __init__(self, **parts):
+        self.__dict__.update(parts)
+
+
+@pytest.fixture()
+def world(conn):
+    clock = SteppingClock(NOW)
+    audit = AuditLog(conn, clock=clock, ids=IdFactory(True, "gw-audit"))
+    outbox = OB.OutboxService(conn, clock=clock, ids=IdFactory(True, "gw-out"), agency_id=AGENCY)
+    exceptions = ExceptionEngine(
+        conn, clock=clock, ids=IdFactory(True, "gw-ex"), agency_id=AGENCY
+    )
+    policy = PolicyResolver(conn, clock=clock, agency_id=AGENCY)
+    ai = AiService(conn, policy=policy, clock=clock)
+    gateway = AiGateway(
+        ai, audit=audit, outbox=outbox, exceptions=exceptions, clock=clock, ids=IdFactory(True, "gw")
+    )
+    principal = ai.register_principal(
+        "villa-concierge", secret_ref="VILLA_AI_SERVICE_SECRET", actor="owner_anas"
+    )
+    return World(
+        conn=conn, clock=clock, audit=audit, outbox=outbox, exceptions=exceptions,
+        policy=policy, ai=ai, gateway=gateway, principal=principal,
+        # The system generates the id; "villa-concierge" is only the human-readable name.
+        pid=principal.principal_id,
+    )
+
+
+def allow_medium(world, tools=(MEDIUM, MEDIUM_2)) -> None:
+    """The owner publishes the §56 medium-tool allowance, effective today."""
+    world.policy.publish(
+        MEDIUM_ALLOWANCE_KEY,
+        list(tools),
+        effective_from="2026-10-05",
+        effective_to="9999-12-31",
+        source_doc_ref="§56 medium-risk policy-controlled tools",
+        approved_by="owner_anas",
+    )
+
+
+def audit_actions(world, action: str) -> list:
+    return [e for e in world.audit.for_entity("ai_principal", world.pid) if e.action == action]
+
+
+# --------------------------------------------------------------------------- #
+# 1. The door is the only door
+# --------------------------------------------------------------------------- #
+def test_no_module_outside_the_gateway_asks_the_ai_service_for_permission():
+    """§3: agents act through the gateway. A second caller would be a second policy."""
+    callers = []
+    for path in sorted(SRC.glob("*.py")):
+        if path.name in {"ai_gateway.py", "ai_service.py"}:
+            continue
+        if re.search(r"\.authorize\(", path.read_text(encoding="utf-8")):
+            callers.append(path.name)
+    assert callers == [], f"these modules authorise AI actions directly: {callers}"
+
+
+def test_every_registered_tool_is_classified_and_nothing_else_is(world):
+    """Both directions: an unclassified tool is refused, and a stale entry is a lie."""
+    from_catalogue = {row[0] for row in world.conn.execute("SELECT tool FROM ai_tools")}
+    assert set(TOOL_EFFECTS) == from_catalogue
+    assert set(TOOL_EFFECTS.values()) == {READ, WRITE}
+
+
+def test_an_unclassified_tool_is_refused_rather_than_guessed(world):
+    with pytest.raises(ToolEffectUnknown) as raised:
+        effect_of("villa.teleport")
+    assert raised.value.code == "AI_TOOL_EFFECT_UNKNOWN"
+
+
+def test_the_read_set_is_the_four_tools_that_change_nothing():
+    """Pinned deliberately: widening READ widens the read-only rung for every tenant at once."""
+    assert {tool for tool, effect in TOOL_EFFECTS.items() if effect == READ} == {
+        "villa.search",
+        "villa.answer_verified",
+        "villa.suggest_alternatives",
+        "booking.status",
+    }
+
+
+# --------------------------------------------------------------------------- #
+# 2. The ladder narrows, never widens
+# --------------------------------------------------------------------------- #
+def test_active_reaches_a_low_tool(world):
+    decision = world.gateway.request(world.pid, LOW_READ)
+    assert decision.allowed and decision.mode == AI_STATUS_ACTIVE and decision.effect == READ
+
+
+def test_degraded_reaches_low_tier_and_refuses_medium_even_when_policy_allows_it(world):
+    allow_medium(world)
+    world.gateway.set_mode(world.pid, AI_STATUS_DEGRADED, actor="owner_anas", reason="drill")
+
+    assert world.gateway.request(world.pid, LOW_WRITE).allowed
+    with pytest.raises(ModeRefused) as raised:
+        world.gateway.request(world.pid, MEDIUM)
+    assert raised.value.code == "AI_MODE_REFUSED"
+    assert "low-tier tools only" in str(raised.value)
+
+
+def test_read_only_reaches_reading_tools_and_refuses_low_risk_writes(world):
+    """The pair that justifies the whole ladder: low risk is not the same as no effect."""
+    world.gateway.set_mode(world.pid, AI_STATUS_READ_ONLY, actor="owner_anas", reason="drill")
+
+    assert world.gateway.request(world.pid, LOW_READ_2).allowed
+    for tool in (LOW_WRITE, LOW_WRITE_2):
+        with pytest.raises(ModeRefused) as raised:
+            world.gateway.request(world.pid, tool)
+        assert "change nothing" in str(raised.value)
+
+
+def test_a_suspended_principal_is_stopped_by_the_identity_layer(world):
+    world.gateway.set_mode(world.pid, AI_STATUS_SUSPENDED, actor="owner_anas", reason="incident")
+    with pytest.raises(AiPrincipalNotActive):
+        world.gateway.request(world.pid, LOW_READ)
+
+
+def test_a_high_risk_tool_is_refused_even_in_active_mode(world):
+    """The gateway does not soften the service's own rules; it only adds a ceiling."""
+    with pytest.raises(DomainError) as raised:
+        world.gateway.request(world.pid, HIGH)
+    assert raised.value.code in {"AI_HUMAN_AUTHORITY_ONLY", "AI_DENIED_ACTION"}
+
+
+def test_the_ladder_never_widens_through_the_narrowing_verb(world):
+    from ai_service import AiLadderRefused
+
+    world.gateway.set_mode(world.pid, AI_STATUS_SUSPENDED, actor="owner_anas")
+    with pytest.raises(AiLadderRefused):
+        world.gateway.set_mode(world.pid, AI_STATUS_DEGRADED, actor="owner_anas")
+
+
+def test_activate_is_the_only_way_back_up(world):
+    world.gateway.set_mode(world.pid, AI_STATUS_READ_ONLY, actor="owner_anas")
+    assert world.gateway.mode(world.pid) == AI_STATUS_READ_ONLY
+    world.gateway.set_mode(world.pid, AI_STATUS_ACTIVE, actor="owner_anas", reason="checked")
+    assert world.gateway.mode(world.pid) == AI_STATUS_ACTIVE
+    assert world.gateway.request(world.pid, LOW_WRITE).allowed
+
+
+def test_an_unknown_mode_is_refused(world):
+    with pytest.raises(UnknownMode):
+        world.gateway.set_mode(world.pid, "SLOW", actor="owner_anas")
+
+
+# --------------------------------------------------------------------------- #
+# 3. Every decision is readable afterwards
+# --------------------------------------------------------------------------- #
+def test_an_allowed_action_is_audited_with_its_mode_and_effect(world):
+    world.gateway.request(world.pid, LOW_READ, correlation_id="corr-1")
+    rows = audit_actions(world, AUTHORISED_ACTION)
+    assert len(rows) == 1
+    assert "villa.search (LOW/READ) allowed in mode ACTIVE" == rows[0].reason
+    assert rows[0].tool == "villa.search"
+
+
+def test_a_refusal_names_the_mode_that_refused_it(world):
+    world.gateway.set_mode(world.pid, AI_STATUS_READ_ONLY, actor="owner_anas")
+    with pytest.raises(ModeRefused):
+        world.gateway.request(world.pid, LOW_WRITE)
+    rows = audit_actions(world, "AI_TOOL_REFUSED")
+    assert len(rows) == 1
+    assert "READ_ONLY" in rows[0].reason and "inquiry.intake" in rows[0].reason
+
+
+def test_only_actions_that_change_something_leave_the_door_as_an_event(world):
+    world.gateway.request(world.pid, LOW_READ)
+    assert world.conn.execute("SELECT COUNT(*) FROM outbox_events").fetchone()[0] == 0
+    world.gateway.request(world.pid, LOW_WRITE)
+    row = world.conn.execute(
+        "SELECT event_type, payload, actor FROM outbox_events"
+    ).fetchone()
+    assert row["event_type"] == "ai.action_authorised"
+    assert row["actor"] == world.pid
+    payload = json.loads(row["payload"])
+    assert payload["tool"] == LOW_WRITE and payload["effect"] == WRITE
+
+
+# --------------------------------------------------------------------------- #
+# 4. The breaker narrows on its own, and never widens
+# --------------------------------------------------------------------------- #
+def fail(world, code: str = "TOOL_TIMEOUT", message: str = "upstream timed out"):
+    return world.gateway.record_failure(world.pid, code=code, message=message)
+
+
+def test_three_consecutive_failures_narrow_the_principal_and_open_an_incident(world):
+    for _ in range(BREAKER_FAILURES - 1):
+        state = fail(world)
+        assert state.tripped is False
+    tripped = fail(world)
+    assert tripped.tripped is True and tripped.mode == AI_STATUS_READ_ONLY
+    assert world.gateway.mode(world.pid) == AI_STATUS_READ_ONLY
+
+    row = world.conn.execute(
+        "SELECT severity, playbook, source, status, summary FROM incidents"
+    ).fetchone()
+    assert tuple(row)[:4] == ("SEV3", "PROVIDER_FAILURE", "ai_gateway", "OPEN")
+    assert "narrowed to READ_ONLY" in row["summary"]
+
+
+def test_a_tripped_breaker_still_permits_reading(world):
+    for _ in range(BREAKER_FAILURES):
+        fail(world)
+    assert world.gateway.request(world.pid, LOW_READ).allowed
+    with pytest.raises(ModeRefused):
+        world.gateway.request(world.pid, LOW_WRITE)
+
+
+def test_a_success_resets_the_streak(world):
+    fail(world)
+    fail(world)
+    world.gateway.request(world.pid, LOW_READ)  # the door opened: the streak is over
+    fail(world)
+    state = fail(world)
+    assert state.consecutive_failures == 2 and state.tripped is False
+
+
+def test_failures_older_than_the_window_do_not_accumulate(world):
+    fail(world)
+    fail(world)
+    world.clock.advance(minutes=20)
+    state = fail(world)
+    assert state.consecutive_failures == 1 and state.tripped is False
+
+
+def test_the_breaker_does_not_widen_a_suspended_principal(world):
+    world.gateway.set_mode(world.pid, AI_STATUS_SUSPENDED, actor="owner_anas")
+    for _ in range(BREAKER_FAILURES):
+        state = fail(world)
+    assert state.tripped is True
+    assert world.gateway.mode(world.pid) == AI_STATUS_SUSPENDED
+    assert world.conn.execute("SELECT COUNT(*) FROM incidents").fetchone()[0] == 1
+
+
+def test_the_breaker_announces_itself_on_the_outbox(world):
+    for _ in range(BREAKER_FAILURES):
+        fail(world)
+    kinds = [row[0] for row in world.conn.execute("SELECT event_type FROM outbox_events")]
+    assert "ai.breaker_tripped" in kinds
+
+
+def test_a_human_can_hand_capability_back_after_a_trip(world):
+    for _ in range(BREAKER_FAILURES):
+        fail(world)
+    world.gateway.set_mode(
+        world.pid, AI_STATUS_ACTIVE, actor="owner_anas", reason="root cause fixed"
+    )
+    assert world.gateway.request(world.pid, LOW_WRITE).allowed
+    assert len(audit_actions(world, FAILURE_ACTION)) == BREAKER_FAILURES
