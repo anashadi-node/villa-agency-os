@@ -19,7 +19,7 @@ Satu hal yang saya tegaskan di depan, karena ini akar semua yang di bawah: **pla
 
 | Area | Status | Bukti ringkas |
 |---|---|---|
-| Domain: booking, hold, pembayaran, policy, bukti, identitas | ✅ **kuat** | 40 ADR, 3.080 tes hijau (+3.780 subtes), gerbang PASS, katalog policy 25/25 |
+| Domain: booking, hold, pembayaran, policy, bukti, identitas | ✅ **kuat** | 40 ADR, 3.102 tes hijau (+3.780 subtes), gerbang PASS, katalog policy 25/25 |
 | Lapisan **AI Workforce** (6 komponen dok Anda + 1 tambahan owner 2026-10-02) | ⚠️ **0% dibangun** | 0 dari 7 komponen ada di kode |
 | Infrastruktur non-agent | ⚠️ **4 ada, 3 belum** | Policy/Approval/Identity/Audit ada; Outbox/Exception Engine/DLP belum |
 | Organisasi & peran (D3) | ✅ **DECIDED, kosakata sudah satu rumah** | ADR-0035 (§5 "3 kosakata hidup bersamaan") direkonsiliasi 2026-10-02 lewat `src/roles.py` + amendment ADR-0035: `approvals.ROLE_RANK` **adalah** `roles.ROLE_RANK`, nama lama tetap resolvable untuk baris historis, dan `gm` masuk tangga (rank 4). **`gm` juga sudah punya halaman** (Command Center/Approvals/Finance/Cases/Properties) dan **wajib MFA** — policy `security.mfa.required_roles` v2 = owner, finance, gm (keputusan owner 2026-10-02). |
@@ -76,8 +76,8 @@ Yang **sudah** ada adalah **identitas** AI (`ai_service.py`, ADR-0018) — yaitu
 | Approval Engine | ✅ ada | `src/approvals.py` |
 | Identity / RBAC | ✅ ada | `src/identity.py` (+ TOTP, MFA) |
 | Audit / Observability | ✅ ada | `src/audit.py`, `src/observability.py`, `src/anchors.py` |
-| **Outbox / Queue** | ⚠️ **belum** | ADR-0007 **ACCEPTED tapi paper-only**; tidak ada tabel outbox di skema |
-| **Exception Engine** | ⚠️ **belum** | tidak ada modul |
+| **Outbox / Queue** | ✅ **inti ada (2026-10-02)** | `src/outbox.py` + tabel `outbox_events`/`outbox_deliveries`/`integration_inbox` (migrasi 006). Menegakkan ADR-0007: event masuk **satu transaksi** dengan state bisnisnya, idempotent per agency, retry berjenjang + dead-letter, dan isi surat tidak bisa diubah (trigger). Belum: worker latar (`systemd`/scheduler) yang memanggil `publish_due` berkala + transport nyata (email/WA/webhook) |
+| **Exception Engine** | ⚠️ **belum (berikutnya)** | Mesin kegawatan belum ada; bahan-bahannya sudah: `src/incidents.py` (playbook S1–S4 + jam regulator 72 jam) dan outbox untuk mengirim laporannya |
 | **Secrets / DLP** | ⚠️ **belum** | tidak ada modul (baru ada `unsafe_config_scan.sh` + guard kartu) |
 
 ### 3.3 Dua ADR sudah ACCEPTED tapi **belum dibangun**
@@ -248,4 +248,4 @@ Yang **tidak** saya usulkan sekarang: membangun Commercial AI sebelum reservatio
 
 ---
 
-**Kesimpulan satu paragraf.** Sistem domainnya **sehat dan bisa dipercaya** — 40 ADR, 3.080 tes hijau, katalog policy penuh, invariant ditegakkan kode. Yang **belum** adalah lapisan AI workforce (0 dari 6 komponen) dan tiga infrastruktur penopangnya (outbox, exception engine, DLP), plus dua ADR pembayaran yang sudah diterima tapi belum dieksekusi. Yang **menahan go-live** bukan software, tapi 1 keputusan bisnis (kesiapan tenant, D17). Dan **pendapat saya soal dokumen Anda: setuju, dokumen itu memang acuan yang tepat** — ia satu-satunya sumber yang memisahkan *agent*, *worker*, dan *manusia* dengan tegas, dan itu persis pembedaan yang mencegah sistem ini tumbuh jadi kumpulan chatbot yang saling mengklaim wewenang. Yang perlu ditambahkan hanya satu: dokumen itu harus **tersambung ke traceability repo** supaya jadi acuan proyek, bukan acuan percakapan.
+**Kesimpulan satu paragraf.** Sistem domainnya **sehat dan bisa dipercaya** — 40 ADR, 3.102 tes hijau, katalog policy penuh, invariant ditegakkan kode. Yang **belum** adalah lapisan AI workforce (0 dari 6 komponen) dan tiga infrastruktur penopangnya (outbox, exception engine, DLP), plus dua ADR pembayaran yang sudah diterima tapi belum dieksekusi. Yang **menahan go-live** bukan software, tapi 1 keputusan bisnis (kesiapan tenant, D17). Dan **pendapat saya soal dokumen Anda: setuju, dokumen itu memang acuan yang tepat** — ia satu-satunya sumber yang memisahkan *agent*, *worker*, dan *manusia* dengan tegas, dan itu persis pembedaan yang mencegah sistem ini tumbuh jadi kumpulan chatbot yang saling mengklaim wewenang. Yang perlu ditambahkan hanya satu: dokumen itu harus **tersambung ke traceability repo** supaya jadi acuan proyek, bukan acuan percakapan.

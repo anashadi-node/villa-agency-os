@@ -79,7 +79,7 @@ Semua yang di bawah ini **sudah ada dan sudah diuji**, bukan rencana.
 | 5 | **Mesin bukti** | Membedakan bukti kuat (dari sistem villa) dan bukti lemah (screenshot tamu) — level A sampai D | `evidence.py` |
 | 6 | **Identitas & hak akses** | Siapa boleh apa; MFA untuk peran sensitif | `identity.py`, TOTP |
 | 7 | **Rantai audit** | Catatan yang tidak bisa diubah diam-diam | `audit.py` + anchor |
-| 8 | **Gerbang kualitas** | 3.080 tes otomatis (+3.780 subtes) sebelum perubahan apa pun boleh masuk | `make check` → PASS |
+| 8 | **Gerbang kualitas** | 3.102 tes otomatis (+3.780 subtes) sebelum perubahan apa pun boleh masuk | `make check` → PASS |
 | 9 | **40 keputusan tercatat** | Setiap keputusan teknis/bisnis ditulis + alasannya | `docs/adr/` |
 
 **Analogi bagian ini:** ini semua adalah *sistem saraf + pengaman gedung* — kunci pintu, alarm, CCTV, buku besar. Membosankan, tapi justru inilah yang membuat bisnis tidak bisa dibohongi.
@@ -378,7 +378,7 @@ Pemeriksaan sistem hari ini: **13 dari 13 OK.** Yang menahan: **14 keputusan bis
 ## Bab 13 — Ringkasan satu halaman
 
 1. **Yang dibangun:** satu sistem operasi villa agency untuk Bali & Yogyakarta, dijalankan **manusia + 6 pegawai AI**.
-2. **Sudah jadi:** "gedungnya" — katalog kebijakan (25/25 terjawab), mesin status booking & hold, mesin pembayaran, mesin bukti, identitas & hak akses, rantai audit, dan gerbang 3.080 tes. Semuanya **hijau**.
+2. **Sudah jadi:** "gedungnya" — katalog kebijakan (25/25 terjawab), mesin status booking & hold, mesin pembayaran, mesin bukti, identitas & hak akses, rantai audit, dan gerbang 3.102 tes. Semuanya **hijau**.
 3. **Belum jadi:** **ketujuh pegawai AI-nya** (0 dari 7 — 6 dari dokumen Anda + Security & Privacy Warden), plus 3 alat penopang (outbox, exception engine, DLP) dan 4 rel pembayaran.
 4. **Organisasi manusia SUDAH LENGKAP** (keputusan Anda 2026-09-28): delapan pemegang — Mr. Owner, Mr. CEO, Mr. CMM, Mr. PM, Ms. RM, Ms. FAM, Mr. TS, Ms. Greeting. Revenue Manager & Auditor ditunda; Legal eksternal; **Finance Staff & Reservation Agent: PERAN MANUSIANYA DIHAPUS** (dikoreksi 2026-10-02 — lihat Bab 14), dan **fungsinya (pembuat) pindah ke identitas AI Service**, supaya maker-checker tetap bermakna; **Guest Service dihapus**, diganti Greeting Service Team.
 5. **Yang menahan go-live bukan software** — seluruh pemeriksaan sistem OK (preflight 2026-10-02: 12 OK, 3 WARN lingkungan). Yang menahan: **1 keputusan bisnis BLOCKING** (D17 — kesiapan tenant), dari 13 sebelum jawaban Anda 2026-10-02.
@@ -491,7 +491,7 @@ D4 (SLA), D7 (ambang shadow mode), D10 (RPO/RTO backup), D13 (siapa yang siaga s
 | Periksa | Hasil |
 |---|---|
 | Keputusan bisnis yang masih menahan go-live | **1** — hanya D17 (kesiapan tenant). Sebelum jawaban Anda 2026-10-02: 13 |
-| `make check` | 3.080 lulus, 4 dilewati, 3.780 subtes; secret-scan & unsafe-scan bersih |
+| `make check` | 3.102 lulus, 4 dilewati, 3.780 subtes; secret-scan & unsafe-scan bersih |
 | Preflight | 12 pemeriksaan sistem OK; yang menahan **keputusan bisnis**, bukan software |
 | ADR | 39 berkas, semua berstatus terbaca |
 
@@ -509,7 +509,7 @@ Anda menambahkan satu pegawai AI lagi pada 2026-10-02. Ini pekerjaannya, dalam b
 | Tugas (kata Anda) | Artinya di sistem |
 |---|---|
 | Melindungi dari **virus, malware & kerusakan** | Memeriksa berkas, basis data, dan rantai audit secara berkala; mengenali berkas/proses yang rusak atau mencurigakan |
-| Menjaga bebas **Bug & Error** | Menjalankan pemeriksaan kualitas (3.080 tes + pemeriksaan gaya penulisan kode) dan melaporkan apa yang merah |
+| Menjaga bebas **Bug & Error** | Menjalankan pemeriksaan kualitas (3.102 tes + pemeriksaan gaya penulisan kode) dan melaporkan apa yang merah |
 | Sistem tetap **terstruktur & rapi** | Menjaga keseragaman susunan: skema SQLite = PostgreSQL, setiap keputusan punya nomor ADR, tidak ada berkas nyasar |
 | **Perbaikan signifikan otomatis** | Menemukan masalah → membuat perbaikan → **mengujinya** → melaporkan; kalau ada kerusakan, memulihkan ke kondisi terakhir yang sudah terbukti baik |
 | Menjaga **data sensitif tidak dicuri** | Menjaga data KTP/paspor, rekening, dan kunci sistem; memutus koneksi keluar yang mencurigakan; mengganti sesi/kunci yang diduga bocor |
@@ -563,7 +563,7 @@ Prinsip ini **kadang memperlambat** — dan itu memang pilihannya:
 
 - GM yang tidur menahan pembayaran (permintaan berisiko tinggi kedaluwarsa **240 menit**).
 - Peran keuangan wajib mengambil kode faktor kedua sebelum bekerja.
-- Setiap perubahan harus lulus **3.080 tes** sebelum boleh dipasang.
+- Setiap perubahan harus lulus **3.102 tes** sebelum boleh dipasang.
 
 Semua itu **biaya keamanan**, dan biaya itu tertulis di ADR — bukan disembunyikan. Kalau suatu hari biaya ini terasa terlalu mahal, keputusannya milik Anda, dan saya akan tunjukkan angkanya sebelum menyarankan apa pun.
 

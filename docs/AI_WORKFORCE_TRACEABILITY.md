@@ -42,7 +42,7 @@ Semua ❌ terpusat di satu tempat: **lapisan 6 agent AI-nya sendiri**, yang mema
 | **11** | Agent 5 — Finance Admin AI | **Belum ada.** Larangan mutlaknya (tidak menyetujui/memindahkan uang) **sudah** ditegakkan di tingkat identitas | `src/ai_service.py` deny registry; `src/approvals.py` | ❌ |
 | **12** | Agent 6 — Revenue & BI AI | **Belum ada** | 0 berkas | ❌ |
 | **13** | State machine human handoff (AI_RUNNING → … → AI_RESUME_ALLOWED) | **Belum ada.** Yang ada: manajemen kasus + SLA (bukan state machine handoff) | `grep -rn "handoff\|HANDOFF" src/` → **0**; `src/cases.py` | ❌ |
-| **14** | Kontrak komunikasi antar-agent (envelope bertipe + outbox) | Envelope **sebagian** ada: `idempotency_key` pada pesan. **Outbox transaksional belum ada** | `src/connectors.py`, `src/messages.py`; tidak ada tabel outbox di `001_initial.sql` | 🟡 |
+| **14** | Kontrak komunikasi antar-agent (envelope bertipe + outbox) | Envelope **baru ada**: `src/outbox.py` menulis surat bertipe (`event_type` + aggregate + payload berdampak sha256), idempotent per agency, punya `correlation_id`/`causation_id`, retry berjenjang + dead-letter, dan isi surat tidak bisa diubah setelah ditulis (trigger). Transport & worker latar belum. Envelope lama yang **sebagian** ada: `idempotency_key` pada pesan. **Outbox transaksional belum ada** | `src/connectors.py`, `src/messages.py`; tidak ada tabel outbox di `001_initial.sql` | 🟡 |
 | **15** | Matriks sumber kebenaran | Sebagian besar **sudah** ditegakkan: fakta villa/tarif dari versi terverifikasi, ketersediaan dari observasi bersumber, dana dari bukti otoritatif | `src/evidence.py`, `src/supplier_route.py`, `src/policy_engine.py`, `src/availability.py` | ✅ |
 | **16** | Invariant bisnis kritis | Sebagian besar **sudah**: `HOLD_REQUESTED != HOLD_CONFIRMED`, `AI_EXTRACTED != VERIFIED`, `SOURCE_UNAVAILABLE != NOT_AVAILABLE`, approval terikat fingerprint | `src/hold_states.py`, `src/supplier_route.py`, `src/evidence.py`, `src/approvals.py` | ✅ |
 | **17** | Kegagalan, degraded mode, kill switch (5 status) | **3 dari 5**: `ACTIVE`, `SUSPENDED`, `RETIRED`. **Belum**: `DEGRADED`, `READ_ONLY`. Circuit breaker belum ada | `src/ai_service.py` | 🟡 |
@@ -108,7 +108,7 @@ cd ~/villa-agency-os
 # 7 komponen AI belum ada
 grep -rl "control_tower\|reservation_service\|commercial_ai\|operations_ai\|finance_admin\|revenue_bi" src/   # 0 berkas
 
-# outbox belum ada
+# outbox ada sejak 2026-10-02 (src/outbox.py, migrasi 006)
 grep -in outbox src/schema/001_initial.sql        # kosong
 
 # handoff belum ada
