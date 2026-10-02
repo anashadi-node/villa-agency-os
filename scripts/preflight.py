@@ -50,6 +50,7 @@ from primitives import DomainError, SystemClock, parse_iso  # noqa: E402
 from schema_loader import SCHEMA_VERSION, applied_version, connect_sqlite  # noqa: E402
 
 import roles  # noqa: E402  (path setup must run first)
+import settings as SETTINGS  # noqa: E402  (path setup must run first)
 
 OK = "OK"
 FAIL = "FAIL"
@@ -190,6 +191,7 @@ def check_database(db: Path, anchor_dir: Optional[Path]) -> list[Check]:
 
         checks.append(check_demo_data(conn))
         checks.append(check_published_ladder_roles(conn))
+        checks.append(check_tenant_readiness(conn))
 
         health = health_checks(conn, clock=SystemClock(), anchor_dir=str(anchor_dir) if anchor_dir else None)
         critical = [c for c in health if c.severity == "CRITICAL"]
@@ -341,6 +343,31 @@ def check_published_ladder_roles(conn: Any) -> Check:
         "policy role names", OK,
         f"v{version} names {[roles.canonical_role(name) for name in names]}",
     )
+
+
+
+#: D17: the platform may be ready while a *tenant* is not. Every ACTIVE agency must have filled
+#: the settings only it can know (payment provider, WhatsApp number, PBJT source, on-call) and
+#: must have at least one SELLABLE property with an ACTIVE unit. This is checked here, not only in
+#: tests, because the question "may this agency take real guests" is asked at deploy time.
+def check_tenant_readiness(conn: Any) -> Check:
+    """Every ACTIVE agency must be ready: settings filled, a sellable property, an active unit."""
+    agencies = [
+        row[0]
+        for row in conn.execute(
+            "SELECT agency_id FROM agencies WHERE status = 'ACTIVE' ORDER BY agency_id"
+        ).fetchall()
+    ]
+    if not agencies:
+        return _check("tenant readiness", WARN, "no ACTIVE agency to check yet")
+    unready: list[str] = []
+    for agency_id in agencies:
+        report = SETTINGS.readiness_for(conn, str(agency_id), clock=SystemClock())
+        if not report.ready:
+            unready.append(f"{agency_id}: " + "; ".join(report.blockers))
+    if unready:
+        return _check("tenant readiness", FAIL, " | ".join(unready)[:300])
+    return _check("tenant readiness", OK, f"{len(agencies)} agency(ies) ready")
 
 
 def check_demo_data(conn: Any) -> Check:

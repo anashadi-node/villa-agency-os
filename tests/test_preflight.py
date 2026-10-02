@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import preflight as PF  # noqa: E402
 from primitives import FrozenClock, IdFactory  # noqa: E402
 from schema_loader import connect_sqlite  # noqa: E402
+import settings as SETTINGS  # noqa: E402
 from seed_support import SeedMixin  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
@@ -81,21 +82,28 @@ def test_missing_decisions_file_is_a_failure(tmp_path):
     assert checks[0].verdict == PF.FAIL
 
 
-def test_the_real_decisions_file_blocks_go_live():
-    """The repository's decisions must still block go-live — the property, not a count.
+def test_the_decisions_file_is_green_and_readiness_is_the_real_blocker():
+    """The refusal moved, and the guard moved with it — it does not merely disappear.
 
-    This test used to assert `>= 10` open blocking rows. The owner answered seven of them on
-    2026-10-02 (D1, D2, D5, D6, D8, D9, D11, D12 became DECIDED, and D17 replaced them as the
-    tenant-readiness blocker), so the count fell to six and the assertion failed for the right
-    reason: counting rows measured how much had been answered, not whether the gate still
-    refuses. What must hold is that the file *refuses*: at least one BLOCKING row is OPEN, and
-    the row that tracks the new tenant requirement is among them.
+    History, because this test keeps changing shape on purpose: it first asserted `>= 10` open
+    blocking rows, then "at least one", and as of 2026-10-02 the owner answered the last
+    BLOCKING row (D17 became DECIDED — the tenant-readiness *checker* now exists). A guard that
+    simply turned green would have lost its teeth, so it asserts the current truth instead: the
+    decisions file is clean, and go-live is still refused — now by tenant readiness, on a
+    database whose agency has filled nothing.
     """
 
     checks, open_blocking = PF.parse_decisions(REPO / "docs/GO_LIVE_DECISIONS.md")
-    assert checks[0].verdict == PF.FAIL
-    assert open_blocking, "no BLOCKING row is OPEN — either every decision landed, or the parser broke"
-    assert "D17" in open_blocking
+    assert open_blocking == [], f"a BLOCKING row went back to OPEN: {open_blocking}"
+    assert checks[0].verdict == PF.OK
+
+    conn = connect_sqlite(":memory:")
+    try:
+        readiness = PF.check_tenant_readiness(conn)
+    finally:
+        conn.close()
+    assert readiness.verdict == PF.FAIL, "the real blocker must still refuse go-live"
+    assert "agency_default" in readiness.detail
 
 
 class TestDemoData(SeedMixin):
@@ -203,6 +211,34 @@ def test_no_go_when_decisions_are_open_and_anchor_is_missing(tmp_path):
     assert "go-live decisions" in result.stdout
 
 
+def _ready_tenant(conn) -> None:
+    """Fill a tenant so D17's check can pass: settings, a SELLABLE property, an ACTIVE unit.
+
+    Added 2026-10-02: before this, "everything checks out" could mean "no agency has filled
+    anything yet". A go-live scenario that skips the tenant is not a go-live scenario.
+    """
+    now = "2026-09-21T08:00:00+00:00"
+    conn.execute(
+        "INSERT INTO properties (property_id, agency_id, name, property_type, region, province,"
+        " timezone, status, contract_pack_status, created_at, updated_at)"
+        " VALUES ('prop_go', 'agency_default', 'Villa Uji', 'villa', 'Ubud', 'Bali',"
+        " 'Asia/Makassar', 'SELLABLE', 'ACTIVATED', ?, ?)", (now, now))
+    conn.execute(
+        "INSERT INTO units (unit_id, agency_id, property_id, name, unit_type, bedrooms,"
+        " bathrooms, base_capacity, max_guests, status, created_at, updated_at)"
+        " VALUES ('unit_go', 'agency_default', 'prop_go', 'Unit Uji', 'entire_villa', 2, 2, 2, 4,"
+        " 'ACTIVE', ?, ?)", (now, now))
+    service = SETTINGS.AgencySettings(conn, clock=FrozenClock.at(now), ids=IdFactory(True, "go"))
+    for key, value in {
+        "payment.provider": "midtrans",
+        "payment.rails": '["CARD"]',
+        "messaging.whatsapp_number": "+628123456789",
+        "tax.pbjt_source": "perda Badung",
+        "operations.oncall_primary": "Mr. TS",
+    }.items():
+        service.set(key, value, actor="owner_anas", actor_role="owner")
+
+
 def test_go_when_everyhing_checks_out(tmp_path):
     from anchors import publish_anchor
     from audit import AuditLog
@@ -213,6 +249,7 @@ def test_go_when_everyhing_checks_out(tmp_path):
     anchors.mkdir()
     conn = connect_sqlite(str(db))
     try:
+        _ready_tenant(conn)
         publish_anchor(
             conn=conn,
             audit=AuditLog(conn, clock=FrozenClock.at("2026-09-21T08:00:00Z"),
@@ -334,3 +371,56 @@ class TestPublishedPolicyLadderRoles:
         self._publish(conn, '{"ladder": ["finance_manager", "gm"]}')
         check = PF.check_published_ladder_roles(conn)
         assert check.verdict == PF.OK, check.detail
+
+
+class TestTenantReadiness:
+    """D17 as a preflight check: the platform may pass while a tenant still owes settings."""
+
+    def _make_db(self, path: Path) -> None:
+        conn = connect_sqlite(str(path))
+        conn.close()
+
+    def test_an_agency_with_nothing_filled_is_refused_by_name(self, tmp_path):
+        db = tmp_path / "villa.db"
+        self._make_db(db)
+        conn = connect_sqlite(str(db))
+        try:
+            check = PF.check_tenant_readiness(conn)
+        finally:
+            conn.close()
+        assert check.verdict == PF.FAIL
+        assert "agency_default" in check.detail
+        assert "required setting not filled" in check.detail
+        assert "SELLABLE" in check.detail
+
+    def test_a_filled_agency_passes(self, tmp_path):
+        db = tmp_path / "villa.db"
+        self._make_db(db)
+        conn = connect_sqlite(str(db))
+        try:
+            now = "2026-10-02T08:00:00+00:00"
+            conn.execute(
+                "INSERT INTO properties (property_id, agency_id, name, property_type, region,"
+                " province, timezone, status, contract_pack_status, created_at, updated_at)"
+                " VALUES ('prop_pf', 'agency_default', 'Villa Uji', 'villa', 'Ubud', 'Bali',"
+                " 'Asia/Makassar', 'SELLABLE', 'ACTIVATED', ?, ?)", (now, now))
+            conn.execute(
+                "INSERT INTO units (unit_id, agency_id, property_id, name, unit_type, bedrooms,"
+                " bathrooms, base_capacity, max_guests, status, created_at, updated_at)"
+                " VALUES ('unit_pf', 'agency_default', 'prop_pf', 'Unit Uji', 'entire_villa',"
+                " 2, 2, 2, 4, 'ACTIVE', ?, ?)", (now, now))
+            service = SETTINGS.AgencySettings(
+                conn, clock=FrozenClock.at(now), ids=IdFactory(True, "pf-settings"))
+            for key, value in {
+                "payment.provider": "midtrans",
+                "payment.rails": '["CARD"]',
+                "messaging.whatsapp_number": "+628123456789",
+                "tax.pbjt_source": "perda Badung",
+                "operations.oncall_primary": "Mr. TS",
+            }.items():
+                service.set(key, value, actor="owner_anas", actor_role="owner")
+            check = PF.check_tenant_readiness(conn)
+        finally:
+            conn.close()
+        assert check.verdict == PF.OK
+        assert "ready" in check.detail

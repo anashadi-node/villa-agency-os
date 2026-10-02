@@ -1983,6 +1983,39 @@ CREATE TABLE exception_fingerprints (
 
 CREATE INDEX ix_exception_fingerprints_open ON exception_fingerprints (agency_id, last_seen_at);
 
+-- --------------------------------------------------------------------------- --
+-- Agency settings: the values the **tenant** owns, not the platform (ADR-0037).
+--
+-- What belongs here: the payment provider a tenant uses, its WhatsApp number, where its
+-- PBJT rate comes from, who is on call. What does *not*: anything that bounds the platform —
+-- the deny registry, approval thresholds, the MFA role set. Those are owner policy values
+-- (`policy_revisions`), and a tenant cannot set them for itself.
+--
+-- One row per key, holding the value in force. The *history* is the audit chain: every write
+-- appends an event with `before`/`after`, so "who changed the WhatsApp number, when, and what
+-- was it before" is answered by the chain rather than by a second copy of the data here.
+--
+-- The catalogue of legal keys is code (`src/settings.py`), not data: an unknown key is refused
+-- rather than stored, because a settings table that accepts anything becomes a place where a
+-- typo silently does nothing.
+-- --------------------------------------------------------------------------- --
+
+CREATE TABLE agency_settings (
+    setting_id     TEXT    NOT NULL,
+    agency_id      TEXT    NOT NULL DEFAULT 'agency_default',
+    setting_key    TEXT    NOT NULL CHECK (length(setting_key) >= 3),
+    value          TEXT    NOT NULL CHECK (length(value) >= 1),
+    revision       BIGINT NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    updated_by     TEXT    NOT NULL CHECK (length(updated_by) >= 3),
+    updated_role   TEXT    NOT NULL CHECK (length(updated_role) >= 2),
+    updated_at     TEXT    NOT NULL,
+    CONSTRAINT pk_agency_settings PRIMARY KEY (setting_id),
+    CONSTRAINT fk_agency_settings_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    CONSTRAINT uq_agency_settings_key UNIQUE (agency_id, setting_key)
+);
+
+CREATE INDEX ix_agency_settings_agency ON agency_settings (agency_id, setting_key);
+
 INSERT INTO agencies (agency_id, name, status, created_at, updated_at)
 VALUES ('agency_default', 'Default Agency', 'ACTIVE', '2026-09-21T00:00:00+00:00', '2026-09-21T00:00:00+00:00');
 
