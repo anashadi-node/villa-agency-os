@@ -45,8 +45,11 @@ from policy_engine import PolicyResolver
 from primitives import DomainError, FrozenClock, IdFactory
 
 NOW = "2026-09-26T00:00:00+00:00"
-LATER = "2026-09-27"  # the allowance becomes effective here
-AFTER_LATER = "2026-09-28T00:00:00+00:00"
+#: Both dates sit after 2026-10-02, because the deny registry already has a revision
+#: starting that day (the owner's four guardrails, ADR-0039) and publishing "earlier" is
+#: refused as backdated — the engine is right, so the fixture moved.
+LATER = "2026-10-03"  # the allowance becomes effective here
+AFTER_LATER = "2026-10-04T00:00:00+00:00"  # after LATER: reads the revision it just published
 STALE = "2026-09-20T00:00:00+00:00"  # days before NOW: past every level's window
 AGENCY = "agency_default"
 OTHER_AGENCY = "agency_other"

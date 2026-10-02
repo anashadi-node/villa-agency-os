@@ -43,8 +43,12 @@ from policy_engine import PolicyResolver
 from primitives import DomainError, FrozenClock
 
 NOW = "2026-09-26T09:00:00Z"
-LATER = "2026-10-01"
-AFTER_LATER = "2026-10-02T09:00:00Z"
+#: Dates used to publish a *new* revision and then read it back. They sit after
+#: 2026-10-02 because the deny registry already has a revision starting that day (the
+#: owner's four guardrails, ADR-0039): publishing "earlier" is refused as backdated, which
+#: is the engine behaving correctly, not a test to loosen.
+LATER = "2026-10-03"
+AFTER_LATER = "2026-10-04T09:00:00Z"
 AGENCY = "agency_default"
 ALLOWANCE_KEY = "security.ai.medium_tool_allowance"
 DENIED_KEY = "security.ai.denied_actions"

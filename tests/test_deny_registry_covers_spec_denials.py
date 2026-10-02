@@ -19,7 +19,10 @@ import reservation_kernel as RK
 from primitives import FrozenClock, IdFactory
 
 AGENCY = "agency_default"
-NOW = "2026-09-26T08:00:00+00:00"
+#: Resolved at the instant the *newest* revision in force starts: the owner's 2026-10-02
+#: additions (ADR-0039) are what this suite must see. The history check below proves the
+#: earlier revisions are still resolvable at their own dates.
+NOW = "2026-10-02T08:00:00+00:00"
 REGISTRY = "security.ai.denied_actions"
 
 #: §21's list, as the spec writes it.
@@ -52,6 +55,12 @@ SPEC_DENIAL_TOOLS: dict[str, str] = {
 #: Beyond §21, the owner added these (ADR-0009 "base list + amendment"). They name capabilities
 #: rather than registered tools, so they guard the action vocabulary — listed here so a new entry
 #: cannot appear in the registry without a reader noticing it.
+#:
+#: ``policy.publish``, ``security.controls.change``, ``ai.allowance.change`` and
+#: ``deploy.production`` are the owner's 2026-10-02 additions (ADR-0039): the Security & Privacy
+#: Warden repairs the system, and these four are what stops the repairer from disabling its own
+#: rails. When a tool for any of them is ever registered in ``ai_tools``, the registry entry must
+#: name that **tool** — enforcement compares tool names, which is the drift this file exists for.
 OWNER_EXTENSIONS: tuple[str, ...] = (
     "blockchain.sign",
     "crypto.transfer",
@@ -59,6 +68,10 @@ OWNER_EXTENSIONS: tuple[str, ...] = (
     "treasury.control",
     "key.read_raw",
     "seed_phrase.read",
+    "policy.publish",
+    "security.controls.change",
+    "ai.allowance.change",
+    "deploy.production",
 )
 
 
@@ -112,9 +125,36 @@ class DenyRegistryTestCase(unittest.TestCase):
         )
 
     def test_the_amendment_is_the_revision_in_force(self) -> None:
-        """The v2 amendment must be what resolution returns, not the v1 list it replaces."""
-        self.assertEqual(self.published.version, 2)
-        self.assertEqual(self.published.effective_from, "2026-09-26")
+        """The newest amendment must be what resolution returns, not the list it replaces.
+
+        v1 was the §21 base list, v2 the owner's ADR-0009 amendment, v3 the owner's 2026-10-02
+        addition of the four guardrails that keep the Security & Privacy Warden out of its own
+        rails (ADR-0039). A later revision is a *new* date, never an edit of an old one.
+        """
+        self.assertEqual(self.published.version, 3)
+        self.assertEqual(self.published.effective_from, "2026-10-02")
+
+    def test_the_wardens_four_guardrails_are_denied(self) -> None:
+        """Owner decision 2026-10-02: the repairer may not disable the controls that bound it."""
+        for entry in (
+            "policy.publish",
+            "security.controls.change",
+            "ai.allowance.change",
+            "deploy.production",
+        ):
+            with self.subTest(entry=entry):
+                self.assertIn(entry, self.denied)
+        # The registry the warden must not be able to rewrite is the one that holds these.
+        self.assertGreaterEqual(len(self.denied), 27)
+
+    def test_the_earlier_revision_still_answers_for_its_own_dates(self) -> None:
+        """History keeps its own answer: before 2026-10-02 the registry held 23 entries."""
+        earlier = self.resolver.__class__(
+            self.kernel.conn, clock=FrozenClock.at("2026-09-26T08:00:00+00:00"), agency_id=AGENCY
+        ).resolve(REGISTRY)
+        self.assertEqual(earlier.version, 2)
+        self.assertEqual(len(earlier.as_json()), 23)
+        self.assertNotIn("policy.publish", earlier.as_json())
 
 
 if __name__ == "__main__":  # pragma: no cover
