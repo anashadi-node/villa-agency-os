@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Mapping, Optional, Protocol
 
+import roles
 import totp as T
 from primitives import (
     DEFAULT_AGENCY_ID,
@@ -66,7 +67,10 @@ __all__ = [
 ]
 
 #: Roles that may not hold a session before the second factor is satisfied.
-MFA_REQUIRED_ROLES: tuple[str, ...] = ("owner", "finance")
+#: One home is :mod:`roles` — the GM approves money out (ADR-0036 tier 2), so the GM owes
+#: a second factor too. The constant stays here as the bootstrap default the drift guard
+#: compares against the published policy value.
+MFA_REQUIRED_ROLES: tuple[str, ...] = roles.MFA_REQUIRED_ROLES
 
 #: Actions whose approval request needs a *fresh* factor (step-up), not merely a
 #: session opened earlier. Bank details and money leaving the account are the two

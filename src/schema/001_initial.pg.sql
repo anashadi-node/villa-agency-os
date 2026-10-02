@@ -2016,6 +2016,8 @@ INSERT INTO policy_revisions (policy_revision_id, agency_id, policy_key, version
 
 INSERT INTO policy_revisions (policy_revision_id, agency_id, policy_key, version, value, effective_from, effective_to, source_doc_ref, approved_by, fingerprint, created_at) VALUES ('polrev_baseline_12', 'agency_default', 'security.step_up.window_minutes', 1, '10', '2026-01-01', '9999-12-31', 'ADR-0005 (identity, auth, session and RBAC)', 'owner_anas', '87206f8ceb50e944f64122ec100de474d0fbd728ca42e51d3e4a022d027302f1', '2026-09-26T00:00:00+00:00');
 
+INSERT INTO policy_revisions (policy_revision_id, agency_id, policy_key, version, value, effective_from, effective_to, source_doc_ref, approved_by, fingerprint, created_at) VALUES ('polrev_baseline_14', 'agency_default', 'security.mfa.required_roles', 2, '["owner","finance","gm"]', '2026-10-02', '9999-12-31', 'Keputusan owner 2026-10-02 - GM/CEO menyetujui uang keluar (ADR-0036 tier 2), maka GM wajib faktor kedua sebelum membuka sesi', 'owner_anas', '90e498edd0927913ec5b0b325759b96cc8dc7f0c59295a91a95b19923fa3398d', '2026-10-02T00:00:00+00:00');
+
 -- §56 capability envelope: low-risk autonomous, medium-risk through a policy-controlled
 -- tool, high-risk as human-authority-only. Registered is not granted: the deny
 -- registry (security.ai.denied_actions) is checked first.

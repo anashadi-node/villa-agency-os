@@ -46,9 +46,9 @@ ROUTES = {
 #: page, this table does not move with it.
 ENTITLED = {
     "command_center": set(D.ROLES),
-    "cases": {"reservation", "operations", "owner", "auditor"},
+    "cases": {"reservation", "operations", "owner", "auditor", "gm"},
     "inventory": {"reservation", "operations", "owner"},
-    "finance": {"finance", "owner"},
+    "finance": {"finance", "owner", "gm"},
     "operations": {"reservation", "operations", "owner"},
     "approvals": set(D.ROLES),
     "properties": set(D.ROLES),
@@ -1568,6 +1568,7 @@ def test_the_dashboard_map_names_the_canonical_role_and_ranks_it_as_before():
         "reservation": 1,
         "operations": 2,
         "finance": 3,
+        "gm": 4,
         "owner": 5,
     }
     assert ROLES_MOD.role_rank("gm") == 4

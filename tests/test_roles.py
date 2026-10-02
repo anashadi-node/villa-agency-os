@@ -87,10 +87,11 @@ def test_every_page_role_that_may_act_has_a_mapped_approval_role():
         assert roles.role_rank(mapped) is not None, page_role
     assert "auditor" in D.ROLES
     assert "auditor" not in D.APPROVAL_ROLE_BY_ROLE
-    # ``owner`` is the one word that is both a page and a rank, and that is on purpose: the
-    # owner is the owner in both lists. Every other page word must not be a ladder name.
+    # ``owner`` and ``gm`` are the two words that are both a page and a rank, and that is on
+    # purpose: the owner is the owner, and the GM approves money (ADR-0036). Every other page
+    # word must not be a ladder name.
     for page_role in D.ROLES:
-        if page_role == "owner":
+        if page_role in ("owner", "gm"):
             continue
         assert page_role not in roles.ADJUDICATOR_ROLES, page_role
 
@@ -320,3 +321,29 @@ def test_the_ladder_published_in_this_database_names_known_roles():
         pytest.skip("this revision predates the ladder shape")
     assert roles.approval_ladder(ladder) == ("finance_manager", "gm")
     assert roles.MONEY_OUT_APPROVER_ROLES >= set(roles.approval_ladder(ladder))
+
+
+def test_the_gm_can_open_the_pages_the_owner_granted_and_owes_a_second_factor():
+    """Owner decision 2026-10-02: ADR-0036's GM tier must be reachable, and MFA-covered.
+
+    A ladder tier with no page is a name, not a control: the GM could be named as the
+    approver and still have nowhere to approve. The pages below are the set the owner
+    granted, pinned exactly so a later loosening of PAGE_ROLES fails here.
+    """
+    granted = {"command_center", "cases", "case_detail", "finance", "approvals", "properties", "error"}
+    for page, allowed in D.PAGE_ROLES.items():
+        if page in granted:
+            assert "gm" in allowed, page
+        else:
+            assert "gm" not in allowed, page
+    assert "gm" in D.WRITE_ROLES
+    assert D.APPROVAL_ROLE_BY_ROLE["gm"] == "gm"
+    assert roles.role_rank("gm") == 4
+
+
+def test_the_gm_owes_a_second_factor_and_the_ai_maker_still_does_not_get_one():
+    """The GM approves money out, so the GM owes a second factor; the maker gets no session."""
+    assert "gm" in roles.MFA_REQUIRED_ROLES
+    assert "owner" in roles.MFA_REQUIRED_ROLES
+    assert roles.is_ai_role("ai_service")
+    assert "ai_service" not in roles.MFA_REQUIRED_ROLES

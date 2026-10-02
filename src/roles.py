@@ -36,6 +36,7 @@ __all__ = [
     "CAPABILITIES",
     "HUMAN_ROLE_IDS",
     "MONEY_OUT_APPROVER_ROLES",
+    "MFA_REQUIRED_ROLES",
     "ROLE_ALIASES",
     "ROLE_CAPABILITIES",
     "ROLE_IDS",
@@ -179,6 +180,12 @@ ROLE_CAPABILITIES: Mapping[str, frozenset[str]] = MappingProxyType(
 MONEY_OUT_APPROVER_ROLES: frozenset[str] = frozenset(
     {"finance_manager", "gm", "owner"}
 )
+
+#: Roles that may not open a session before the second factor is satisfied (§18, ADR-0036).
+#: ``owner`` and ``finance`` are page words and ``gm`` is a canonical id: sessions are
+#: opened under the dashboard's page vocabulary, so the set has to be spelled in the
+#: words a session actually carries. Reconciling the two vocabularies is its own slice.
+MFA_REQUIRED_ROLES: tuple[str, ...] = ("owner", "finance", "gm")
 
 
 def canonical_role(role: Any) -> Optional[str]:

@@ -116,8 +116,10 @@ DEFAULT_TEMPLATES_DIR = REPO_ROOT / "templates"
 DEFAULT_HOST = "127.0.0.1"
 WILDCARD_HOSTS = ("0.0.0.0", "::", "[::]", "*", "")
 
-#: The five dashboard roles. Deliberately not the approval roles (see below).
-ROLES: tuple[str, ...] = ("reservation", "finance", "operations", "owner", "auditor")
+#: The six dashboard roles. Deliberately not the approval roles (see below).
+#: ``gm`` is here because ADR-0036 put the GM on every money-out path: a role that can
+#: approve a payment but cannot open the page that shows it is not wired, just named.
+ROLES: tuple[str, ...] = ("reservation", "finance", "operations", "owner", "auditor", "gm")
 ALL_ROLES = ROLES
 
 #: Dashboard role → the role the approval kernel knows (``approvals.ROLE_RANK``, whose one
@@ -131,6 +133,7 @@ APPROVAL_ROLE_BY_ROLE: Mapping[str, str] = MappingProxyType(
         "operations": "reservation_manager",
         "finance": "finance_manager",
         "owner": "owner",
+        "gm": "gm",
     }
 )
 
@@ -138,12 +141,12 @@ APPROVAL_ROLE_BY_ROLE: Mapping[str, str] = MappingProxyType(
 PAGE_ROLES: Mapping[str, tuple[str, ...]] = MappingProxyType(
     {
         "command_center": ALL_ROLES,
-        "cases": ("reservation", "operations", "owner", "auditor"),
-        "case_detail": ("reservation", "operations", "owner", "auditor"),
+        "cases": ("reservation", "operations", "owner", "auditor", "gm"),
+        "case_detail": ("reservation", "operations", "owner", "auditor", "gm"),
         "inventory": ("reservation", "operations", "owner"),
-        "finance": ("finance", "owner"),
+        "finance": ("finance", "owner", "gm"),
         "operations": ("reservation", "operations", "owner"),
-        "approvals": ("reservation", "operations", "finance", "owner", "auditor"),
+        "approvals": ("reservation", "operations", "finance", "owner", "auditor", "gm"),
         "properties": ALL_ROLES,
         "audit": ("owner", "auditor"),
         "error": ALL_ROLES,
@@ -151,7 +154,7 @@ PAGE_ROLES: Mapping[str, tuple[str, ...]] = MappingProxyType(
 )
 
 #: Roles allowed to *act* (approval writes). An auditor is read-only by design.
-WRITE_ROLES: tuple[str, ...] = ("reservation", "operations", "finance", "owner")
+WRITE_ROLES: tuple[str, ...] = ("reservation", "operations", "finance", "owner", "gm")
 
 #: Roles for which free text keeps its identifiers. A rendered page is treated as
 #: an outbound copy of the record, so this follows the stricter export rule of
@@ -159,6 +162,9 @@ WRITE_ROLES: tuple[str, ...] = ("reservation", "operations", "finance", "owner")
 PII_ROLES: tuple[str, ...] = ("operations", "finance")
 
 #: Dashboard role → the role string the classification gate evaluates against.
+#: ``gm`` is deliberately absent: it then reaches the gate as itself, which the gate does
+#: not list as an export authority, so a GM export is refused — exactly as the owner's is
+#: (``owner`` is in no gate list either). Fail-closed is the intended default here.
 GATE_ROLE_BY_ROLE: Mapping[str, str] = MappingProxyType(
     {
         "reservation": "agent",
@@ -186,7 +192,7 @@ KPI_KEYS: tuple[str, ...] = (
     "audit_chain",
 )
 FINANCE_KPI_KEYS: tuple[str, ...] = ("unpaid_invoices", "unmatched_payments")
-FINANCE_KPI_ROLES: tuple[str, ...] = ("finance", "owner")
+FINANCE_KPI_ROLES: tuple[str, ...] = ("finance", "owner", "gm")
 
 #: Booking statuses that consume a unit's calendar day.
 BOOKED_BOOKING_STATUSES: tuple[str, ...] = (
@@ -225,6 +231,7 @@ DEFAULT_IDENTITIES: Mapping[str, str] = MappingProxyType(
         "operations": "agent-ops-1",
         "owner": "owner-sakti-1",
         "auditor": "auditor-external-1",
+        "gm": "gm-ceo-1",
     }
 )
 

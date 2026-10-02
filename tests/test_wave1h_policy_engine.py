@@ -252,7 +252,10 @@ def test_code_defaults_match_the_published_baseline(conn):
     assert identity.SESSION_ABSOLUTE_TIMEOUT == timedelta(
         hours=policy.resolve("security.session.absolute_timeout_hours").as_int()
     )
-    assert tuple(identity.MFA_REQUIRED_ROLES) == policy.resolve(
+    # The MFA set is compared at the instant the *current* value took effect: the store at
+    # the 2026-09-26 baseline still answers two roles, and that is history (ADR-0036 added
+    # the GM tier on 2026-10-02), not drift.
+    assert tuple(identity.MFA_REQUIRED_ROLES) == resolver(conn, at=AFTER_SUPERSESSION).resolve(
         "security.mfa.required_roles"
     ).as_roles()
     assert tuple(identity.HIGH_RISK_SUBJECT_TYPES) == tuple(
