@@ -23,6 +23,7 @@
 13. [Ringkasan satu halaman](#bab-13)
 14. [Pembaruan 2026-10-02: peran satu rumah, GM bisa menyetujui](#bab-14)
 15. [Sistem ini dijual per agency: apa artinya untuk Anda](#bab-15)
+16. [Pegawai AI ke-7: Divisi Security & Privacy](#bab-16)
 
 ---
 
@@ -77,8 +78,8 @@ Semua yang di bawah ini **sudah ada dan sudah diuji**, bukan rencana.
 | 5 | **Mesin bukti** | Membedakan bukti kuat (dari sistem villa) dan bukti lemah (screenshot tamu) — level A sampai D | `evidence.py` |
 | 6 | **Identitas & hak akses** | Siapa boleh apa; MFA untuk peran sensitif | `identity.py`, TOTP |
 | 7 | **Rantai audit** | Catatan yang tidak bisa diubah diam-diam | `audit.py` + anchor |
-| 8 | **Gerbang kualitas** | 3.064 tes otomatis (+3.780 subtes) sebelum perubahan apa pun boleh masuk | `make check` → PASS |
-| 9 | **37 keputusan tercatat** | Setiap keputusan teknis/bisnis ditulis + alasannya | `docs/adr/` |
+| 8 | **Gerbang kualitas** | 3.078 tes otomatis (+3.780 subtes) sebelum perubahan apa pun boleh masuk | `make check` → PASS |
+| 9 | **39 keputusan tercatat** | Setiap keputusan teknis/bisnis ditulis + alasannya | `docs/adr/` |
 
 **Analogi bagian ini:** ini semua adalah *sistem saraf + pengaman gedung* — kunci pintu, alarm, CCTV, buku besar. Membosankan, tapi justru inilah yang membuat bisnis tidak bisa dibohongi.
 
@@ -265,7 +266,7 @@ Dan satu lagi: **jumlah pegawai AI tidak bertambah saat tamu bertambah.** Yang b
 
 | # | Yang belum ada | Kenapa penting | Bukti |
 |---|---|---|---|
-| 1 | **6 Pegawai AI** | Ini inti dokumen Anda | 0 dari 6 ada di kode |
+| 1 | **7 Pegawai AI** | 6 dari dokumen Anda + 1 tambahan Anda (Security & Privacy) | 0 dari 7 ada di kode |
 | 2 | **Outbox** (kurir antar-bagian) | Tanpa ini, pesan antar pegawai AI bisa hilang — dan dokumen Anda melarang pegawai AI saling memberi wewenang lewat obrolan bebas | ADR-0007 *diterima* tapi baru di atas kertas; tidak ada tabelnya |
 | 3 | **Exception Engine** (mesin kejadian tak terduga) | Tanpa ini, setiap hal aneh berhenti tanpa penanganan berjenjang | tidak ada modulnya |
 | 4 | **DLP** (pelindung data sensitif) | Mencegah data pribadi keluar lewat jalur yang salah | baru ada pemindai konfigurasi |
@@ -376,10 +377,10 @@ Pemeriksaan sistem hari ini: **13 dari 13 OK.** Yang menahan: **14 keputusan bis
 ## Bab 13 — Ringkasan satu halaman
 
 1. **Yang dibangun:** satu sistem operasi villa agency untuk Bali & Yogyakarta, dijalankan **manusia + 6 pegawai AI**.
-2. **Sudah jadi:** "gedungnya" — katalog kebijakan (25/25 terjawab), mesin status booking & hold, mesin pembayaran, mesin bukti, identitas & hak akses, rantai audit, dan gerbang 3.064 tes. Semuanya **hijau**.
-3. **Belum jadi:** **keenam pegawai AI-nya** (0 dari 6), plus 3 alat penopang (outbox, exception engine, DLP) dan 4 rel pembayaran.
+2. **Sudah jadi:** "gedungnya" — katalog kebijakan (25/25 terjawab), mesin status booking & hold, mesin pembayaran, mesin bukti, identitas & hak akses, rantai audit, dan gerbang 3.078 tes. Semuanya **hijau**.
+3. **Belum jadi:** **ketujuh pegawai AI-nya** (0 dari 7 — 6 dari dokumen Anda + Security & Privacy Warden), plus 3 alat penopang (outbox, exception engine, DLP) dan 4 rel pembayaran.
 4. **Organisasi manusia SUDAH LENGKAP** (keputusan Anda 2026-09-28): delapan pemegang — Mr. Owner, Mr. CEO, Mr. CMM, Mr. PM, Ms. RM, Ms. FAM, Mr. TS, Ms. Greeting. Revenue Manager & Auditor ditunda; Legal eksternal; **Finance Staff & Reservation Agent: PERAN MANUSIANYA DIHAPUS** (dikoreksi 2026-10-02 — lihat Bab 14), dan **fungsinya (pembuat) pindah ke identitas AI Service**, supaya maker-checker tetap bermakna; **Guest Service dihapus**, diganti Greeting Service Team.
-5. **Yang menahan go-live bukan software** — seluruh pemeriksaan sistem OK (preflight 2026-10-02: 12 OK, 3 WARN lingkungan). Yang menahan: **13 keputusan bisnis BLOCKING** (D1, D2, D4–D14).
+5. **Yang menahan go-live bukan software** — seluruh pemeriksaan sistem OK (preflight 2026-10-02: 12 OK, 3 WARN lingkungan). Yang menahan: **1 keputusan bisnis BLOCKING** (D17 — kesiapan tenant), dari 13 sebelum jawaban Anda 2026-10-02.
 6. **Yang saya butuh:** nama orang, nama provider, dan 11 keputusan sisanya.
 7. **Yang saya tidak akan lakukan:** mengarang nama, mengarang vendor, atau mengklaim sesuatu sudah jadi padahal belum.
 
@@ -395,7 +396,7 @@ Bab ini ditambahkan **setelah** edisi 2026-09-28. Isinya: apa yang berubah, apa 
 ### 14.1 Dua koreksi atas edisi sebelumnya
 
 1. **Bab 13 poin 4 salah, dan sudah diperbaiki.** Edisi sebelumnya menulis *"Finance Staff & Reservation Agent direservasi untuk AI — bukan dihapus"*. Keputusan Anda sebenarnya kebalikannya: **peran manusianya DIHAPUS**; yang tetap hidup adalah **fungsinya** (pembuat/maker), dan fungsi itu pindah ke identitas **AI Service**. Alasannya persis seperti yang Anda garis bawahi: *kontrol tanpa pembuat = pintu terbuka*. Sekarang seluruh dokumen konsisten dengan itu.
-2. **Jumlah tes.** Bab 3 menyebut "3.018 tes"; hari ini **3.064 lulus + 4 dilewati + 3.780 subtes** (naik karena tes baru: matriks per-peran dan 4 tes gerbang yang ternyata tidak pernah jalan — lihat 14.4).
+2. **Jumlah tes.** Bab 3 menyebut "3.018 tes"; hari ini **3.064 lulus + 4 dilewati + 3.780 subtes** (naik karena tes baru: matriks per-peran dan 4 tes gerbang yang ternyata tidak pernah jalan — lihat 14.4). **Angka di bab ini dicatat saat bab ini ditulis; angka terkini ada di Bab 16.**
 
 ### 14.2 Aturan uang ke-3 Anda sekarang benar-benar jalan, bukan rencana
 
@@ -429,7 +430,7 @@ ADR-0033, 0034, 0035, 0036 ditulis pada 30-Sep (dua yang pertama) dan 1-Okt (dua
 - **Mr. CEO belum punya halaman Audit**, dan **ekspor data sensitif (P2/P3) ditolak** untuknya — sama seperti Owner. Ini sengaja (fail-closed), bukan lupa: menaikkan hak ekspor adalah keputusan Anda, bukan keputusan mesin.
 - **MFA masih memakai kata halaman `finance`** (bukan `finance_manager`). Menyatukan kosakata sesi/halaman adalah slice tersendiri, karena mengubah siapa yang wajib faktor kedua.
 - **Urutan berikutnya** menurut peta dependensi Anda: **#2 Outbox + Exception Engine** — §14 melarang pesan bebas antar-pegawai AI, jadi handoff antar-agent belum boleh dibangun sebelum ini ada.
-- **Yang menahan go-live tetap bisnis, bukan software**: preflight 2026-10-02 → **12 pemeriksaan OK**, 3 WARN (lingkungan/anchor), **1 FAIL: 13 keputusan BLOCKING masih OPEN** (D1, D2, D4–D14).
+- **Yang menahan go-live tetap bisnis, bukan software**: preflight 2026-10-02 → **12 pemeriksaan OK**, 3 WARN (lingkungan/anchor), **1 FAIL: 1 keputusan BLOCKING masih OPEN (D17)** — turun dari 13 setelah keputusan Anda 2026-10-02.
 
 ### 14.7 Nomor yang terverifikasi pada 2026-10-02
 
@@ -488,11 +489,55 @@ D4 (SLA), D7 (ambang shadow mode), D10 (RPO/RTO backup), D13 (siapa yang siaga s
 
 | Periksa | Hasil |
 |---|---|
-| Keputusan bisnis yang masih menahan go-live | **6** — dari 13 sebelum jawaban Anda hari ini |
-| `make check` | 3.076 lulus, 4 dilewati, 3.780 subtes; secret-scan & unsafe-scan bersih |
+| Keputusan bisnis yang masih menahan go-live | **1** — hanya D17 (kesiapan tenant). Sebelum jawaban Anda 2026-10-02: 13 |
+| `make check` | 3.078 lulus, 4 dilewati, 3.780 subtes; secret-scan & unsafe-scan bersih |
 | Preflight | 12 pemeriksaan sistem OK; yang menahan **keputusan bisnis**, bukan software |
-| ADR | 37 berkas, semua berstatus terbaca |
+| ADR | 39 berkas, semua berstatus terbaca |
 
 ---
 
-*Edisi 2026-09-28 dibuat dari pemeriksaan langsung kode, tes, dan gerbang pada 2026-09-28; **Bab 14 & 15 memperbarui angka dan koreksi pada 2026-10-02**. Setiap angka di sini bisa Anda minta saya periksa ulang di depan Anda.*
+---
+
+<a id="bab-16"></a>
+## Bab 16 — Pegawai AI ke-7: Divisi Security & Privacy (penjaga sistem)
+
+Anda menambahkan satu pegawai AI lagi pada 2026-10-02. Ini pekerjaannya, dalam bahasa awam, dan **satu batas** yang harus ada — saya jelaskan alasannya.
+
+### 16.1 Apa yang dikerjakannya
+
+| Tugas (kata Anda) | Artinya di sistem |
+|---|---|
+| Melindungi dari **virus, malware & kerusakan** | Memeriksa berkas, basis data, dan rantai audit secara berkala; mengenali berkas/proses yang rusak atau mencurigakan |
+| Menjaga bebas **Bug & Error** | Menjalankan pemeriksaan kualitas (3.078 tes + pemeriksaan gaya penulisan kode) dan melaporkan apa yang merah |
+| Sistem tetap **terstruktur & rapi** | Menjaga keseragaman susunan: skema SQLite = PostgreSQL, setiap keputusan punya nomor ADR, tidak ada berkas nyasar |
+| **Perbaikan signifikan otomatis** | Menemukan masalah → membuat perbaikan → **mengujinya** → melaporkan; kalau ada kerusakan, memulihkan ke kondisi terakhir yang sudah terbukti baik |
+| Menjaga **data sensitif tidak dicuri** | Menjaga data KTP/paspor, rekening, dan kunci sistem; memutus koneksi keluar yang mencurigakan; mengganti sesi/kunci yang diduga bocor |
+| **Melaporkan kegawatan** ke GM/CEO & Owner | Tingkat kegawatan S1 (paling gawat: data bocor/kunci bocor/rantai audit rusak) → lapor **segera**, sebelum memperbaiki apa pun |
+
+### 16.2 Satu batas, dan kenapa harus ada
+
+> **Penjaga rumah boleh memperbaiki rumah. Penjaga rumah TIDAK boleh mengganti kuncinya sendiri — dan tidak boleh menandatangani pekerjaannya sendiri.**
+
+Kenapa: semua pengaman sistem ini (daftar larangan AI, mesin persetujuan, penyimpan kebijakan, rantai audit) juga berupa **kode**. Kalau si penjaga bisa mengubah kodenya sesuka hati, ia bisa **mematikan pengamannya sendiri** — dan itu justru celah terbesar yang bisa ia buat. Karena itu:
+
+| Boleh SENDIRI (aman & bisa dibatalkan) | WAJIB persetujuan manusia |
+|---|---|
+| Memeriksa, mengenali, mencatat temuan | **Memasang** perbaikan ke sistem produksi (GM/CEO yang menyetujui) |
+| Memutus proses/koneksi/sesi yang mencurigakan | **Mengubah pengaman**: daftar larangan AI, ambang persetujuan, daftar peran, hak akses (**Owner**) |
+| Memulihkan ke salinan terakhir yang terbukti baik | Menghapus data (GM/CEO **dan** Owner) |
+| Menyiapkan perbaikan + bukti uji | Membaca kunci/rahasia mentah (**tidak pernah**, untuk AI mana pun) |
+| Membuka laporan insiden & memanggil GM/Owner | Menyetujui apa pun (**tidak pernah**) |
+
+Jadi "perbaikan otomatis" yang Anda minta tetap terpenuhi: penemuan, perbaikan, dan pengujian **otomatis penuh**; hanya **pemasangan ke sistem hidup** yang butuh satu "ya" manusia. Ini bukan mengurangi permintaan Anda — ini yang membuat permintaan Anda tidak berbahaya.
+
+### 16.3 Datangnya pegawai ke-7 ini mengubah satu hal kecil
+
+Ada 4 pengaman yang belum ada di daftar larangan dan kini perlu: `policy.publish` (mengubah kebijakan), `security.controls.change` (mengubah pengaman), `ai.allowance.change` (mengubah izin AI), `deploy.production` (memasang ke produksi). Karena daftar larangan itu **milik Anda**, saya tidak menambahkannya sendiri — **saya minta persetujuan Anda satu baris**.
+
+### 16.4 Urutan yang benar (tidak bisa dibalik)
+
+Pegawai ke-7 adalah pelapor insiden. Laporan hanya berguna kalau **tidak bisa hilang** — dan saluran yang menjamin itu (**Outbox**) belum dibangun. Jadi urutannya: **Outbox dulu, penjaga ke-7 setelahnya.** Membangun penjaga tanpa saluran laporan = penjaga yang berteriak di ruangan kosong.
+
+---
+
+*Edisi 2026-09-28 dibuat dari pemeriksaan langsung kode, tes, dan gerbang pada 2026-09-28; **Bab 14, 15 & 16 memperbarui angka dan koreksi pada 2026-10-02**. Setiap angka di sini bisa Anda minta saya periksa ulang di depan Anda.*

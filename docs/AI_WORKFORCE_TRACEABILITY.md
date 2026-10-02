@@ -23,7 +23,7 @@ Semua ❌ terpusat di satu tempat: **lapisan 6 agent AI-nya sendiri**, yang mema
 |---|---|---|---|---|
 | **1** | Status, scope, instruksi implementasi: jangan buat agent tambahan; jangan beri LLM kredensial; UI produksi `en-US` | Bahasa `en-US` terkunci; tidak ada agent tambahan yang dibuat; identitas AI punya daftar larangan | ADR-0011 (LOCKED); `src/ai_service.py` (`DENIED_ACTIONS_KEY`); 0 agent dibuat | ✅ |
 | **2** | Tata kelola manusia + AI workforce | Organisasi manusia diadopsi (D3 disetujui owner 2026-09-28); **nama orang belum ada** → semua peran `UNASSIGNED` (fail-closed) | `docs/GO_LIVE_DECISIONS.md` D3; `docs/ECOSYSTEM_EXPLAINED.md` Bab 4 | 🟡 |
-| **2A** | Peta organisasi AI kanonik (6 komponen, `*-Wxx` = worker bukan agent) | Peta tercatat; **0 dari 6 komponen ada di kode** | `grep -rl "control_tower\|reservation_service\|commercial_ai\|operations_ai\|finance_admin\|revenue_bi" src/` → 0 | ❌ |
+| **2A** | Peta organisasi AI kanonik (6 komponen dok + **1 tambahan owner 2026-10-02** = 7, `*-Wxx` = worker bukan agent) | Peta tercatat; **0 dari 7 komponen ada di kode** | `grep -rl "control_tower\|reservation_service\|commercial_ai\|operations_ai\|finance_admin\|revenue_bi" src/` → 0 | ❌ |
 | **2A.1** | Peta pelaporan (pemilik manusia per komponen) | Butuh peran terisi; sekarang belum ada yang memegang peran | D3 `UNASSIGNED` | 🟡 |
 | **2A.2** | Taksonomi worker (capability / execution / deterministic / handoff) | Konsep tercatat; belum ada kode karena agent belum ada | — | ❌ |
 | **2A.3** | Batas routing lintas domain | Belum ada | — | ❌ |
@@ -51,7 +51,7 @@ Semua ❌ terpusat di satu tempat: **lapisan 6 agent AI-nya sendiri**, yang mema
 | **20** | Guardrail implementasi (12 butir) | Dipatuhi **berdasarkan konstruksi**: deterministik dulu, tanpa SQL/shell bebas untuk agent, state di luar memori worker, observability ada. **Belum bisa diuji** karena agent belum ada | `src/observability.py`, `src/policy_engine.py`, `src/ai_service.py` | 🟡 |
 | **21** | Non-agent eksplisit di V1 (Partnership, GM, Owner, Finance Authority, Legal, Security, HR = MANUSIA) | **Dipatuhi**: tidak ada agent untuk fungsi-fungsi ini | 0 agent dibuat | ✅ |
 | **22** | Definition of Done per agent (11 butir) | Belum berlaku — tidak ada agent untuk di-DoD-kan | — | ❌ |
-| **23** | Architecture freeze V1 (6 komponen terkunci) | Tercatat dan dipegang sebagai acuan; perubahan butuh ADR + analisis risiko + persetujuan manusia | dokumen ini; ADR-0032/0033/0034 | ✅ |
+| **23** | Architecture freeze V1 (6 komponen terkunci) | Tercatat dan dipegang sebagai acuan; perubahan butuh ADR + analisis risiko + persetujuan manusia. **Contoh berlakunya aturan ini:** owner menambah komponen ke-7 (Security & Privacy Warden) pada 2026-10-02, dicatat di ADR-0039 dengan matriks wewenang — bukan langsung di kode | dokumen ini; ADR-0032/0033/0034 | ✅ |
 | **24** | Dasar desain (NIST AI RMF, OWASP, PCI SSC) | Prinsipnya sudah tercermin: minimisasi data kartu, tokenisasi, pemisahan wewenang, jejak audit | `src/payments.py` (`CARD_DATA_FORBIDDEN`), `scripts/unsafe_config_scan.sh`, ADR-0012 | ✅ |
 
 ---
@@ -73,7 +73,9 @@ Semua ❌ terpusat di satu tempat: **lapisan 6 agent AI-nya sendiri**, yang mema
 
 ---
 
-## 3. Peta enam komponen → status kode
+## 3. Peta tujuh komponen → status kode
+
+> Enam komponen pertama datang dari dokumen owner (freeze V1). Komponen **ke-7 (Security & Privacy Warden)** ditambahkan owner pada 2026-10-02 dan dicatat di ADR-0039.
 
 | # | Komponen | Worker (dokumen) | Pemilik manusia | Lapor eksekutif | Kode |
 |---|---|---|---|---|---|
@@ -103,7 +105,7 @@ Tiga temuan di tabel utama yang saling mengunci, dan menentukan kenapa urutannya
 ```bash
 cd ~/villa-agency-os
 
-# 6 komponen AI belum ada
+# 7 komponen AI belum ada
 grep -rl "control_tower\|reservation_service\|commercial_ai\|operations_ai\|finance_admin\|revenue_bi" src/   # 0 berkas
 
 # outbox belum ada

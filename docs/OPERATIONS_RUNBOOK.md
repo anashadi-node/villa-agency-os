@@ -197,3 +197,60 @@ Tugas yang `BLOCKED` **wajib** mencantumkan alasan — kalau tidak, itu bukan
    melibatkan data pribadi, dan pertanyaan pajak/izin.
 
 Nomor kontak dan jam layanan: `[ISI]` (diisi saat onboarding).
+
+---
+
+## 13. Keputusan operasional yang disetujui owner 2026-10-02
+
+Tiga keputusan yang sebelumnya menahan go-live sekarang punya angka. **Ini angka yang berlaku**;
+mengubahnya bukan pekerjaan harian — ia milik owner.
+
+### 13.1 D10 — Cadangan & pemulihan
+
+| Hal | Nilai yang disetujui | Artinya |
+|---|---|---|
+| **RPO** (*Recovery Point Objective*) | **24 jam** | Paling banyak **satu hari** data boleh hilang |
+| **RTO** (*Recovery Time Objective*) | **4 jam** | Sistem harus hidup lagi dalam **4 jam** sejak gangguan |
+| Lokasi salinan | **di luar server utama** | Server utama rusak/terserang → salinan tetap ada |
+| Uji pemulihan | **setiap 3 bulan**, oleh **Mr. TS** (Technology-Security Manager) | Cadangan yang tidak pernah diuji bukan cadangan; hasil uji disimpan sebagai bukti |
+
+### 13.2 D13 — Siapa yang wajib merespons saat alarm berbunyi (*on-call*)
+
+| Waktu | Siapa | Batas respons |
+|---|---|---|
+| Jam kerja | **Mr. TS** (teknologi), eskalasi ke **Mr. CEO** | 30 menit |
+| Di luar jam kerja | hanya alarm **level tertinggi** yang memanggil; penerima tetap Mr. TS dengan eskalasi ke Mr. CEO | 30 menit |
+| Alarm yang tidak direspons | naik otomatis ke GM/CEO, lalu Owner (lihat §3 dan §12) | — |
+
+### 13.3 D14 — Penerbitan anker rantai audit
+
+| Hal | Nilai yang disetujui |
+|---|---|
+| Frekuensi | **setiap hari** |
+| Siapa yang menerbitkan | akun yang **bukan milik server** (mis. surel Mr. Owner) — kalau penanda diterbitkan oleh sistem yang sama, ia tidak membuktikan apa-apa |
+| Ke mana | sistem/akun milik pihak berbeda (direktori arsip milik owner) |
+| Pemeriksaan | otomatis **setiap pagi**; merah → alarm CRITICAL (§3) |
+| Perintah | `make anchor-publish` (menerbitkan) / `make anchor-verify` (memeriksa) |
+
+### 13.4 D4 — Janji waktu layanan (SLA) yang berlaku
+
+| Janji | Batas yang disetujui | Terpasang di |
+|---|---|---|
+| Balasan pertama | **≤ 15 menit** (jam kerja) | `src/cases.py` — `SLA_CEILING_MINUTES`; kanal boleh **lebih ketat** (WhatsApp 10, agent 5), tidak boleh lebih longgar |
+| Penawaran harga | **≤ 2 jam** (120 menit) | sama |
+| Rekonsiliasi pembayaran | **≤ 48 jam** | §6 runbook ini |
+| Komplain | balasan **≤ 15 menit**, **ditutup ≤ 3 hari** | §2 runbook ini |
+
+### 13.5 D7 — Ambang "naik kelas" pegawai AI (shadow mode)
+
+Pegawai AI wajib melewati **minimal 100 kasus** dalam mode bayangan dengan **kecocokan ≥ 95%**
+dan **0 klaim tanpa bukti**, sebelum boleh bertindak nyata. Yang menyetujui kenaikan: **GM/CEO**.
+Kalau setelah naik kelas kecocokan turun **< 90% dalam 50 tindakan terakhir**, atau ada satu saja
+klaim tanpa bukti sampai ke tamu, pegawai itu **otomatis kembali ke mode bayangan** dan kegawatan
+dilaporkan ke GM/CEO & Owner. Rincian: `docs/adr/0038-ai-agents-graduate-from-shadow-mode-by-measurement.md`.
+
+### 13.6 Pegawai AI ke-7 — Divisi Security & Privacy
+
+Ditetapkan owner 2026-10-02. Matriks wewenang ("boleh sendiri" vs "wajib persetujuan manusia"),
+tingkat kegawatan S1–S4, dan 4 entri daftar larangan yang menunggu persetujuan owner:
+`docs/adr/0039-a-seventh-ai-agent-the-security-and-privacy-warden.md`.
