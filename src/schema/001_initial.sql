@@ -2056,6 +2056,55 @@ CREATE TABLE agency_settings (
 );
 CREATE INDEX ix_agency_settings_agency ON agency_settings (agency_id, setting_key);
 
+-- --------------------------------------------------------------------------- --
+-- A tenant's own role set (ADR-0035 amendment: "peran dapat diedit", decision D3).
+--
+-- What a tenant may change: **who** holds a role, and **what that role is called** in its own
+-- language. What a tenant may not change: the platform's authority ladder. Authority comes from
+-- `based_on` — a canonical blueprint id in src/roles.py — so renaming "Finance & Accounting
+-- Manager" to anything at all cannot move it one rank, and no tenant can create a role that
+-- outranks its blueprint or that the owner deleted (the AI maker roles are not assignable).
+--
+-- Why holders are opaque references and not names: the platform enforces *that* a role has a
+-- holder, never *who* the person is. Storing a staff name here would put personal data into a
+-- table that gates, dashboards and the audit chain all read, for no enforcement benefit. A tenant
+-- names its own people in its own records (`holder_ref` like `mr_ceo`).
+-- --------------------------------------------------------------------------- --
+
+CREATE TABLE agency_roles (
+    role_id     TEXT    NOT NULL,
+    agency_id   TEXT    NOT NULL DEFAULT 'agency_default',
+    label       TEXT    NOT NULL CHECK (length(label) >= 3),
+    based_on    TEXT    NOT NULL CHECK (length(based_on) >= 2),
+    status      TEXT    NOT NULL CHECK (status IN ('ACTIVE', 'DISABLED')),
+    revision    INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    updated_by  TEXT    NOT NULL CHECK (length(updated_by) >= 3),
+    updated_role TEXT   NOT NULL CHECK (length(updated_role) >= 2),
+    updated_at  TEXT    NOT NULL,
+    created_at  TEXT    NOT NULL,
+    CONSTRAINT pk_agency_roles PRIMARY KEY (agency_id, role_id),
+    CONSTRAINT fk_agency_roles_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    CONSTRAINT ck_agency_roles_id CHECK (role_id GLOB '[a-z]*' AND length(role_id) BETWEEN 2 AND 64)
+);
+CREATE INDEX ix_agency_roles_blueprint ON agency_roles (agency_id, based_on, status);
+
+CREATE TABLE agency_role_holders (
+    holder_id    TEXT    NOT NULL,
+    agency_id    TEXT    NOT NULL DEFAULT 'agency_default',
+    role_id      TEXT    NOT NULL,
+    holder_ref   TEXT    NOT NULL CHECK (length(holder_ref) >= 2),
+    status       TEXT    NOT NULL CHECK (status IN ('ACTIVE', 'INACTIVE')),
+    note         TEXT,
+    updated_by   TEXT    NOT NULL CHECK (length(updated_by) >= 3),
+    updated_at   TEXT    NOT NULL,
+    created_at   TEXT    NOT NULL,
+    CONSTRAINT pk_agency_role_holders PRIMARY KEY (holder_id),
+    CONSTRAINT fk_agency_role_holders_role FOREIGN KEY (agency_id, role_id)
+        REFERENCES agency_roles (agency_id, role_id),
+    CONSTRAINT uq_agency_role_holders UNIQUE (agency_id, role_id, holder_ref)
+);
+CREATE INDEX ix_agency_role_holders_ref ON agency_role_holders (agency_id, holder_ref, status);
+
 INSERT INTO agencies (agency_id, name, status, created_at, updated_at)
 VALUES ('agency_default', 'Default Agency', 'ACTIVE', '2026-09-21T00:00:00+00:00', '2026-09-21T00:00:00+00:00');
 

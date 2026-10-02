@@ -49,6 +49,7 @@ from observability import collect_metrics, health_checks  # noqa: E402
 from primitives import DomainError, SystemClock, parse_iso  # noqa: E402
 from schema_loader import SCHEMA_VERSION, applied_version, connect_sqlite  # noqa: E402
 
+import agency_roles as AGENCY_ROLES  # noqa: E402  (path setup must run first)
 import roles  # noqa: E402  (path setup must run first)
 import settings as SETTINGS  # noqa: E402  (path setup must run first)
 
@@ -362,11 +363,20 @@ def check_tenant_readiness(conn: Any) -> Check:
         return _check("tenant readiness", WARN, "no ACTIVE agency to check yet")
     unready: list[str] = []
     for agency_id in agencies:
-        report = SETTINGS.readiness_for(conn, str(agency_id), clock=SystemClock())
-        if not report.ready:
-            unready.append(f"{agency_id}: " + "; ".join(report.blockers))
+        staffing = AGENCY_ROLES.AgencyRoles(conn, clock=SystemClock(), agency_id=str(agency_id))
+        unstaffed = staffing.unstaffed_ladder_roles()
+        # Staffing comes first on purpose: a tenant with no holder for the money ladder cannot
+        # approve a payment at all, and the report is truncated, so the worst blocker must survive.
+        blockers = (
+            ["money ladder has no holder for: " + ", ".join(unstaffed)] if unstaffed else []
+        )
+        blockers.extend(
+            SETTINGS.readiness_for(conn, str(agency_id), clock=SystemClock()).blockers
+        )
+        if blockers:
+            unready.append(f"{agency_id}: " + "; ".join(blockers))
     if unready:
-        return _check("tenant readiness", FAIL, " | ".join(unready)[:300])
+        return _check("tenant readiness", FAIL, " | ".join(unready)[:600])
     return _check("tenant readiness", OK, f"{len(agencies)} agency(ies) ready")
 
 

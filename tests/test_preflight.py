@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import preflight as PF  # noqa: E402
 from primitives import FrozenClock, IdFactory  # noqa: E402
 from schema_loader import connect_sqlite  # noqa: E402
+import agency_roles as AGENCY_ROLES  # noqa: E402
 import settings as SETTINGS  # noqa: E402
 from seed_support import SeedMixin  # noqa: E402
 
@@ -211,6 +212,15 @@ def test_no_go_when_decisions_are_open_and_anchor_is_missing(tmp_path):
     assert "go-live decisions" in result.stdout
 
 
+
+def _staff_ladder(conn) -> None:
+    """Give the money ladder real holders: without them readiness must refuse (D17)."""
+    service = AGENCY_ROLES.AgencyRoles(conn, clock=FrozenClock.at("2026-09-21T08:00:00+00:00"),
+                                       ids=IdFactory(True, "pf-roles"))
+    service.seed_blueprint(actor="owner_anas", actor_role="owner")
+    for role, holder in (("owner", "mr_owner"), ("gm", "mr_ceo"), ("finance_manager", "ms_fam")):
+        service.assign_holder(role, holder_ref=holder, actor="owner_anas", actor_role="owner")
+
 def _ready_tenant(conn) -> None:
     """Fill a tenant so D17's check can pass: settings, a SELLABLE property, an ACTIVE unit.
 
@@ -228,6 +238,7 @@ def _ready_tenant(conn) -> None:
         " bathrooms, base_capacity, max_guests, status, created_at, updated_at)"
         " VALUES ('unit_go', 'agency_default', 'prop_go', 'Unit Uji', 'entire_villa', 2, 2, 2, 4,"
         " 'ACTIVE', ?, ?)", (now, now))
+    _staff_ladder(conn)
     service = SETTINGS.AgencySettings(conn, clock=FrozenClock.at(now), ids=IdFactory(True, "go"))
     for key, value in {
         "payment.provider": "midtrans",
@@ -392,6 +403,7 @@ class TestTenantReadiness:
         assert "agency_default" in check.detail
         assert "required setting not filled" in check.detail
         assert "SELLABLE" in check.detail
+        assert "money ladder has no holder" in check.detail
 
     def test_a_filled_agency_passes(self, tmp_path):
         db = tmp_path / "villa.db"
@@ -409,6 +421,7 @@ class TestTenantReadiness:
                 " bathrooms, base_capacity, max_guests, status, created_at, updated_at)"
                 " VALUES ('unit_pf', 'agency_default', 'prop_pf', 'Unit Uji', 'entire_villa',"
                 " 2, 2, 2, 4, 'ACTIVE', ?, ?)", (now, now))
+            _staff_ladder(conn)
             service = SETTINGS.AgencySettings(
                 conn, clock=FrozenClock.at(now), ids=IdFactory(True, "pf-settings"))
             for key, value in {

@@ -22,6 +22,7 @@ Kesiapan Tenant).
 | 5 setelan wajib terisi (daftar di bab 2) | Tanpa ini, pesan tidak bisa terkirim, pajak tidak bisa dihitung, alarm tidak punya penerima |
 | Ada **≥ 1 properti berstatus `SELLABLE`** | Agency tanpa villa yang bisa dijual belum bisa menjual |
 | Ada **≥ 1 unit berstatus `ACTIVE`** | Villa tanpa unit tidak bisa dipesan |
+| **Tangga uang punya pemegang**: `finance_manager`, `gm`, `owner` masing-masing punya orang | Tanpa pemegang, tidak ada yang bisa menyetujui pembayaran |
 
 Contoh penolakan nyata (dari `preflight` pada database yang belum diisi):
 
@@ -134,6 +135,75 @@ berkas itu.
 | Tangga persetujuan uang: Finance Manager → GM/CEO, eksekusi oleh manusia | `finance.approval.payment_thresholds_minor` |
 | Ambang SLA (balasan ≤ 15 menit) & jawaban bayar ≤ 2 jam | `src/cases.py` |
 | Masa simpan 7 tahun & alur penghapusan ber-approval | D9 + `retention.data_years` (boleh Anda ubah) |
+
+---
+
+## 5. Peran & pemegangnya — boleh Anda ubah sendiri
+
+Peran yang Anda pakai bisa Anda **beri nama sendiri, aktif/nonaktifkan, dan isi pemegangnya**.
+Yang **tidak** berubah: tingkat wewenangnya. Wewenang selalu mengikuti **cetak biru platform**
+(`based_on`), bukan nama yang Anda tulis. Jadi mengganti "Finance & Accounting Manager" menjadi
+"Bagian Keuangan" **tidak** menaikkan atau menurunkan wewenangnya satu tingkat pun.
+
+### 5.1 Perintah yang tersedia
+
+```bash
+# lihat daftar peran + siapa pemegangnya + apa yang belum distafkan
+python3 scripts/manage_roles.py list
+
+# mulai dari cetak biru platform (8 peran ADR-0035) - sekali saja
+VILLA_DB=data/villa.db python3 scripts/manage_roles.py seed \
+    --apply --actor "Mr. Owner" --actor-role owner
+
+# beri nama sendiri sesuai istilah agency Anda
+VILLA_DB=data/villa.db python3 scripts/manage_roles.py rename \
+    --role finance_manager --label "Bagian Keuangan Pajak" \
+    --apply --actor "Mr. Owner"
+
+# tambah peran baru (wewenangnya mengikuti cetak biru yang Anda pilih)
+VILLA_DB=data/villa.db python3 scripts/manage_roles.py add \
+    --role finance_helper --label "Asisten Keuangan" --based-on finance_manager \
+    --apply --actor "Mr. Owner"
+
+# isi pemegang peran (rujukan, bukan nama orang)
+VILLA_DB=data/villa.db python3 scripts/manage_roles.py appoint \
+    --role gm --holder mr_ceo --apply --actor "Mr. Owner"
+
+# nonaktifkan peran yang tidak dipakai (harus dikosongkan dulu pemegangnya)
+VILLA_DB=data/villa.db python3 scripts/manage_roles.py disable \
+    --role commercial_manager --apply --actor "Mr. Owner"
+```
+
+Tanpa `--apply`, semua perintah hanya **merencanakan** dan tidak menulis apa pun.
+
+### 5.2 Aturan yang dipegang sistem (dan alasannya)
+
+| Aturan | Artinya bagi Anda |
+|---|---|
+| **Nama bebas, wewenang tetap** | Mengganti nama peran tidak bisa menaikkan wewenang — wewenang dibaca dari cetak biru |
+| **Peran pembuat AI tidak bisa diisi manusia** | Finance Staff & Reservation Agent dihapus owner (ADR-0035); fungsinya milik identitas AI, jadi tidak bisa Anda isi ke manusia |
+| **Peran berbeban tidak bisa dinonaktifkan** | Kalau masih ada pemegang aktif, sistem menolak — supaya tidak ada orang yang tetap punya wewenang lewat peran yang Anda kira sudah mati |
+| **Pemegang = rujukan, bukan nama orang** | Sistem hanya perlu tahu **bahwa** peran punya orang, bukan siapa. Jadi tidak ada nama staf yang disimpan (privasi) |
+| **Yang boleh mengubah peran:** Owner, GM/CEO, Technology-Security Manager | Reservasi, finance, auditor, dan AI tidak boleh |
+| **Setiap perubahan masuk rantai audit** | Siapa mengubah apa, kapan, nilai sebelum–sesudah |
+
+### 5.3 Tangga uang wajib punya orang (bagian dari go-live)
+
+Tiga peran ini **wajib punya pemegang aktif** sebelum agency Anda boleh go-live, karena tanpa
+mereka **tidak ada yang bisa menyetujui pembayaran**:
+
+| Peran | Kenapa |
+|---|---|
+| `finance_manager` | Penyetuju tingkat 1 untuk uang keluar (ADR-0036) |
+| `gm` | Penyetuju tingkat 2 |
+| `owner` | Pemilik agency; menerima laporan dan mengoreksi anomali |
+
+`python3 scripts/manage_roles.py list` akan menutup dengan baris ini bila belum lengkap:
+
+```
+money ladder with no holder: finance_manager, gm, owner
+go-live stays refused until each of them has a holder (decision D17)
+```
 
 ---
 
