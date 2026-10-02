@@ -378,12 +378,20 @@ class ReservationKernel:
 
     # -- transactions ------------------------------------------------------- #
     @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
+    def transaction(self, *, join: bool = False) -> Iterator[sqlite3.Connection]:
         """A write transaction that takes the lock before it reads.
 
-        Nesting is refused: a silent nested ``BEGIN`` would either be a no-op
+        Nesting is refused by default: a silent nested ``BEGIN`` would either be a no-op
         (and lose the guarantee) or raise mid-write.
+
+        ``join=True`` is the explicit way for a caller that already holds this kernel's
+        transaction to have an inner call run inside it. A bulk inventory import needs exactly
+        that: the whole file is one transaction, so a refused row half-way cannot leave half a
+        villa list behind. It is opt-in, so it is never a silent no-op.
         """
+        if join and self._in_tx:
+            yield self.conn
+            return
         if self._in_tx:
             raise DomainError(
                 "nested transactions are not supported by the kernel",
@@ -404,6 +412,7 @@ class ReservationKernel:
     def upsert_property(
         self,
         *,
+        join: bool = False,
         property_id: str,
         name: str,
         property_type: str = "villa",
@@ -416,7 +425,7 @@ class ReservationKernel:
         """Insert or refresh a property row (contract pack status is explicit)."""
         property_id = require_ref(property_id, "property_id")
         now = self._now()
-        with self.transaction() as conn:
+        with self.transaction(join=join) as conn:
             existing = conn.execute(
                 "SELECT agency_id FROM properties WHERE property_id = ?", (property_id,)
             ).fetchone()
@@ -464,6 +473,7 @@ class ReservationKernel:
     def upsert_unit(
         self,
         *,
+        join: bool = False,
         unit_id: str,
         property_id: str,
         name: str,
@@ -483,7 +493,7 @@ class ReservationKernel:
                 max_guests=max_guests,
             )
         now = self._now()
-        with self.transaction() as conn:
+        with self.transaction(join=join) as conn:
             prop = conn.execute(
                 "SELECT property_id FROM properties WHERE property_id = ? AND agency_id = ?",
                 (property_id, self.agency_id),
