@@ -1,7 +1,7 @@
 # Villa Agency OS — Dijelaskan dari Depan, Bahasa Awam
 
 **Untuk:** Owner Villa Agency (Bali & Yogyakarta)
-**Tanggal:** 2026-09-28
+**Tanggal keputusan owner:** 2026-09-28 · **Edisi dokumen:** 2026-10-02 (lihat Bab 14)
 **Tujuan dokumen ini:** menjawab kebingungan *"apa yang sedang dibuat, dan bagaimana ini?"* — dari nol, berurutan, tanpa istilah yang tidak dijelaskan.
 
 ---
@@ -21,6 +21,7 @@
 11. [Yang saya butuhkan dari Anda](#bab-11)
 12. [Kamus istilah: teknis → bahasa awam](#bab-12)
 13. [Ringkasan satu halaman](#bab-13)
+14. [Pembaruan 2026-10-02: peran satu rumah, GM bisa menyetujui](#bab-14)
 
 ---
 
@@ -75,8 +76,8 @@ Semua yang di bawah ini **sudah ada dan sudah diuji**, bukan rencana.
 | 5 | **Mesin bukti** | Membedakan bukti kuat (dari sistem villa) dan bukti lemah (screenshot tamu) — level A sampai D | `evidence.py` |
 | 6 | **Identitas & hak akses** | Siapa boleh apa; MFA untuk peran sensitif | `identity.py`, TOTP |
 | 7 | **Rantai audit** | Catatan yang tidak bisa diubah diam-diam | `audit.py` + anchor |
-| 8 | **Gerbang kualitas** | 3.018 tes otomatis sebelum perubahan apa pun boleh masuk | `make check` → PASS |
-| 9 | **34 keputusan tercatat** | Setiap keputusan teknis/bisnis ditulis + alasannya | `docs/adr/` |
+| 8 | **Gerbang kualitas** | 3.064 tes otomatis (+3.780 subtes) sebelum perubahan apa pun boleh masuk | `make check` → PASS |
+| 9 | **36 keputusan tercatat** | Setiap keputusan teknis/bisnis ditulis + alasannya | `docs/adr/` |
 
 **Analogi bagian ini:** ini semua adalah *sistem saraf + pengaman gedung* — kunci pintu, alarm, CCTV, buku besar. Membosankan, tapi justru inilah yang membuat bisnis tidak bisa dibohongi.
 
@@ -374,13 +375,68 @@ Pemeriksaan sistem hari ini: **13 dari 13 OK.** Yang menahan: **14 keputusan bis
 ## Bab 13 — Ringkasan satu halaman
 
 1. **Yang dibangun:** satu sistem operasi villa agency untuk Bali & Yogyakarta, dijalankan **manusia + 6 pegawai AI**.
-2. **Sudah jadi:** "gedungnya" — katalog kebijakan (25/25 terjawab), mesin status booking & hold, mesin pembayaran, mesin bukti, identitas & hak akses, rantai audit, dan gerbang 3.018 tes. Semuanya **hijau**.
+2. **Sudah jadi:** "gedungnya" — katalog kebijakan (25/25 terjawab), mesin status booking & hold, mesin pembayaran, mesin bukti, identitas & hak akses, rantai audit, dan gerbang 3.064 tes. Semuanya **hijau**.
 3. **Belum jadi:** **keenam pegawai AI-nya** (0 dari 6), plus 3 alat penopang (outbox, exception engine, DLP) dan 4 rel pembayaran.
-4. **Organisasi manusia SUDAH LENGKAP** (keputusan Anda 2026-09-28): delapan pemegang — Mr. Owner, Mr. CEO, Mr. CMM, Mr. PM, Ms. RM, Ms. FAM, Mr. TS, Ms. Greeting. Revenue Manager & Auditor ditunda; Legal eksternal; **Finance Staff & Reservation Agent direservasi untuk AI — bukan dihapus**, supaya maker-checker tetap bermakna; **Guest Service dihapus**, diganti Greeting Service Team.
-5. **Yang menahan go-live bukan software** — 13/13 pemeriksaan sistem OK. Yang menahan: 14 keputusan bisnis.
+4. **Organisasi manusia SUDAH LENGKAP** (keputusan Anda 2026-09-28): delapan pemegang — Mr. Owner, Mr. CEO, Mr. CMM, Mr. PM, Ms. RM, Ms. FAM, Mr. TS, Ms. Greeting. Revenue Manager & Auditor ditunda; Legal eksternal; **Finance Staff & Reservation Agent: PERAN MANUSIANYA DIHAPUS** (dikoreksi 2026-10-02 — lihat Bab 14), dan **fungsinya (pembuat) pindah ke identitas AI Service**, supaya maker-checker tetap bermakna; **Guest Service dihapus**, diganti Greeting Service Team.
+5. **Yang menahan go-live bukan software** — seluruh pemeriksaan sistem OK (preflight 2026-10-02: 12 OK, 3 WARN lingkungan). Yang menahan: **13 keputusan bisnis BLOCKING** (D1, D2, D4–D14).
 6. **Yang saya butuh:** nama orang, nama provider, dan 11 keputusan sisanya.
 7. **Yang saya tidak akan lakukan:** mengarang nama, mengarang vendor, atau mengklaim sesuatu sudah jadi padahal belum.
 
 ---
 
-*Dokumen ini dibuat dari pemeriksaan langsung kode, tes, dan gerbang pada 2026-09-28. Setiap angka di sini bisa Anda minta saya periksa ulang di depan Anda.*
+---
+
+<a id="bab-14"></a>
+## Bab 14 — Pembaruan 2026-10-02: peran dijadikan satu rumah, dan Mr. CEO benar-benar bisa menyetujui
+
+Bab ini ditambahkan **setelah** edisi 2026-09-28. Isinya: apa yang berubah, apa yang dikoreksi, dan apa yang masih belum.
+
+### 14.1 Dua koreksi atas edisi sebelumnya
+
+1. **Bab 13 poin 4 salah, dan sudah diperbaiki.** Edisi sebelumnya menulis *"Finance Staff & Reservation Agent direservasi untuk AI — bukan dihapus"*. Keputusan Anda sebenarnya kebalikannya: **peran manusianya DIHAPUS**; yang tetap hidup adalah **fungsinya** (pembuat/maker), dan fungsi itu pindah ke identitas **AI Service**. Alasannya persis seperti yang Anda garis bawahi: *kontrol tanpa pembuat = pintu terbuka*. Sekarang seluruh dokumen konsisten dengan itu.
+2. **Jumlah tes.** Bab 3 menyebut "3.018 tes"; hari ini **3.064 lulus + 4 dilewati + 3.780 subtes** (naik karena tes baru: matriks per-peran dan 4 tes gerbang yang ternyata tidak pernah jalan — lihat 14.4).
+
+### 14.2 Aturan uang ke-3 Anda sekarang benar-benar jalan, bukan rencana
+
+Aturan 1 dan 2 (transfer & ubah rekening wajib manusia) sudah ditegakkan sejak awal. Aturan 3 (persetujuan **berjenjang** GM) baru setengah: nilainya sudah terbit, tapi peran `gm` belum ada di mesin. Kini lengkap:
+
+| | Sebelum 2026-10-02 | Sesudah |
+|---|---|---|
+| Tangga persetujuan | `agent` 1, `manager` 2, `accountant` 3, `owner` 4 | `reservation_agent` 1, `reservation_manager` 2, `finance_manager` 3, **`gm` 4**, `owner` 5 |
+| Nilai policy Anda (`finance.approval.payment_thresholds_minor`) | terbit v2: `finance_manager → gm`, tapi **kedua nama itu tidak dikenal mesin** | terbit v2, dan **kedua nama itu resmi ada di tangga** — diperiksa preflight |
+| Halaman yang bisa dibuka Mr. CEO | **tidak bisa login sama sekali** | Command Center, Approvals, Finance, Cases, Properties |
+| Wajib faktor kedua (MFA) | hanya Owner & Finance | Owner, Finance, **dan GM** |
+| AI menyetujui/mengeksekusi uang | ditolak | tetap ditolak (23 entri daftar larangan) + **tes matriks per-peran** |
+
+**Yang penting untuk Anda tahu:** tidak ada satu pun keputusan yang berubah peringkatnya karena penggantian nama ini. `accountant` tetap tingkat 3, `owner` tetap paling atas, dan `gm` benar-benar baru — disisipkan di antara Finance Manager dan Owner, persis seperti keputusan Anda.
+
+### 14.3 Kenapa nama lama TIDAK dihapus
+
+Baris keputusan yang sudah tercatat (append-only) menyimpan nama lama: ada baris yang `required_role`-nya literal `accountant`. Kalau nama itu dihapus, keputusan lama **tidak bisa dibaca ulang** — jejak audit yang tidak bisa diputus ulang bukan jejak audit. Jadi aturannya: **tulisan baru memakai nama baru; nama lama tetap bisa dibaca selamanya.** Ini bukan masa transisi, ini fakta sejarah.
+
+### 14.4 Dua temuan jujur dari gerbang — dan keduanya sudah diperbaiki
+
+1. **4 tes penolakan di `tests/test_preflight.py` tidak pernah dijalankan.** Kelasnya tidak diawali kata `Test`, dan pytest hanya mengumpulkan kelas seperti itu sebagai kelas biasa — jadi 4 tes (deteksi data demo palsu) diam-diam tidak pernah jalan sejak dibuat, dan satu di antaranya sudah basi. Gerbang yang melewati tes tanpa memberi tahu bukan gerbang. Sekarang berkas itu mengumpulkan **24 tes** (sebelumnya 12).
+2. **Nilai policy pembayaran Anda menyebut peran yang tidak ada.** `finance_manager` dan `gm` tidak dikenal mesin, dan tidak ada satu pun kode yang membaca nilai itu — jadi tidak ada yang gagal *hari ini*. Tapi pembayaran pertama akan ditolak dengan pesan yang tidak menyebut sebab. Sekarang `preflight` memeriksa hal ini, dan hasilnya muncul di laporan: `policy role names: OK v2 ladder ['finance_manager', 'gm']`.
+
+### 14.5 Tanggal: keputusan Anda vs tanggal berkas
+
+ADR-0033, 0034, 0035, 0036 ditulis pada 30-Sep (dua yang pertama) dan 1-Okt (dua yang terakhir), sementara tanggal keputusan Anda adalah 28-Sep. Sebelumnya header ADR hanya mencantumkan satu tanggal sehingga terbaca seolah dokumennya dibuat 28-Sep. Sekarang ditulis dua-duanya: `Date: 2026-09-28 (owner decision) · written 2026-10-01`.
+
+### 14.6 Yang masih belum — ditulis, bukan disembunyikan
+
+- **Mr. CEO belum punya halaman Audit**, dan **ekspor data sensitif (P2/P3) ditolak** untuknya — sama seperti Owner. Ini sengaja (fail-closed), bukan lupa: menaikkan hak ekspor adalah keputusan Anda, bukan keputusan mesin.
+- **MFA masih memakai kata halaman `finance`** (bukan `finance_manager`). Menyatukan kosakata sesi/halaman adalah slice tersendiri, karena mengubah siapa yang wajib faktor kedua.
+- **Urutan berikutnya** menurut peta dependensi Anda: **#2 Outbox + Exception Engine** — §14 melarang pesan bebas antar-pegawai AI, jadi handoff antar-agent belum boleh dibangun sebelum ini ada.
+- **Yang menahan go-live tetap bisnis, bukan software**: preflight 2026-10-02 → **12 pemeriksaan OK**, 3 WARN (lingkungan/anchor), **1 FAIL: 13 keputusan BLOCKING masih OPEN** (D1, D2, D4–D14).
+
+### 14.7 Nomor yang terverifikasi pada 2026-10-02
+
+| Perintah | Hasil |
+|---|---|
+| `make check` | 3.064 lulus, 4 dilewati, 3.780 subtes; secret-scan 0/202 berkas; unsafe-scan 0/202; twin PostgreSQL cocok |
+| `preflight` | 12 OK, 3 WARN, 1 FAIL (keputusan bisnis) — termasuk `policy role names: OK v2 ladder ['finance_manager', 'gm']` |
+
+*Bab ini dibuat dari pemeriksaan langsung kode, tes, dan gerbang pada 2026-10-02.*
+
+*Edisi 2026-09-28 dibuat dari pemeriksaan langsung kode, tes, dan gerbang pada 2026-09-28; **Bab 14 memperbarui angka dan dua koreksi pada 2026-10-02**. Setiap angka di sini bisa Anda minta saya periksa ulang di depan Anda.*
