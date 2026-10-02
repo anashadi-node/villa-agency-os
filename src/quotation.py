@@ -488,6 +488,24 @@ class QuotationService:
             )
         return self._hydrate(row)
 
+    def accepted(self, quote_id: Any) -> Optional[Quotation]:
+        """The version of one quote that the guest accepted and that still governs, or ``None``.
+
+        A quote can carry several versions — a re-price supersedes the last — and §11's binding
+        commercial truth is the accepted one, never the newest. Should a re-negotiated offer leave
+        two acceptances on one quote, the **highest version** governs: it is the last thing the
+        guest said yes to. A quote with no acceptance returns ``None`` instead of falling back to
+        the latest version, because that would answer with an offer nobody agreed to.
+        """
+
+        target = require_ref(quote_id, "quote_id", max_len=64)
+        rows = self.conn.execute(
+            "SELECT * FROM quotation_versions WHERE quote_id = ? AND agency_id = ?"
+            " AND status = 'ACCEPTED' ORDER BY version DESC",
+            (target, self.agency_id),
+        ).fetchall()
+        return None if not rows else self._hydrate(rows[0])
+
     def versions(self, *, unit_id: Any, check_in: Any, check_out: Any) -> tuple[Quotation, ...]:
         """The whole chain for one stay, oldest first — the V1/V2/V3 §11 describes."""
         unit = require_ref(unit_id, "unit_id", max_len=64)

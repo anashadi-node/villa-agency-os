@@ -52,6 +52,7 @@ __all__ = [
     "PAYLOAD_MONEY_KEYS",
     "PAYLOAD_REQUIRED_KEYS",
     "parse_pct",
+    "cancellation_step",
     # §16 governance half
     "PolicyDef",
     "PolicyValue",
@@ -372,6 +373,38 @@ def _validate_payload(payload: Mapping[str, Any]) -> Mapping[str, Any]:
             bounds=("0", "100"),
         )
     return _freeze({key: payload[key] for key in sorted(payload)})
+
+
+
+def cancellation_step(ladder: Any, *, notice_days: int) -> Optional[Mapping[str, Any]]:
+    """The ladder step that governs ``notice_days`` before check-in, or ``None``.
+
+    A ladder is the validated ``cancellation_ladder`` payload: a non-empty list of steps, each
+    exactly ``{"min_days_before": int >= 0, "refund_pct": pct}``. The governing step is the one
+    with the **largest** ``min_days_before`` the notice still meets, so a ladder whose thresholds
+    are published out of order still reads correctly — the payload is validated for duplicates,
+    never for order.
+
+    ``None`` means "no step applies" (the notice sits inside every threshold) and it is **not** a
+    zero refund: a refund is money, money is the finance module's fact and a person's decision,
+    and turning a missing rule into a 0 % answer would invent a commercial term no tenant
+    published.
+    """
+
+    if not isinstance(ladder, Sequence) or isinstance(ladder, (str, bytes)) or not ladder:
+        return None
+    days = int(notice_days)
+    best: Optional[Mapping[str, Any]] = None
+    best_days = -1
+    for step in ladder:
+        if not isinstance(step, Mapping):
+            continue
+        threshold = step.get("min_days_before")
+        if isinstance(threshold, bool) or not isinstance(threshold, int):
+            continue
+        if threshold <= days and threshold > best_days:
+            best, best_days = step, threshold
+    return best
 
 
 _ALLOWED_PAYLOAD_KEYS: tuple[str, ...] = (

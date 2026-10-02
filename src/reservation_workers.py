@@ -48,6 +48,7 @@ a price therefore still leaves it unable to start an offer.
 from __future__ import annotations
 
 import datetime as _dt
+import json
 import sqlite3
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence
@@ -58,9 +59,10 @@ import crm as CRM
 import intake as IN
 import matching as M
 import ops_tasks as OT
+import policy_engine as PE
 import quotation as Q
 import reservation_kernel as RK
-from primitives import DomainError, require_ref, sha256_hex
+from primitives import DomainError, require_ref, require_text, sha256_hex
 from reservation_service import Conversation, ReservationService
 
 
@@ -91,6 +93,51 @@ FOLLOWUP_TOOL = "followup.routine"
 BOOKING_WORKER = "RES-W08"
 BOOKING_TOOL = "booking.status"
 
+#: RES-W09 — Amend / Cancel Assist. Two acts, neither of them a decision: answer what the terms
+#: the guest *accepted* say about cancelling, and route the change request to a person.
+SPECIAL_REQUEST_WORKER = "RES-W09"
+
+#: §56's MEDIUM coordination name — "special-request coordination". Its first caller in the
+#: estate (ADR-0023/0024 recorded it as a §56 tool with no enforcement point at all).
+SPECIAL_REQUEST_TOOL = "request.coordinate_special"
+
+#: The two changes a guest can raise through it. Closed: an unknown kind is refused before the
+#: door, because a request nobody can name is a request nobody can work.
+SPECIAL_REQUEST_KINDS: tuple[str, ...] = ("CANCELLATION", "AMENDMENT")
+
+#: Why the answer carries no money, in the answer's own words.
+TERMS_NOTE_ACCEPTED = (
+    "the ladder is the one inside the TERMS snapshot of the version the guest accepted (§11); "
+    "any refund, penalty or settlement is the finance module's fact and a person's decision — "
+    "this answer reads the binding terms, it does not compute a payout"
+)
+
+#: The honest edge: a notice inside every threshold has *no* applicable step.
+TERMS_NOTE_NO_STEP = (
+    "the notice is shorter than every step of the ladder: no step applies, which is not the same "
+    "as a zero refund — whether anything is owed at all is a person's decision on the finance "
+    "module's facts"
+)
+
+#: And the edge that matters most: a stay with no accepted version has no binding terms at all.
+TERMS_NOTE_NO_VERSION = (
+    "no accepted version is on record for this stay, so there are no binding cancellation terms "
+    "to read: answering from the policy in force today would quote a ladder the guest never "
+    "agreed to (§11)"
+)
+
+#: The task a routed request becomes, and the field that has to carry its intent. ``ops_tasks``
+#: has no narrative column and its ``kind`` vocabulary cannot name a cancellation yet, so the
+#: runbook is the only place the request can be spelled out — and a request with an empty runbook
+#: would reach a person as an unreadable interruption. Hence: at least one step, required.
+SPECIAL_REQUEST_MIN_STEPS = 1
+
+#: A version that carries no ladder at all: nothing to read, nothing to infer.
+TERMS_NOTE_NO_LADDER = (
+    "the accepted version records no cancellation ladder, so there is nothing to read here — and "
+    "nothing may be inferred from its absence"
+)
+
 #: §9's three gates, under the spec's own names, so the answer and the tests speak it.
 GATE_COMMERCIAL = "commercial"
 GATE_INVENTORY = "inventory"
@@ -112,6 +159,10 @@ FINANCIAL_GATE_NOTE = (
 #: spelling here is the answer's, and what the step must not do is made true by the code instead:
 #: RES-W04 writes nothing at all.
 PRICING_TOOL = "villa.answer_verified"
+
+#: §56's LOW/READ answer name, shared with RES-W04: one catalogue name, two questions (a price,
+#: a cancellation ladder). Named through the pricing constant so the two cannot drift apart.
+TERMS_TOOL = PRICING_TOOL
 
 #: How a model-derived proposal is labelled in ``intake_proposals.method``. §16 is the reason it
 #: is not ``"rule"``: these fields are extracted from a guest's words and are *proposals* until a
@@ -174,6 +225,40 @@ class BookingStatusAnswer:
         }
 
     code = "RES_WORKER_HOLD_NO_POLICY"
+
+
+@dataclass(frozen=True)
+class CancellationTerms:
+    """What the accepted terms say about cancelling, and nothing more (RES-W09).
+
+    The platform's truth for "what cancelling costs" is neither this answer nor the policy in
+    force today: it is the ladder inside the TERMS snapshot of the version the guest said yes to
+    (§11). This dataclass carries that ladder, where the sitting stay falls in it, and the version
+    it came from — and deliberately carries **no money**. Whether a refund is due, how much, and
+    by when are the finance module's facts and a person's decision (§9 forbids the AI from
+    claiming money moved, and a number invented here would be a commercial term).
+    """
+
+    worker: str
+    conversation_id: str
+    binding: Optional[Mapping[str, Any]]
+    notice_days: Optional[int]
+    ladder: Optional[tuple[Mapping[str, Any], ...]]
+    applicable: Optional[Mapping[str, Any]]
+    note: str
+
+    def as_dict(self) -> dict[str, Any]:
+        """JSON-ready view: the door's audit and a UI need the same shape."""
+
+        return {
+            "worker": self.worker,
+            "conversation_id": self.conversation_id,
+            "binding": None if self.binding is None else dict(self.binding),
+            "notice_days": self.notice_days,
+            "ladder": None if self.ladder is None else [dict(step) for step in self.ladder],
+            "applicable": None if self.applicable is None else dict(self.applicable),
+            "note": self.note,
+        }
 
 
 class InvalidDate(WorkerError):
@@ -802,6 +887,201 @@ class ReservationWorkers:
 
     # -- RES-W06: the routine follow-up ------------------------------------ #
 
+
+
+    @staticmethod
+    def _accepted_for_stay(quotation: Any, hold: Any) -> Any:
+        """The accepted version for the stay a hold covers, or ``None``.
+
+        A hold's own ``quote_id`` is a *derived* quote — the kernel prices the hold's window into a
+        row of its own — so the offer the guest actually said yes to is found by walking the stay's
+        chain through the module that owns it, not by following the hold's reference. ``versions``
+        is oldest first and a re-negotiated stay can carry two acceptances: the last one governs.
+        """
+
+        accepted = [
+            version
+            for version in quotation.versions(
+                unit_id=hold["unit_id"],
+                check_in=hold["check_in"],
+                check_out=hold["check_out"],
+            )
+            if version.status == "ACCEPTED"
+        ]
+        return accepted[-1] if accepted else None
+
+    def cancellation_terms(
+        self,
+        conversation_id: str,
+        *,
+        hold_id: Optional[str] = None,
+        at: Any = None,
+    ) -> CancellationTerms:
+        """Answer what the terms the guest accepted say about cancelling (RES-W09).
+
+        §9's "amend/cancel assist" has a part that is a *question* and a part that is a *decision*.
+        This is the question: a guest who asks what cancelling would cost is owed the ladder they
+        actually agreed to. The binding source is the TERMS snapshot of the accepted version (§11)
+        — never the policy in force today, which is how a guest ends up quoted a term nobody
+        signed. With no accepted version the answer says so instead of inventing terms; with a
+        notice inside every threshold it says *no step applies* instead of rounding a missing rule
+        down to a zero refund.
+
+        Read-only, through §56's LOW ``villa.answer_verified`` (the catalogue name RES-W04 answers
+        a price with: one name, two questions), so this answer survives the §17 kill switch in
+        READ_ONLY and writes nothing anywhere.
+
+        ``hold_id`` names the hold when the stay has no booking yet; the booking's own ``quote_ref``
+        wins when it exists, because that is the version the guest's yes was recorded against.
+        """
+
+        conversation = self.service.require_thread(
+            conversation_id,
+            what=f"{SPECIAL_REQUEST_WORKER} reading the cancellation terms",
+        )
+        case = self._case(conversation.case_id)
+        kernel = self.kernel()
+        booking = kernel.get_booking(case.booking_id) if case.booking_id else None
+        hold = kernel.get_hold(hold_id) if hold_id else None
+        self._door(
+            conversation,
+            TERMS_TOOL,
+            worker=SPECIAL_REQUEST_WORKER,
+            what="reading the cancellation terms the guest accepted",
+            at=at,
+        )
+        quotation = self.quotation()
+        version = None
+        source = "none"
+        if booking is not None and booking["quote_ref"]:
+            version = quotation.accepted(str(booking["quote_ref"]))
+            source = "booking"
+        elif hold is not None:
+            version = self._accepted_for_stay(quotation, hold)
+            source = "hold"
+        if version is None:
+            return CancellationTerms(
+                worker=SPECIAL_REQUEST_WORKER,
+                conversation_id=conversation.conversation_id,
+                binding=None,
+                notice_days=None,
+                ladder=None,
+                applicable=None,
+                note=TERMS_NOTE_NO_VERSION,
+            )
+        snapshot = quotation.snapshot(version.quotation_version_id, "TERMS")
+        payload = json.loads(snapshot.payload) if snapshot is not None else {}
+        ladder = payload.get("cancellation_ladder") or None
+        acceptance = quotation.acceptance(version.quotation_version_id)
+        check_in = _dt.date.fromisoformat(_iso_date(version.check_in, field="check_in"))
+        today = _dt.date.fromisoformat(_iso_date(self.service._now(at), field="today"))
+        notice_days = (check_in - today).days
+        applicable = PE.cancellation_step(ladder, notice_days=notice_days) if ladder else None
+        if ladder is None:
+            note = TERMS_NOTE_NO_LADDER
+        elif applicable is None:
+            note = TERMS_NOTE_NO_STEP
+        else:
+            note = TERMS_NOTE_ACCEPTED
+        return CancellationTerms(
+            worker=SPECIAL_REQUEST_WORKER,
+            conversation_id=conversation.conversation_id,
+            binding={
+                "quotation_version_id": version.quotation_version_id,
+                "quote_id": version.quote_id,
+                "version": version.version,
+                "status": version.status,
+                "check_in": str(version.check_in),
+                "source": source,
+                "accepted_at": None if acceptance is None else acceptance.accepted_at,
+                "terms_fingerprint": None if snapshot is None else snapshot.fingerprint,
+            },
+            notice_days=notice_days,
+            ladder=None if ladder is None else tuple(dict(step) for step in ladder),
+            applicable=None if applicable is None else dict(applicable),
+            note=note,
+        )
+
+    def special_request(
+        self,
+        conversation_id: str,
+        *,
+        request_kind: str,
+        slot: str,
+        assignee: str,
+        due_at: Any,
+        checklist: Sequence[Any],
+        priority: Any = OT.DEFAULT_PRIORITY,
+        at: Any = None,
+    ) -> tuple[Any, bool]:
+        """Put the guest's amendment/cancellation request on a person's queue (RES-W09).
+
+        §9's MEDIUM band is **coordination**, not decision: a cancellation or a date change moves
+        money (the ladder, a refund, a penalty) and re-prices an offer, and the estate refuses the
+        machine both acts twice over — every money tool is HIGH and in the §21 deny registry, and
+        :mod:`approvals` will not take a machine principal at all ("an approval is a human act";
+        :mod:`roles` gives ``ai_service`` no rank to request under). What it may do is what the
+        collections sweep already does with an overdue invoice: file the work where a person
+        cannot miss it, and let a person raise the approval and move the booking.
+
+        ``checklist`` is required because the queue's closed ``kind`` vocabulary cannot name a
+        cancellation: a routed change is a ``GUEST_FOLLOWUP`` task on the booking (or on the case,
+        before a booking exists) and the runbook is the only field that can say what was asked —
+        an empty one would reach a person as an unreadable interruption.
+
+        Idempotent on ``(conversation, request_kind, slot)``: a retry after a restart files
+        nothing, while a cancellation and an amendment on the same slot stay two pieces of work.
+        The deadline and the owner are the caller's; this module publishes no SLA and invents no
+        assignee.
+        """
+
+        conversation = self.service.require_thread(
+            conversation_id,
+            what=f"{SPECIAL_REQUEST_WORKER} routing a guest request",
+        )
+        wanted = require_text(request_kind, "request_kind", max_len=32).strip().upper()
+        if wanted not in SPECIAL_REQUEST_KINDS:
+            raise MissingRequirements(
+                f"{SPECIAL_REQUEST_WORKER} may route "
+                f"{list(SPECIAL_REQUEST_KINDS)} — not {wanted!r}",
+                code="RES_WORKER_UNKNOWN_REQUEST_KIND",
+                kind=wanted,
+                known=list(SPECIAL_REQUEST_KINDS),
+            )
+        slot = require_ref(slot, "slot", max_len=64)
+        require_ref(assignee, "assignee", max_len=64)
+        steps = tuple(checklist)
+        if len(steps) < SPECIAL_REQUEST_MIN_STEPS:
+            raise MissingRequirements(
+                f"{SPECIAL_REQUEST_WORKER} must file this under a runbook that names it: the "
+                "queue's kind cannot say what the guest asked for",
+                code="RES_WORKER_SPECIAL_REQUEST_NO_STEPS",
+                minimum=SPECIAL_REQUEST_MIN_STEPS,
+            )
+        case = self._case(conversation.case_id)
+        self._door(
+            conversation,
+            SPECIAL_REQUEST_TOOL,
+            worker=SPECIAL_REQUEST_WORKER,
+            what=f"routing the guest's {wanted.lower()} request on {slot}",
+            at=at,
+        )
+        task, created = self.ops().ensure_task(
+            kind=OT.KIND_GUEST_FOLLOWUP,
+            assignee=assignee,
+            due_at=due_at,
+            idempotency_key=self.special_key(
+                conversation_id=conversation.conversation_id,
+                request_kind=wanted,
+                slot=slot,
+            ),
+            priority=priority,
+            booking_id=case.booking_id or None,
+            case_id=None if case.booking_id else case.case_id,
+            checklist=steps,
+        )
+        return task, created
+
     def follow_up(
         self,
         conversation_id: str,
@@ -986,6 +1266,18 @@ class ReservationWorkers:
 
         digest = sha256_hex("ai-followup", conversation_id, slot)
         return f"ai-follow-{digest[:32]}"
+
+    @staticmethod
+    def special_key(*, conversation_id: str, request_kind: str, slot: str) -> str:
+        """The idempotency key for one routed request: the kind of change plus its work slot.
+
+        Derived, because "did we already route this?" is a question about the work, not about when
+        someone asked. A cancellation and an amendment on the same slot are two different pieces of
+        work and must not collide on one key; a retry of either is the same piece and must.
+        """
+
+        digest = sha256_hex("ai-special-request", conversation_id, request_kind, slot)
+        return f"ai-special-{digest[:32]}"
 
     @staticmethod
     def hold_key(*, conversation_id: str, unit_id: str, check_in: str, check_out: str) -> str:

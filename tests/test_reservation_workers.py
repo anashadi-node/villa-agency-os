@@ -1,4 +1,4 @@
-"""Stage 4 — the §9 capability workers (RES-W01…W08), pinned as claims.
+"""Stage 4 — the §9 capability workers (RES-W01…W09), pinned as claims.
 
 A worker has three steps and no fourth: **guard the thread, ask the door, delegate**. The claims
 below are about each step being enforced rather than intended:
@@ -27,7 +27,12 @@ below are about each step being enforced rather than intended:
    policy version from the lookup the ranking and the price already used;
 12. the booking status worker **answers and never confirms**: §9's three gates are read out
    from the modules that own them, ``booking_id`` stays empty until a human's confirmation made
-   one, and a hold that was released does not secure the slot.
+   one, and a hold that was released does not secure the slot;
+13. the amend/cancel assistant **answers and routes, never decides**: the binding cancellation
+   ladder is read from the TERMS snapshot of the version the guest actually accepted (§11 — never
+   today's policy), a notice inside every threshold reports *no step applies* rather than a zero
+   refund, and a change request becomes a ``GUEST_FOLLOWUP`` task under a runbook that names it,
+   because the queue's closed ``kind`` vocabulary cannot.
 
 The clock is frozen, the ids are deterministic and the database is an in-memory one: every claim
 here is reproducible, and none of them depends on how long a test took to run.
@@ -74,6 +79,17 @@ STAY_OUT = "2026-11-14"
 FOLLOWUP_DUE = "2026-11-03T09:00:00+07:00"
 FOLLOWUP_DUE_LATER = "2026-11-05T09:00:00+07:00"
 FOLLOWUP_ASSIGNEE = "staff_014"
+
+#: The clock the RES-W09 terms answer is read at: 40 days before ``STAY_IN``, so which ladder
+#: step applies is a fact of the fixture, not of the day the suite happens to run. The estate's
+#: ``at=`` arguments are datetimes, never ISO strings — ``to_iso`` refuses the string it is
+#: handed, which is why the tests hand it a parsed one.
+TERMS_AT = parse_iso("2026-10-01T09:00:00+07:00")
+
+#: The runbook a routed request carries. The queue's ``kind`` cannot name a cancellation, so the
+#: worker refuses to file work a person could not read — and the steps are the caller's, never
+#: the guest's words.
+SPECIAL_STEPS = ("confirm the guest's change request with a manager",)
 
 #: The rate card a stay is priced from: one property, one season covering 2026, IDR. The rows
 #: are spelled here because ``insert_rate_card`` takes database rows, not dataclasses — the
@@ -241,6 +257,26 @@ class ReservationWorkersTestCase(unittest.TestCase):
 
         kwargs.setdefault("hold_id", None)
         return fixture.workers.booking_status(
+            fixture.conversation.conversation_id, **kwargs
+        )
+
+    def terms_answer(self, fixture, **kwargs):
+        """Ask the RES-W09 worker what the accepted terms say about cancelling."""
+
+        kwargs.setdefault("at", TERMS_AT)
+        return fixture.workers.cancellation_terms(
+            fixture.conversation.conversation_id, **kwargs
+        )
+
+    def special_request(self, fixture, **kwargs):
+        """Route one guest change request through the RES-W09 worker."""
+
+        kwargs.setdefault("request_kind", "CANCELLATION")
+        kwargs.setdefault("slot", "cancel-nov")
+        kwargs.setdefault("assignee", FOLLOWUP_ASSIGNEE)
+        kwargs.setdefault("due_at", FOLLOWUP_DUE)
+        kwargs.setdefault("checklist", SPECIAL_STEPS)
+        return fixture.workers.special_request(
             fixture.conversation.conversation_id, **kwargs
         )
 
@@ -559,6 +595,9 @@ class ReservationWorkersTestCase(unittest.TestCase):
                 conversation_id, unit_id="unit_1"
             ),
             RW.BOOKING_WORKER: lambda: fixture.workers.booking_status(conversation_id),
+            RW.SPECIAL_REQUEST_WORKER: lambda: self.special_request(fixture),
+            RW.SPECIAL_REQUEST_WORKER
+            + " /terms": lambda: self.terms_answer(fixture),
         }
         for worker, attempt in attempts.items():
             with self.subTest(worker=worker):
@@ -571,6 +610,7 @@ class ReservationWorkersTestCase(unittest.TestCase):
         self.assertEqual(self.count(fixture, "availability_checks"), 0)
         self.assertEqual(self.count(fixture, "ops_tasks"), 0)
         self.assertEqual(self.count(fixture, "holds"), 0)
+        self.assertEqual(self.count(fixture, "approval_requests"), 0)
 
     # -- 5. RES-W04: answer what the stay costs from the versions in force --- #
 
@@ -1193,6 +1233,184 @@ class ReservationWorkersTestCase(unittest.TestCase):
         self.assertIn(RW.BOOKING_WORKER, str(raised.exception))
         self.assertEqual(self.door_rows(fixture, tool=RW.BOOKING_TOOL), [])
 
+    # -- 9. RES-W09: amend / cancel assist ---------------------------------- #
+
+    def test_the_terms_answer_reads_the_ladder_of_the_accepted_version(self):
+        """The binding ladder, not today's policy — read-only, and never a money figure.
+
+        §11's rule: what a guest agreed to is the version they accepted, so the ladder comes out of
+        that version's TERMS snapshot. The answer names the version it read, says which step the
+        sitting notice falls in, and carries no amount at all — a refund is the finance module's
+        fact and a person's decision.
+        """
+
+        fixture = self.running(seed="w09a")
+        self.inventory(fixture)
+        self.versions_in_force(fixture)
+        self.confirm_stay(fixture)
+        self.allow_medium(fixture, tools=(RW.HOLD_TOOL,))
+        hold = self.held(fixture)
+        self.allow_medium(fixture, tools=(RW.QUOTE_TOOL,))
+        quotation = self.offering(fixture)
+
+        answer = self.terms_answer(fixture, hold_id=hold.hold_id)
+
+        self.assertEqual(answer.worker, RW.SPECIAL_REQUEST_WORKER)
+        self.assertEqual(
+            answer.binding["quotation_version_id"], quotation.quotation_version_id
+        )
+        self.assertEqual(answer.binding["status"], "ACCEPTED")
+        self.assertEqual(answer.binding["source"], "hold")
+        self.assertEqual(len(answer.binding["terms_fingerprint"]), 64)
+        self.assertEqual(
+            set(answer.binding),
+            {
+                "quotation_version_id",
+                "quote_id",
+                "version",
+                "status",
+                "check_in",
+                "source",
+                "accepted_at",
+                "terms_fingerprint",
+            },
+        )
+        self.assertEqual(answer.notice_days, 40)
+        self.assertEqual(answer.ladder, ({"min_days_before": 0, "refund_pct": "100"},))
+        self.assertEqual(answer.applicable, {"min_days_before": 0, "refund_pct": "100"})
+        self.assertEqual(answer.note, RW.TERMS_NOTE_ACCEPTED)
+        self.assertEqual(
+            answer.as_dict()["applicable"], {"min_days_before": 0, "refund_pct": "100"}
+        )
+        # A read leaves nothing behind: no task, no approval, no booking.
+        self.assertEqual(self.count(fixture, "ops_tasks"), 0)
+        self.assertEqual(self.count(fixture, "approval_requests"), 0)
+        self.assertEqual(self.count(fixture, "bookings"), 0)
+        self.assertTrue(
+            self.allowed_reasons(fixture, tool=RW.TERMS_TOOL)[-1].startswith(
+                RW.SPECIAL_REQUEST_WORKER
+            )
+        )
+
+    def test_the_terms_answer_will_not_invent_terms_without_an_acceptance(self):
+        """An offer that was sent but never accepted binds nobody: the answer says so."""
+
+        fixture = self.running(seed="w09b")
+        self.inventory(fixture)
+        self.versions_in_force(fixture)
+        self.confirm_stay(fixture)
+        self.allow_medium(fixture, tools=(RW.HOLD_TOOL,))
+        hold = self.held(fixture)
+        self.allow_medium(fixture, tools=(RW.QUOTE_TOOL,))
+        self.offering(fixture, accept=False)
+
+        answer = self.terms_answer(fixture, hold_id=hold.hold_id)
+
+        self.assertIsNone(answer.binding)
+        self.assertIsNone(answer.ladder)
+        self.assertIsNone(answer.applicable)
+        self.assertIsNone(answer.notice_days)
+        self.assertEqual(answer.note, RW.TERMS_NOTE_NO_VERSION)
+        # Reading for a yes that does not exist must not create one.
+        self.assertEqual(self.count(fixture, "quotation_acceptances"), 0)
+
+    def test_a_cancellation_request_becomes_readable_work_and_decides_nothing(self):
+        """The AI routes the request; a person decides it. Nothing else moves.
+
+        The task's subject is the booking, the runbook names what was asked (the queue's ``kind``
+        cannot), and the three things a cancellation would actually need — an approval, a message,
+        a booking status change — are all still absent when the worker returns.
+        """
+
+        fixture = self.running(seed="w09c")
+        self.inventory(fixture)
+        self.versions_in_force(fixture)
+        self.confirm_stay(fixture)
+        self.allow_medium(fixture, tools=(RW.HOLD_TOOL,))
+        hold = self.held(fixture)
+        self.allow_medium(fixture, tools=(RW.QUOTE_TOOL,))
+        quotation = self.offering(fixture)
+        booking = fixture.workers.kernel().confirm_from_hold(
+            hold_id=hold.hold_id,
+            quote_id=quotation.quote_id,
+            idempotency_key="idem_book_w09",
+            command_id="cmd_book_w09",
+            adults=2,
+            actor=HUMAN,
+            actor_role=RESERVATION_ROLE,
+        )
+        fixture.workers.cases().link_booking(
+            fixture.case.case_id,
+            booking.booking_id,
+            actor=HUMAN,
+            command_id="cmd_link_w09",
+        )
+        self.allow_medium(fixture, tools=(RW.SPECIAL_REQUEST_TOOL,))
+
+        task, created = self.special_request(fixture)
+
+        self.assertTrue(created)
+        self.assertEqual(task.kind, OT.KIND_GUEST_FOLLOWUP)
+        self.assertEqual(task.booking_id, booking.booking_id)
+        self.assertEqual(task.assignee, FOLLOWUP_ASSIGNEE)
+        self.assertEqual(task.status, OT.STATUS_OPEN)
+        self.assertEqual(self.count(fixture, "ops_tasks"), 1)
+        # The decision is not here: no approval was raised, no message written, no state moved.
+        self.assertEqual(self.count(fixture, "approval_requests"), 0)
+        self.assertEqual(self.count(fixture, "message_drafts"), 0)
+        self.assertEqual(
+            fixture.workers.kernel().get_booking(booking.booking_id)["status"],
+            booking.status,
+        )
+        rows = self.door_rows(fixture, tool=RW.SPECIAL_REQUEST_TOOL)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].trace_id, fixture.conversation.conversation_id)
+        self.assertTrue(
+            self.allowed_reasons(fixture, tool=RW.SPECIAL_REQUEST_TOOL)[0].startswith(
+                RW.SPECIAL_REQUEST_WORKER
+            )
+        )
+        # The same request twice is the same piece of work …
+        same, created_again = self.special_request(fixture)
+        self.assertFalse(created_again)
+        self.assertEqual(same.task_id, task.task_id)
+        self.assertEqual(self.count(fixture, "ops_tasks"), 1)
+        # … while a different change on the same slot is a different piece of work.
+        _, created_other = self.special_request(fixture, request_kind="AMENDMENT")
+        self.assertTrue(created_other)
+        self.assertEqual(self.count(fixture, "ops_tasks"), 2)
+
+    def test_a_change_request_is_deny_first_until_the_owner_allows_the_tool(self):
+        """§56 deny-first again: with no published allowance the request is refused, and nothing
+        is written."""
+
+        fixture = self.running(seed="w09d")
+        self.inventory(fixture)
+        self.versions_in_force(fixture)
+        self.confirm_stay(fixture)
+
+        with self.assertRaises(DomainError) as raised:
+            self.special_request(fixture)
+        self.assertEqual(raised.exception.code, "AI_MEDIUM_TOOL_NOT_ALLOWED")
+        self.assertEqual(self.count(fixture, "ops_tasks"), 0)
+
+    def test_the_special_request_refuses_an_unknown_kind_and_an_empty_runbook(self):
+        """Two refusals that happen before the door: a name nobody can work, and work nobody
+        can read."""
+
+        fixture = self.running(seed="w09e")
+
+        with self.assertRaises(RW.MissingRequirements) as unknown:
+            self.special_request(fixture, request_kind="BANANA")
+        self.assertEqual(unknown.exception.code, "RES_WORKER_UNKNOWN_REQUEST_KIND")
+        with self.assertRaises(RW.MissingRequirements) as unreadable:
+            self.special_request(fixture, checklist=())
+        self.assertEqual(
+            unreadable.exception.code, "RES_WORKER_SPECIAL_REQUEST_NO_STEPS"
+        )
+        self.assertEqual(self.count(fixture, "ops_tasks"), 0)
+        self.assertEqual(self.door_rows(fixture, tool=RW.SPECIAL_REQUEST_TOOL), [])
+
     # -- 7. the tools the workers hold --------------------------------------- #
 
     def test_the_tools_the_workers_hold_are_the_tools_the_catalogue_declares(self):
@@ -1212,6 +1430,8 @@ class ReservationWorkersTestCase(unittest.TestCase):
             (RW.FOLLOWUP_WORKER, RW.FOLLOWUP_TOOL),
             (RW.HOLD_WORKER, RW.HOLD_TOOL),
             (RW.BOOKING_WORKER, RW.BOOKING_TOOL),
+            (RW.SPECIAL_REQUEST_WORKER, RW.TERMS_TOOL),
+            (RW.SPECIAL_REQUEST_WORKER, RW.SPECIAL_REQUEST_TOOL),
         ):
             with self.subTest(worker=worker):
                 self.assertIn(tool, declared)

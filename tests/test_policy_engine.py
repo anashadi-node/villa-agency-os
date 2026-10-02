@@ -107,6 +107,47 @@ class TestPayloadValidation(unittest.TestCase):
         self.assertEqual(list(payload), sorted(payload))
 
 
+class TestCancellationStep(unittest.TestCase):
+    """The ladder selector: one rule, and the honest edge that is *not* a zero refund."""
+
+    LADDER = (
+        {"min_days_before": 30, "refund_pct": "100"},
+        {"min_days_before": 14, "refund_pct": "50"},
+        {"min_days_before": 0, "refund_pct": "0"},
+    )
+
+    def test_the_governing_step_is_the_largest_threshold_the_notice_meets(self):
+        cases = ((45, "100"), (30, "100"), (29, "50"), (14, "50"), (13, "0"), (0, "0"))
+        for notice, expected in cases:
+            with self.subTest(notice=notice):
+                step = PE.cancellation_step(self.LADDER, notice_days=notice)
+                self.assertEqual(step["refund_pct"], expected)
+
+    def test_an_unsorted_ladder_still_reads_correctly(self):
+        """Publishing order is not a rule: the payload is validated for duplicates, not order."""
+
+        ladder = (
+            {"min_days_before": 7, "refund_pct": "10"},
+            {"min_days_before": 30, "refund_pct": "80"},
+            {"min_days_before": 14, "refund_pct": "40"},
+        )
+        self.assertEqual(PE.cancellation_step(ladder, notice_days=20)["refund_pct"], "40")
+        self.assertEqual(PE.cancellation_step(ladder, notice_days=60)["refund_pct"], "80")
+        self.assertIsNone(PE.cancellation_step(ladder, notice_days=3))
+
+    def test_a_notice_inside_every_threshold_has_no_step_and_is_not_zero(self):
+        """``None`` is not ``0 %``: a missing rule must never be read as a refund figure."""
+
+        ladder = ({"min_days_before": 7, "refund_pct": "50"},)
+        self.assertIsNone(PE.cancellation_step(ladder, notice_days=3))
+        self.assertIsNone(PE.cancellation_step(ladder, notice_days=-1))
+
+    def test_an_absent_or_unusable_ladder_selects_nothing(self):
+        for ladder in (None, (), [], "30 days", {"min_days_before": 1}, (None, "x"), (True,)):
+            with self.subTest(ladder=ladder):
+                self.assertIsNone(PE.cancellation_step(ladder, notice_days=10))
+
+
 class TestPercentParsing(unittest.TestCase):
     def test_exact_decimals_are_kept(self):
         self.assertEqual(str(PE.parse_pct("7.5", field_name="p")), "7.5")
