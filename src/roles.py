@@ -126,6 +126,10 @@ ROLE_ALIASES: Mapping[str, str] = MappingProxyType(
 #: on it. Absent key = the role may do nothing beyond being named; an empty frozenset is
 #: the honest declaration for a role whose function moved elsewhere (the AI-reserved two).
 CAPABILITIES: tuple[str, ...] = (
+    # §17: the AI kill switch. Kept separate from ``system.write`` on purpose -- technical
+    # housekeeping is not the same consent as switching a workforce off, and the officer who
+    # may switch it off is the one who must answer for it.
+    "ai.control",
     "approve.money_out",
     "approve.pricing",
     "make.money_out",
@@ -148,7 +152,9 @@ ROLE_CAPABILITIES: Mapping[str, frozenset[str]] = MappingProxyType(
     {
         # Receives the periodic reports and corrects anomalies; **not** the maker of what
         # it approves (ADR-0035).
-        "owner": frozenset({"approve.money_out", "approve.pricing", "report.read", "audit.read"}),
+        "owner": frozenset(
+            {"ai.control", "approve.money_out", "approve.pricing", "report.read", "audit.read"}
+        ),
         # ADR-0036 tier 2: the GM agrees before money leaves, and sees the reports.
         "gm": frozenset({"approve.money_out", "report.read", "audit.read"}),
         # The checker. May decide a money-out request and read finance — never prepare one.
@@ -158,7 +164,7 @@ ROLE_CAPABILITIES: Mapping[str, frozenset[str]] = MappingProxyType(
             {"approve.pricing", "booking.write", "operations.write", "stays.read"}
         ),
         # Zero business or financial authority, by ADR-0035.
-        "system_admin": frozenset({"system.write"}),
+        "system_admin": frozenset({"ai.control", "system.write"}),
         # ADR-0035 §4: reads who is staying where, records visit notes, nothing else.
         "greeting_service": frozenset({"stays.read", "notes.write"}),
         # Read-only, by master spec §18.

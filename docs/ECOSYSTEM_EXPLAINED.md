@@ -491,7 +491,7 @@ D4 (SLA), D7 (ambang shadow mode), D10 (RPO/RTO backup), D13 (siapa yang siaga s
 | Periksa | Hasil |
 |---|---|
 | Keputusan bisnis yang masih menahan go-live | **1** — hanya D17 (kesiapan tenant). Sebelum jawaban Anda 2026-10-02: 13 |
-| `make check` | **3.235 lulus**, 4 dilewati, 3.870 subtes; secret-scan 0/226 berkas; unsafe-scan 0/226; twin PostgreSQL cocok |
+| `make check` | **3.250 lulus**, 4 dilewati, 3.870 subtes; secret-scan 0/226 berkas; unsafe-scan 0/226; twin PostgreSQL cocok |
 | Preflight | 12 pemeriksaan sistem OK; yang menahan **keputusan bisnis**, bukan software |
 | ADR | 39 berkas, semua berstatus terbaca |
 
@@ -643,10 +643,36 @@ Dua detail yang saya pilih dengan sadar:
   **bekerja**, bukan rusak — jadi tidak menambah hitungan. Yang dihitung adalah **kesalahan**:
   tindakan yang sudah diizinkan lalu gagal.
 
-Mengembalikan kemampuan setelah breaker menyala **hanya bisa oleh manusia**, dengan alasan tercatat:
-`python3 scripts/... set-mode ... --reason "akar masalah sudah diperbaiki"`.
+Mengembalikan kemampuan setelah breaker menyala **hanya bisa oleh manusia**, dengan alasan tercatat —
+lihat perintahnya di §18.5.
 
-### 18.5 Satu hal yang saya perbaiki sambil jalan (dan saya catat)
+### 18.5 Menekan tombolnya: perintah yang benar-benar dipakai
+
+Tombol yang tidak punya perintah = tombol yang tidak ada. Jadi ada satu alat operator:
+
+```bash
+python3 scripts/ai_mode.py list      # pegawai AI mana saja, dan sedang di tingkat mana
+python3 scripts/ai_mode.py show   --principal <id>        # riwayat: siapa memindahkan, kapan, kenapa
+python3 scripts/ai_mode.py set    --principal <id> --mode read_only \
+        --actor mr_owner --actor-role owner --reason "tamu salah villa" --apply
+```
+
+Tiga hal yang saya sengaja pasang di alat ini:
+
+1. **Bawaan = rencana saja.** Tanpa `--apply`, tidak ada yang ditulis — sama seperti impor villa.
+2. **Harus menyebut database sendiri** (`VILLA_DB=...`). Tidak ada target bawaan: saklar yang bisa
+   diam-diam mengenai database produksi bukan saklar. (Ada tesnya.)
+3. **Penolakan selalu menyebut langkah yang sah dari posisi sekarang** —
+   mis. dari SUSPENDED: `suspended, active, retired`. Petunjuk itu dibaca dari **tabel aturan yang
+   sama** dengan penjaganya, jadi tidak mungkin menyarankan langkah yang akan ditolak.
+
+**Siapa yang boleh menekan:** hanya **Owner** dan **Technology-Security Manager** (kemampuan
+`ai.control`). GM **tidak** — dia yang menyetujui uang, jadi dia tidak boleh mematikan pengawas
+pejabatnya sendiri; auditor juga tidak, karena tugasnya mencatat. Penolakan terjadi **di lapisan
+domain**, bukan cuma di CLI: memanggil fungsinya langsung dari kode pun tetap ditolak, dan peran
+yang benar ikut tercatat di rantai audit (`actor_role`).
+
+### 18.6 Satu hal yang saya perbaiki sambil jalan (dan saya catat)
 
 Menaikkan kosakata status dari 3 ke 5 mengubah **CHECK** di tabel. SQLite tidak bisa mengubah CHECK,
 jadi tabelnya dibangun ulang lewat migrasi `011_ai_ladder`. Saat proses itu, nama-nama constraint

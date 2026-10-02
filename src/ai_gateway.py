@@ -32,6 +32,7 @@ import datetime as _dt
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
+from roles import ROLE_IDS as _ROLE_IDS, may as _may
 from ai_service import (
     AI_STATUS_ACTIVE,
     AI_STATUS_DEGRADED,
@@ -107,6 +108,14 @@ _MODE_VERBS: Mapping[str, str] = {
     AI_STATUS_SUSPENDED: "suspend",
 }
 
+#: The capability a role must hold to move a principal up or down the ladder (§17). Held by the
+#: Owner and the Technology-Security Manager; deliberately *not* by the GM or the auditor — nobody
+#: may switch off the guard that watches them (ADR-0035: maker / checker / auditor).
+AI_CONTROL_CAPABILITY = "ai.control"
+
+#: Who may press the button, read out of the single role vocabulary rather than restated here.
+AI_CONTROL_HOLDERS: tuple[str, ...] = tuple(r for r in _ROLE_IDS if _may(r, AI_CONTROL_CAPABILITY))
+
 #: Circuit breaker: this many consecutive gateway failures for one principal, inside this window,
 #: narrow it to READ_ONLY and open an incident. Numbers are operational, not commercial.
 BREAKER_FAILURES = 3
@@ -132,6 +141,12 @@ class ModeRefused(GatewayError):
     """The identity may act, but the current mode does not reach this tool."""
 
     code = "AI_MODE_REFUSED"
+
+
+class AiControlNotHeld(GatewayError):
+    """§17/ADR-0035: the kill switch is a control with named holders, not a command anyone runs."""
+
+    code = "AI_CONTROL_NOT_HELD"
 
 
 class UnknownMode(GatewayError):
@@ -308,10 +323,23 @@ class AiGateway:
         mode: str,
         *,
         actor: str,
+        actor_role: str,
         reason: Optional[str] = None,
         at: Optional[Any] = None,
     ) -> AiPrincipal:
-        """Move one principal to a rung of the ladder. The only way a mode changes."""
+        """Move one principal to a rung of the ladder. The only way a mode changes.
+
+        The authority check lives here and not only in the CLI: a button that any module can
+        press is documentation, not a control. The breaker does *not* come through here — it is
+        not a human, and it only ever narrows (see :meth:`record_failure`).
+        """
+        if not _may(actor_role, AI_CONTROL_CAPABILITY):
+            raise AiControlNotHeld(
+                f"the §17 kill switch is held by {', '.join(AI_CONTROL_HOLDERS)}"
+                f"; {actor_role!r} does not hold {AI_CONTROL_CAPABILITY}",
+                code="AI_CONTROL_NOT_HELD",
+                actor_role=actor_role,
+            )
         clean_mode = require_text(mode, "mode", max_len=20).strip().upper()
         if clean_mode not in AI_STATUS_LADDER:
             raise UnknownMode(
@@ -321,14 +349,21 @@ class AiGateway:
             )
         verb = _MODE_VERBS.get(clean_mode)
         if verb is None:  # RETIRED — there is no going back to it, only arriving once
-            return self.ai.retire(principal_id, actor=actor, reason=reason, at=at)
+            return self.ai.retire(principal_id, actor=actor, actor_role=actor_role, reason=reason, at=at)
         if clean_mode == AI_STATUS_SUSPENDED:
-            return self.ai.suspend(principal_id, actor=actor, reason=reason, at=at)
+            return self.ai.suspend(principal_id, actor=actor, actor_role=actor_role, reason=reason, at=at)
         if clean_mode == AI_STATUS_DEGRADED:
-            return self.ai.degrade(principal_id, actor=actor, reason=reason, at=at)
+            return self.ai.degrade(principal_id, actor=actor, actor_role=actor_role, reason=reason, at=at)
         if clean_mode == AI_STATUS_READ_ONLY:
-            return self.ai.read_only(principal_id, actor=actor, reason=reason, at=at)
-        return self.ai.activate(principal_id, actor=actor, reason=reason, at=at)
+            return self.ai.read_only(principal_id, actor=actor, actor_role=actor_role, reason=reason, at=at)
+        # The operator names a *state*; the domain picks the verb that legitimately reaches it.
+        # ACTIVE is reachable from a narrowed rung (activate) and from SUSPENDED (reinstate);
+        # asking an operator to remember which is which is how a kill switch goes unpressed.
+        if self.ai.principal(principal_id).status == AI_STATUS_SUSPENDED:
+            return self.ai.reinstate(
+                principal_id, actor=actor, actor_role=actor_role, reason=reason, at=at
+            )
+        return self.ai.activate(principal_id, actor=actor, actor_role=actor_role, reason=reason, at=at)
 
     def record_failure(
         self,

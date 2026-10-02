@@ -26,6 +26,8 @@ import pytest
 
 import outbox as OB
 from ai_gateway import (
+    AI_CONTROL_CAPABILITY,
+    AI_CONTROL_HOLDERS,
     AUTHORISED_ACTION,
     BREAKER_FAILURES,
     FAILURE_ACTION,
@@ -170,7 +172,7 @@ def test_active_reaches_a_low_tool(world):
 
 def test_degraded_reaches_low_tier_and_refuses_medium_even_when_policy_allows_it(world):
     allow_medium(world)
-    world.gateway.set_mode(world.pid, AI_STATUS_DEGRADED, actor="owner_anas", reason="drill")
+    world.gateway.set_mode(world.pid, AI_STATUS_DEGRADED, actor="owner_anas", actor_role="owner", reason="drill")
 
     assert world.gateway.request(world.pid, LOW_WRITE).allowed
     with pytest.raises(ModeRefused) as raised:
@@ -181,7 +183,7 @@ def test_degraded_reaches_low_tier_and_refuses_medium_even_when_policy_allows_it
 
 def test_read_only_reaches_reading_tools_and_refuses_low_risk_writes(world):
     """The pair that justifies the whole ladder: low risk is not the same as no effect."""
-    world.gateway.set_mode(world.pid, AI_STATUS_READ_ONLY, actor="owner_anas", reason="drill")
+    world.gateway.set_mode(world.pid, AI_STATUS_READ_ONLY, actor="owner_anas", actor_role="owner", reason="drill")
 
     assert world.gateway.request(world.pid, LOW_READ_2).allowed
     for tool in (LOW_WRITE, LOW_WRITE_2):
@@ -191,7 +193,7 @@ def test_read_only_reaches_reading_tools_and_refuses_low_risk_writes(world):
 
 
 def test_a_suspended_principal_is_stopped_by_the_identity_layer(world):
-    world.gateway.set_mode(world.pid, AI_STATUS_SUSPENDED, actor="owner_anas", reason="incident")
+    world.gateway.set_mode(world.pid, AI_STATUS_SUSPENDED, actor="owner_anas", actor_role="owner", reason="incident")
     with pytest.raises(AiPrincipalNotActive):
         world.gateway.request(world.pid, LOW_READ)
 
@@ -206,22 +208,22 @@ def test_a_high_risk_tool_is_refused_even_in_active_mode(world):
 def test_the_ladder_never_widens_through_the_narrowing_verb(world):
     from ai_service import AiLadderRefused
 
-    world.gateway.set_mode(world.pid, AI_STATUS_SUSPENDED, actor="owner_anas")
+    world.gateway.set_mode(world.pid, AI_STATUS_SUSPENDED, actor="owner_anas", actor_role="owner")
     with pytest.raises(AiLadderRefused):
-        world.gateway.set_mode(world.pid, AI_STATUS_DEGRADED, actor="owner_anas")
+        world.gateway.set_mode(world.pid, AI_STATUS_DEGRADED, actor="owner_anas", actor_role="owner")
 
 
 def test_activate_is_the_only_way_back_up(world):
-    world.gateway.set_mode(world.pid, AI_STATUS_READ_ONLY, actor="owner_anas")
+    world.gateway.set_mode(world.pid, AI_STATUS_READ_ONLY, actor="owner_anas", actor_role="owner")
     assert world.gateway.mode(world.pid) == AI_STATUS_READ_ONLY
-    world.gateway.set_mode(world.pid, AI_STATUS_ACTIVE, actor="owner_anas", reason="checked")
+    world.gateway.set_mode(world.pid, AI_STATUS_ACTIVE, actor="owner_anas", actor_role="owner", reason="checked")
     assert world.gateway.mode(world.pid) == AI_STATUS_ACTIVE
     assert world.gateway.request(world.pid, LOW_WRITE).allowed
 
 
 def test_an_unknown_mode_is_refused(world):
     with pytest.raises(UnknownMode):
-        world.gateway.set_mode(world.pid, "SLOW", actor="owner_anas")
+        world.gateway.set_mode(world.pid, "SLOW", actor="owner_anas", actor_role="owner")
 
 
 # --------------------------------------------------------------------------- #
@@ -236,7 +238,7 @@ def test_an_allowed_action_is_audited_with_its_mode_and_effect(world):
 
 
 def test_a_refusal_names_the_mode_that_refused_it(world):
-    world.gateway.set_mode(world.pid, AI_STATUS_READ_ONLY, actor="owner_anas")
+    world.gateway.set_mode(world.pid, AI_STATUS_READ_ONLY, actor="owner_anas", actor_role="owner")
     with pytest.raises(ModeRefused):
         world.gateway.request(world.pid, LOW_WRITE)
     rows = audit_actions(world, "AI_TOOL_REFUSED")
@@ -305,7 +307,7 @@ def test_failures_older_than_the_window_do_not_accumulate(world):
 
 
 def test_the_breaker_does_not_widen_a_suspended_principal(world):
-    world.gateway.set_mode(world.pid, AI_STATUS_SUSPENDED, actor="owner_anas")
+    world.gateway.set_mode(world.pid, AI_STATUS_SUSPENDED, actor="owner_anas", actor_role="owner")
     for _ in range(BREAKER_FAILURES):
         state = fail(world)
     assert state.tripped is True
@@ -324,7 +326,116 @@ def test_a_human_can_hand_capability_back_after_a_trip(world):
     for _ in range(BREAKER_FAILURES):
         fail(world)
     world.gateway.set_mode(
-        world.pid, AI_STATUS_ACTIVE, actor="owner_anas", reason="root cause fixed"
+        world.pid, AI_STATUS_ACTIVE, actor="owner_anas", actor_role="owner", reason="root cause fixed"
     )
     assert world.gateway.request(world.pid, LOW_WRITE).allowed
     assert len(audit_actions(world, FAILURE_ACTION)) == BREAKER_FAILURES
+
+
+# -- 4. who may press the button -------------------------------- 2026-10-02 -- #
+
+
+def test_ai_control_is_held_by_the_owner_and_the_security_manager_only():
+    """§17 with ADR-0035's separation: nobody switches off the guard that watches them."""
+    import roles
+
+    holders = {role for role in roles.ROLE_IDS if roles.may(role, AI_CONTROL_CAPABILITY)}
+    assert holders == {"owner", "system_admin"}
+    assert AI_CONTROL_HOLDERS == tuple(r for r in roles.ROLE_IDS if r in holders)
+    # The auditor reads and records; the GM approves money. Neither holds the switch.
+    assert not roles.may("auditor", AI_CONTROL_CAPABILITY)
+    assert not roles.may("gm", AI_CONTROL_CAPABILITY)
+
+
+def test_a_role_without_ai_control_is_refused_in_the_domain_not_just_the_cli(world):
+    from ai_gateway import AiControlNotHeld
+
+    for role in ("gm", "auditor", "reservation_manager"):
+        with pytest.raises(AiControlNotHeld) as raised:
+            world.gateway.set_mode(
+                world.pid, AI_STATUS_READ_ONLY, actor="mr_gm", actor_role=role, reason="drill"
+            )
+        assert "ai.control" in str(raised.value)
+    assert world.gateway.mode(world.pid) == AI_STATUS_ACTIVE
+
+
+def test_the_audit_row_carries_the_role_that_was_verified(world):
+    world.gateway.set_mode(
+        world.pid, AI_STATUS_READ_ONLY, actor="mr_tsm", actor_role="system_admin", reason="drill"
+    )
+    row = world.conn.execute(
+        "SELECT actor, actor_role FROM audit_events WHERE action = 'AI_PRINCIPAL_READ_ONLY'"
+    ).fetchone()
+    assert (row["actor"], row["actor_role"]) == ("mr_tsm", "system_admin")
+
+
+def test_active_is_reachable_from_every_narrowed_rung(world):
+    """The operator names a state; the domain picks the verb (activate vs reinstate)."""
+    world.gateway.set_mode(
+        world.pid, AI_STATUS_DEGRADED, actor="mr_owner", actor_role="owner", reason="drill"
+    )
+    assert world.gateway.set_mode(
+        world.pid, AI_STATUS_ACTIVE, actor="mr_owner", actor_role="owner", reason="back"
+    ).status == AI_STATUS_ACTIVE
+
+    world.gateway.set_mode(
+        world.pid, AI_STATUS_SUSPENDED, actor="mr_owner", actor_role="owner", reason="incident"
+    )
+    back = world.gateway.set_mode(
+        world.pid, AI_STATUS_ACTIVE, actor="mr_owner", actor_role="owner", reason="cleared"
+    )
+    assert back.status == AI_STATUS_ACTIVE
+    kinds = [
+        row[0]
+        for row in world.conn.execute(
+            "SELECT kind FROM ai_principal_events ORDER BY seq"
+        ).fetchall()
+    ]
+    assert kinds == ["REGISTERED", AI_STATUS_DEGRADED, "ACTIVATED", "SUSPENDED", "REINSTATED"]
+
+
+def test_the_hint_an_operator_reads_matches_what_the_guard_allows(world):
+    """Every mode offered by `reachable_modes` must actually work, and nothing else may."""
+    from ai_service import AI_STATUS_LADDER, AI_STATUS_RETIRED
+
+    allowed = set(world.ai.reachable_modes(world.pid))
+    assert allowed == {AI_STATUS_ACTIVE, AI_STATUS_DEGRADED, AI_STATUS_READ_ONLY,
+                       AI_STATUS_SUSPENDED, AI_STATUS_RETIRED}
+    for mode in AI_STATUS_LADDER[:-1]:  # RETIRED is terminal, tested on its own below
+        world.gateway.set_mode(
+            world.pid, AI_STATUS_ACTIVE, actor="mr_owner", actor_role="owner", reason="reset"
+        )
+        reachable = set(world.ai.reachable_modes(world.pid))
+        assert mode in reachable, f"{mode} is reachable but not offered"
+        moved = world.gateway.set_mode(
+            world.pid, mode, actor="mr_owner", actor_role="owner", reason="drill"
+        )
+        assert moved.status == mode
+
+    # A retired principal reaches nothing: the ladder ends there, and the hint says so.
+    world.gateway.set_mode(
+        world.pid, AI_STATUS_RETIRED, actor="mr_owner", actor_role="owner", reason="decommission"
+    )
+    assert world.ai.reachable_modes(world.pid) == ()
+    with pytest.raises(Exception) as raised:
+        world.gateway.set_mode(
+            world.pid, AI_STATUS_ACTIVE, actor="mr_owner", actor_role="owner", reason="oops"
+        )
+    assert getattr(raised.value, "code", "") == "AI_PRINCIPAL_RETIRED"
+
+
+def test_a_mode_change_and_its_audit_row_are_one_write(world, monkeypatch):
+    """Autocommit would otherwise leave a narrowed principal with no audit row (2026-10-02)."""
+    class ExplodingAudit:
+        def append(self, **kwargs):
+            raise RuntimeError("chain refused the row")
+
+    world.ai.audit = ExplodingAudit()
+    before = world.conn.execute("SELECT COUNT(*) FROM ai_principal_events").fetchone()[0]
+    with pytest.raises(RuntimeError):
+        world.gateway.set_mode(
+            world.pid, AI_STATUS_SUSPENDED, actor="mr_owner", actor_role="owner", reason="drill"
+        )
+    after = world.conn.execute("SELECT COUNT(*) FROM ai_principal_events").fetchone()[0]
+    assert after == before, "the event row survived a failed audit append"
+    assert world.gateway.mode(world.pid) == AI_STATUS_ACTIVE

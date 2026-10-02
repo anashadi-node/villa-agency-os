@@ -230,7 +230,7 @@ Bukan urutan yang saya karang: ini mengikuti ketergantungan nyata di dokumen And
 |---|---|---|
 | 1 | **D3 peran & orang** + RBAC 12→16 peran + tes matriks per-peran | Tanpa ini, tidak ada `agency_id`/aktor yang bisa dipercaya untuk agent mana pun |
 | 2 | **Outbox + Exception Engine** | §14 melarang free-form antar-agent; tanpa outbox, handoff antar agent tidak boleh dibangun |
-| ~~3~~ | ~~AI Policy Gateway + kill switch berjenjang~~ ✅ **SELESAI 2026-10-02** | `src/ai_gateway.py`: satu pintu wajib (dijaga tes statis: tidak ada modul lain memanggil `authorize`), 5 status §17, circuit breaker; 22 tes |
+| ~~3~~ | ~~AI Policy Gateway + kill switch berjenjang~~ ✅ **SELESAI 2026-10-02** | `src/ai_gateway.py`: satu pintu wajib (dijaga tes statis: tidak ada modul lain memanggil `authorize`), 5 status §17, circuit breaker, tombol operator `scripts/ai_mode.py` (kemampuan `ai.control` = Owner + Technology-Security Manager); 22 tes gateway + 9 tes CLI |
 | 4 | **AI Reservation Service** (komponen #3) | Nilai bisnis terbesar + tamu berhadapan langsung dengannya |
 | 5 | **Finance Admin AI** (komponen #5) | Menyambung alur D1 yang baru Anda putuskan |
 | 6 | Control Tower, Operations AI, Commercial AI, Revenue & BI | Setelah 4 & 5 terbukti |

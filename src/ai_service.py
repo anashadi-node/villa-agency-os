@@ -25,7 +25,8 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, NoReturn, Optional
+from contextlib import contextmanager
+from typing import Any, Iterator, Mapping, NoReturn, Optional
 
 from audit import AuditLog
 from policy_engine import PolicyResolver, PolicyValueNotPublished
@@ -105,6 +106,13 @@ class AiPrincipalRetired(AiServiceError):
 
     code = "AI_PRINCIPAL_RETIRED"
 
+
+#: The §17 state a lifecycle event arrives at. Two kinds reach ACTIVE because two verbs do:
+#: ``REINSTATED`` is the way up from SUSPENDED, ``ACTIVATED`` the way up from a narrowed rung.
+_KIND_MODES: Mapping[str, str] = {
+    "REINSTATED": "ACTIVE",
+    "ACTIVATED": "ACTIVE",
+}
 
 #: Which current statuses each lifecycle event may be applied to. Repeats are allowed (an operator
 #: pressing the same button twice is not an incident); anything that adds capability must use the
@@ -311,39 +319,130 @@ class AiService:
             created_at=row["created_at"],
         )
 
+    def reachable_modes(self, principal_id: str) -> tuple[str, ...]:
+        """The §17 rungs this principal may move to right now — what the operator may press next.
+
+        Derived from the same table the guard uses, so the hint an operator reads can never
+        disagree with the refusal they get. A retired principal reaches nothing: the ladder ends.
+        """
+        status = self.principal(principal_id).status
+        if status == AI_STATUS_RETIRED:
+            return ()
+        reachable: list[str] = []
+        for kind, allowed in _LADDER_ALLOWED.items():
+            if status not in allowed:
+                continue
+            mode = _KIND_MODES.get(kind, kind)
+            if mode not in reachable:
+                reachable.append(mode)
+        return tuple(reachable)
+
+    @contextmanager
+    def _one_write(self) -> Iterator[sqlite3.Connection]:
+        """The event row and its audit row are one write, or neither happened.
+
+        ``connect_sqlite`` opens SQLite in autocommit mode on purpose, so without this a failure
+        between the two statements leaves a mode change with no audit row — a pair an operator must
+        never have to guess about (found by driving the kill-switch CLI twice, 2026-10-02). Nested
+        use joins the outer write rather than opening a second ``BEGIN``, which SQLite refuses
+        mid-transaction.
+        """
+        if self.conn.in_transaction:
+            yield self.conn
+            return
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield self.conn
+        except BaseException:
+            self.conn.execute("ROLLBACK")
+            raise
+        self.conn.execute("COMMIT")
+
+    def principals(self) -> tuple[AiPrincipal, ...]:
+        """Every principal of this agency, by name — what an operator reads before pressing anything.
+
+        The status is derived per row (the newest event wins), so this can never disagree with
+        ``principal()`` about a single principal.
+        """
+        rows = self.conn.execute(
+            "SELECT principal_id FROM ai_principals WHERE agency_id = ? ORDER BY name",
+            (self.agency_id,),
+        ).fetchall()
+        return tuple(self.principal(row["principal_id"]) for row in rows)
+
+    def events(self, principal_id: str) -> tuple[sqlite3.Row, ...]:
+        """One principal's lifecycle log, oldest first — the §40 ``when`` and ``who``.
+
+        Read-only on purpose: the log is append-only, and history is never the thing an operator
+        edits. ``principal_id`` is validated by the same call the writer uses, so a typo is a
+        refusal rather than an empty list that looks like "nothing happened".
+        """
+        principal = self.principal(principal_id)
+        return tuple(
+            self.conn.execute(
+                "SELECT seq, kind, actor, reason, occurred_at FROM ai_principal_events"
+                " WHERE principal_id = ? ORDER BY seq",
+                (principal.principal_id,),
+            ).fetchall()
+        )
+
     def suspend(
-        self, principal_id: str, *, actor: str, reason: Optional[str] = None, at: Optional[Any] = None
+        self, principal_id: str, *, actor: str, actor_role: Optional[str] = None,
+        reason: Optional[str] = None, at: Optional[Any] = None
     ) -> AiPrincipal:
         """§40 kill switch: stop this principal acting, and say who stopped it."""
-        return self._lifecycle(principal_id, "SUSPENDED", actor=actor, reason=reason, at=at)
+        return self._lifecycle(
+            principal_id, "SUSPENDED", actor=actor, actor_role=actor_role,
+            reason=reason, at=at
+        )
 
     def reinstate(
-        self, principal_id: str, *, actor: str, reason: Optional[str] = None, at: Optional[Any] = None
+        self, principal_id: str, *, actor: str, actor_role: Optional[str] = None,
+        reason: Optional[str] = None, at: Optional[Any] = None
     ) -> AiPrincipal:
-        return self._lifecycle(principal_id, "REINSTATED", actor=actor, reason=reason, at=at)
+        return self._lifecycle(
+            principal_id, "REINSTATED", actor=actor, actor_role=actor_role,
+            reason=reason, at=at
+        )
 
     def degrade(
-        self, principal_id: str, *, actor: str, reason: Optional[str] = None, at: Optional[Any] = None
+        self, principal_id: str, *, actor: str, actor_role: Optional[str] = None,
+        reason: Optional[str] = None, at: Optional[Any] = None
     ) -> AiPrincipal:
         """§17: narrow this principal to low-tier tools until a human widens it again."""
-        return self._lifecycle(principal_id, AI_STATUS_DEGRADED, actor=actor, reason=reason, at=at)
+        return self._lifecycle(
+            principal_id, AI_STATUS_DEGRADED, actor=actor, actor_role=actor_role,
+            reason=reason, at=at
+        )
 
     def read_only(
-        self, principal_id: str, *, actor: str, reason: Optional[str] = None, at: Optional[Any] = None
+        self, principal_id: str, *, actor: str, actor_role: Optional[str] = None,
+        reason: Optional[str] = None, at: Optional[Any] = None
     ) -> AiPrincipal:
         """§17: this principal may look and report, and may change nothing at all."""
-        return self._lifecycle(principal_id, AI_STATUS_READ_ONLY, actor=actor, reason=reason, at=at)
+        return self._lifecycle(
+            principal_id, AI_STATUS_READ_ONLY, actor=actor, actor_role=actor_role,
+            reason=reason, at=at
+        )
 
     def activate(
-        self, principal_id: str, *, actor: str, reason: Optional[str] = None, at: Optional[Any] = None
+        self, principal_id: str, *, actor: str, actor_role: Optional[str] = None,
+        reason: Optional[str] = None, at: Optional[Any] = None
     ) -> AiPrincipal:
         """Widen a degraded or read-only principal back to ACTIVE. Retired is terminal."""
-        return self._lifecycle(principal_id, "ACTIVATED", actor=actor, reason=reason, at=at)
+        return self._lifecycle(
+            principal_id, "ACTIVATED", actor=actor, actor_role=actor_role,
+            reason=reason, at=at
+        )
 
     def retire(
-        self, principal_id: str, *, actor: str, reason: Optional[str] = None, at: Optional[Any] = None
+        self, principal_id: str, *, actor: str, actor_role: Optional[str] = None,
+        reason: Optional[str] = None, at: Optional[Any] = None
     ) -> AiPrincipal:
-        return self._lifecycle(principal_id, "RETIRED", actor=actor, reason=reason, at=at)
+        return self._lifecycle(
+            principal_id, "RETIRED", actor=actor, actor_role=actor_role,
+            reason=reason, at=at
+        )
 
     def _lifecycle(
         self,
@@ -351,11 +450,13 @@ class AiService:
         kind: str,
         *,
         actor: str,
+        actor_role: Optional[str] = None,
         reason: Optional[str],
         at: Optional[Any],
     ) -> AiPrincipal:
         principal = self.principal(principal_id)
         clean_actor = require_ref(actor, "actor")
+        clean_role = None if actor_role is None else require_ref(actor_role, "actor_role")
         if principal.status == AI_STATUS_RETIRED:
             raise AiPrincipalRetired(
                 "a retired AI principal is not brought back",
@@ -372,15 +473,19 @@ class AiService:
                 from_status=principal.status,
                 event=kind,
             )
-        self._record_event(principal.principal_id, kind, actor=clean_actor, reason=reason, at=at)
-        self.audit.append(
-            action=f"AI_PRINCIPAL_{kind}",
-            entity_type="ai_principal",
-            entity_id=principal.principal_id,
-            actor=clean_actor,
-            actor_role="owner" if clean_actor.startswith("owner") else "system",
-            reason=reason or f"AI principal {kind.lower()}",
-        )
+        with self._one_write():
+            self._record_event(principal.principal_id, kind, actor=clean_actor, reason=reason, at=at)
+            self.audit.append(
+                action=f"AI_PRINCIPAL_{kind}",
+                entity_type="ai_principal",
+                entity_id=principal.principal_id,
+                actor=clean_actor,
+                # The actor's own role when the caller knows it (the gateway verifies it before the
+                # call gets here); the legacy heuristic only covers callers that pass a bare reference.
+                actor_role=clean_role
+                or ("owner" if clean_actor.startswith("owner") else "system"),
+                reason=reason or f"AI principal {kind.lower()}",
+            )
         return self.principal(principal.principal_id)
 
     def _record_event(
