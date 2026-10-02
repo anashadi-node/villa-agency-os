@@ -45,9 +45,9 @@ CHANNEL_SLA = {
 }
 
 SLA_MINUTES = {
-    "web_v1": (15, 240),
-    "email_v1": (60, 480),
-    "whatsapp_v1": (10, 240),
+    "web_v1": (15, 120),
+    "email_v1": (15, 120),
+    "whatsapp_v1": (10, 120),
     "agent_v1": (5, 120),
 }
 
@@ -203,6 +203,22 @@ class TestContractSurface(CaseTestBase):
                 self.assertEqual(policy.name, name)
                 self.assertEqual(policy.first_response_minutes, first)
                 self.assertEqual(policy.quote_minutes, quote)
+
+    def test_sla_policies_never_loosen_past_the_approved_ceiling(self):
+        """Owner decision 2026-10-02: first response ≤ 15 min, quote ≤ 120 min.
+
+        The ceiling is a business promise; a channel may be stricter (whatsapp 10, agent 5)
+        and may never drift above it. Without this, an SLA can be "improved" in the wrong
+        direction and nothing says so — the promise to the guest only exists in a doc.
+        """
+        ceiling_first, ceiling_quote = C.SLA_CEILING_MINUTES
+        assert (ceiling_first, ceiling_quote) == (15, 120)
+        for name, policy in C.SLA_POLICIES.items():
+            with self.subTest(policy=name):
+                self.assertLessEqual(policy.first_response_minutes, ceiling_first)
+                self.assertLessEqual(policy.quote_minutes, ceiling_quote)
+                self.assertGreater(policy.first_response_minutes, 0)
+                self.assertGreater(policy.quote_minutes, policy.first_response_minutes)
 
     def test_transition_table_covers_every_status_and_fences_closed_ones(self):
         self.assertEqual(set(C.CASE_TRANSITIONS), set(C.CASE_STATUSES))
@@ -515,13 +531,14 @@ class TestSlaAndOverdue(CaseTestBase):
     def test_explicit_policy_overrides_the_channel_default(self):
         case = self.open_case(channel="website", sla_policy="email_v1")
         self.assertEqual(case.sla_policy, "email_v1")
-        self.assertEqual(case.first_response_due_at, "2026-09-21T09:00:00+00:00")
-        self.assertEqual(case.quote_due_at, "2026-09-21T16:00:00+00:00")
+        # 08:00 + SLA_MINUTES["email_v1"] (15, 120) — the owner-approved ceiling.
+        self.assertEqual(case.first_response_due_at, "2026-09-21T08:15:00+00:00")
+        self.assertEqual(case.quote_due_at, "2026-09-21T10:00:00+00:00")
 
     def test_overdue_starts_strictly_after_the_due_instant(self):
         case = self.open_case(channel="whatsapp_business")
         self.assertEqual(case.first_response_due_at, "2026-09-21T08:10:00+00:00")
-        self.assertEqual(case.quote_due_at, "2026-09-21T12:00:00+00:00")
+        self.assertEqual(case.quote_due_at, "2026-09-21T10:00:00+00:00")  # 08:00 + 120
 
         self.advance(minutes=10)
         self.assertEqual(self.clock.now(), P.parse_iso("2026-09-21T08:10:00Z"))
@@ -539,7 +556,10 @@ class TestSlaAndOverdue(CaseTestBase):
             "now == due_at tidak boleh dianggap overdue",
         )
 
-        self.advance(minutes=229)
+        # 229 minutes was tuned when a quote was due 240 minutes out. With the
+        # owner-approved ceiling of 120, the window between "first response overdue"
+        # and "quote overdue" is 8:10 to 10:00 — so this step lands just inside it.
+        self.advance(minutes=109)
         self.assertEqual([c.case_id for c in self.svc.first_response_overdue()], [case.case_id])
         self.assertEqual(self.svc.quote_overdue(), [], "quote_due_at belum lewat")
         self.advance(minutes=1)

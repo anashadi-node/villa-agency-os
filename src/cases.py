@@ -83,6 +83,7 @@ __all__ = [
     "EVENT_KINDS",
     "CASE_TRANSITIONS",
     "SLA_POLICIES",
+    "SLA_CEILING_MINUTES",
     "DEFAULT_SLA_POLICY_BY_CHANNEL",
     "SlaPolicy",
     "Case",
@@ -278,12 +279,20 @@ class SlaPolicy:
 
 #: The policy catalogue. Names double as the ``cases.sla_policy`` value (the DDL
 #: only demands ``length(sla_policy) >= 3``).
+#: SLA per channel. The **ceiling** is the business decision of 2026-10-02 (owner): first
+#: response within 15 minutes, a quote within 2 hours (120 minutes). A channel may be
+#: *stricter* than the ceiling (whatsapp 10, agent 5) and may never be looser — a guard test
+#: pins that, because an SLA that quietly drifts above the approved number is an untested
+#: promise to the guest.
 SLA_POLICIES: dict[str, SlaPolicy] = {
-    "web_v1": SlaPolicy(name="web_v1", first_response_minutes=15, quote_minutes=240),
-    "email_v1": SlaPolicy(name="email_v1", first_response_minutes=60, quote_minutes=480),
-    "whatsapp_v1": SlaPolicy(name="whatsapp_v1", first_response_minutes=10, quote_minutes=240),
+    "web_v1": SlaPolicy(name="web_v1", first_response_minutes=15, quote_minutes=120),
+    "email_v1": SlaPolicy(name="email_v1", first_response_minutes=15, quote_minutes=120),
+    "whatsapp_v1": SlaPolicy(name="whatsapp_v1", first_response_minutes=10, quote_minutes=120),
     "agent_v1": SlaPolicy(name="agent_v1", first_response_minutes=5, quote_minutes=120),
 }
+
+#: The approved ceiling every policy above must stay under (owner, 2026-10-02).
+SLA_CEILING_MINUTES: tuple[int, int] = (15, 120)
 
 #: Channel -> policy applied when ``open_case`` is not given an explicit one.
 DEFAULT_SLA_POLICY_BY_CHANNEL: dict[str, str] = {
