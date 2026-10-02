@@ -52,7 +52,7 @@ ENTITLED = {
     "operations": {"reservation", "operations", "owner"},
     "approvals": set(D.ROLES),
     "properties": set(D.ROLES),
-    "audit": {"owner", "auditor"},
+    "audit": {"owner", "auditor", "gm"},
 }
 PAGE_ROLE_MATRIX = [(page, role) for page in ROUTES for role in D.ROLES]
 

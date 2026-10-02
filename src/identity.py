@@ -57,6 +57,7 @@ __all__ = [
     "InvalidCode",
     "LoginResult",
     "MappingSecretResolver",
+    "is_mfa_role",
     "RevokedSession",
     "SecretResolver",
     "Session",
@@ -76,6 +77,23 @@ MFA_REQUIRED_ROLES: tuple[str, ...] = roles.MFA_REQUIRED_ROLES
 #: session opened earlier. Bank details and money leaving the account are the two
 #: things an attacker with a stolen session wants most.
 HIGH_RISK_SUBJECT_TYPES: tuple[str, ...] = ("refund", "payout", "bank_change")
+
+
+def _mfa_name(role: str) -> str:
+    """The canonical name of a role, for comparing two spellings of one authority.
+
+    Sessions are opened under the dashboard's *page* vocabulary (``finance``) while the
+    published set names the canonical id (``finance_manager``). Comparing canonical names
+    keeps one rule — the finance desk owes a second factor whichever word it arrives as —
+    and an unknown word is compared as itself, so a typo stays a typo instead of matching
+    by accident.
+    """
+    return roles.canonical_role(role) or str(role)
+
+
+def is_mfa_role(role: str, required_roles: tuple[str, ...] = MFA_REQUIRED_ROLES) -> bool:
+    """True when ``role`` owes a second factor before it may act."""
+    return _mfa_name(role) in {_mfa_name(item) for item in required_roles}
 
 SESSION_IDLE_TIMEOUT = timedelta(minutes=30)
 SESSION_ABSOLUTE_TIMEOUT = timedelta(hours=12)
@@ -238,9 +256,11 @@ class Session:
         """True when this session's role owes a second factor and has not paid it.
 
         ``required_roles`` comes from the §16 policy store when the service was
-        built with one; the module constant is the documented baseline.
+        built with one; the module constant is the documented baseline. Names are compared
+        canonically (``is_mfa_role``), so a session opened as ``finance`` and a published set
+        naming ``finance_manager`` are the same rule rather than two.
         """
-        return self.role in required_roles and self.mfa_satisfied_at is None
+        return is_mfa_role(self.role, required_roles) and self.mfa_satisfied_at is None
 
     def has_step_up(self, at: datetime) -> bool:
         return self.step_up_until is not None and parse_iso(self.step_up_until) > at
@@ -523,7 +543,7 @@ class SessionService:
         role_name = require_ref(role, "role", max_len=64)
         moment = self._now() if at is None else self._moment(at)
         mfa_satisfied_at: Optional[str] = None
-        if role_name in self.mfa_required_roles:
+        if is_mfa_role(role_name, self.mfa_required_roles):
             if mfa_code is None:
                 self._event(kind="ACCESS_DENIED", identity=who, actor=who,
                             detail={"reason": "MFA_REQUIRED", "role": role_name}, at=at)

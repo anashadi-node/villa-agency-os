@@ -82,11 +82,20 @@ def test_missing_decisions_file_is_a_failure(tmp_path):
 
 
 def test_the_real_decisions_file_blocks_go_live():
-    """The repository ships with the decisions genuinely undecided."""
+    """The repository's decisions must still block go-live — the property, not a count.
+
+    This test used to assert `>= 10` open blocking rows. The owner answered seven of them on
+    2026-10-02 (D1, D2, D5, D6, D8, D9, D11, D12 became DECIDED, and D17 replaced them as the
+    tenant-readiness blocker), so the count fell to six and the assertion failed for the right
+    reason: counting rows measured how much had been answered, not whether the gate still
+    refuses. What must hold is that the file *refuses*: at least one BLOCKING row is OPEN, and
+    the row that tracks the new tenant requirement is among them.
+    """
 
     checks, open_blocking = PF.parse_decisions(REPO / "docs/GO_LIVE_DECISIONS.md")
     assert checks[0].verdict == PF.FAIL
-    assert len(open_blocking) >= 10
+    assert open_blocking, "no BLOCKING row is OPEN — either every decision landed, or the parser broke"
+    assert "D17" in open_blocking
 
 
 class TestDemoData(SeedMixin):

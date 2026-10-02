@@ -143,7 +143,7 @@ def _doc_confirm_levels() -> tuple[str, ...]:
 def _doc_p3_roles() -> tuple[str, ...]:
     """The roles the classification doc names as P3 export authorities."""
     text = _read(CLASSIFICATION_DOC).lower()
-    found = tuple(role for role in ("admin", "finance", "manager") if role in text and "p3" in text)
+    found = tuple(role for role in ("admin", "finance", "manager", "gm") if role in text and "p3" in text)
     return found
 
 

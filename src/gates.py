@@ -1123,8 +1123,11 @@ POLICY_TABLE: Mapping[str, Mapping[str, str]] = {
 }
 
 #: Who may export/email which class (DATA_CLASSIFICATION §2).
-P2_AUTH_ROLES = ("manager", "admin", "finance")
-P3_AUTH_ROLES = ("admin", "finance")
+#: ``gm`` is in both lists by the owner's decision of 2026-10-02: the GM oversees the agency,
+#: reads the audit page, and needs the data behind it. A P3 export still needs a recorded
+#: justification, so the added authority is accountable rather than silent.
+P2_AUTH_ROLES = ("manager", "admin", "finance", "gm")
+P3_AUTH_ROLES = ("admin", "finance", "gm")
 
 #: Detectors for direct identifiers. Deliberately over-matching (a long digit run
 #: is treated as an identifier) — the fail-closed side of a false positive is a

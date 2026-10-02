@@ -182,10 +182,10 @@ MONEY_OUT_APPROVER_ROLES: frozenset[str] = frozenset(
 )
 
 #: Roles that may not open a session before the second factor is satisfied (§18, ADR-0036).
-#: ``owner`` and ``finance`` are page words and ``gm`` is a canonical id: sessions are
-#: opened under the dashboard's page vocabulary, so the set has to be spelled in the
-#: words a session actually carries. Reconciling the two vocabularies is its own slice.
-MFA_REQUIRED_ROLES: tuple[str, ...] = ("owner", "finance", "gm")
+#: Canonical ids, by the owner's decision of 2026-10-02 ("ganti ke Finance Manager").
+#: ``identity.is_mfa_role`` resolves the *page* word a session carries (``finance``) onto the
+#: canonical id, so the published set and the session vocabulary cannot drift apart.
+MFA_REQUIRED_ROLES: tuple[str, ...] = ("owner", "finance_manager", "gm")
 
 
 def canonical_role(role: Any) -> Optional[str]:

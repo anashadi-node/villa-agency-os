@@ -148,7 +148,7 @@ PAGE_ROLES: Mapping[str, tuple[str, ...]] = MappingProxyType(
         "operations": ("reservation", "operations", "owner"),
         "approvals": ("reservation", "operations", "finance", "owner", "auditor", "gm"),
         "properties": ALL_ROLES,
-        "audit": ("owner", "auditor"),
+        "audit": ("owner", "auditor", "gm"),
         "error": ALL_ROLES,
     }
 )
@@ -162,9 +162,9 @@ WRITE_ROLES: tuple[str, ...] = ("reservation", "operations", "finance", "owner",
 PII_ROLES: tuple[str, ...] = ("operations", "finance")
 
 #: Dashboard role → the role string the classification gate evaluates against.
-#: ``gm`` is deliberately absent: it then reaches the gate as itself, which the gate does
-#: not list as an export authority, so a GM export is refused — exactly as the owner's is
-#: (``owner`` is in no gate list either). Fail-closed is the intended default here.
+#: ``gm`` maps to itself and is listed in the gate's P2/P3 export roles (owner decision
+#: 2026-10-02: the GM reads the audit page and may export the data behind it). ``auditor``
+#: stays a reader: it is in no export list, so an auditor can look and not take.
 GATE_ROLE_BY_ROLE: Mapping[str, str] = MappingProxyType(
     {
         "reservation": "agent",
@@ -172,6 +172,7 @@ GATE_ROLE_BY_ROLE: Mapping[str, str] = MappingProxyType(
         "finance": "finance",
         "owner": "owner",
         "auditor": "auditor",
+        "gm": "gm",
     }
 )
 

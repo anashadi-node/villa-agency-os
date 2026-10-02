@@ -30,6 +30,8 @@ import pytest
 
 import approvals
 import dashboard as D
+import gates
+import identity
 import roles
 from approvals import ApprovalService, InvalidApprover
 from primitives import FrozenClock, IdFactory
@@ -330,7 +332,7 @@ def test_the_gm_can_open_the_pages_the_owner_granted_and_owes_a_second_factor():
     approver and still have nowhere to approve. The pages below are the set the owner
     granted, pinned exactly so a later loosening of PAGE_ROLES fails here.
     """
-    granted = {"command_center", "cases", "case_detail", "finance", "approvals", "properties", "error"}
+    granted = {"command_center", "cases", "case_detail", "finance", "approvals", "properties", "audit", "error"}
     for page, allowed in D.PAGE_ROLES.items():
         if page in granted:
             assert "gm" in allowed, page
@@ -338,7 +340,15 @@ def test_the_gm_can_open_the_pages_the_owner_granted_and_owes_a_second_factor():
             assert "gm" not in allowed, page
     assert "gm" in D.WRITE_ROLES
     assert D.APPROVAL_ROLE_BY_ROLE["gm"] == "gm"
+    assert D.GATE_ROLE_BY_ROLE["gm"] == "gm"
     assert roles.role_rank("gm") == 4
+    # The gate's export lists must honour the same decision, or the page is reachable and
+    # the data behind it is not: owner decision 2026-10-02.
+    assert "gm" in gates.P2_AUTH_ROLES
+    assert "gm" in gates.P3_AUTH_ROLES
+    # An auditor looks and never takes.
+    assert "auditor" not in gates.P2_AUTH_ROLES
+    assert "auditor" not in gates.P3_AUTH_ROLES
 
 
 def test_the_gm_owes_a_second_factor_and_the_ai_maker_still_does_not_get_one():
@@ -347,3 +357,21 @@ def test_the_gm_owes_a_second_factor_and_the_ai_maker_still_does_not_get_one():
     assert "owner" in roles.MFA_REQUIRED_ROLES
     assert roles.is_ai_role("ai_service")
     assert "ai_service" not in roles.MFA_REQUIRED_ROLES
+
+
+def test_the_mfa_set_uses_canonical_names_and_still_catches_the_page_word():
+    """Owner decision 2026-10-02: name the Finance Manager, not the page word.
+
+    The set is canonical, but a session is opened under the page vocabulary, so the check
+    resolves one onto the other. Without that, renaming the set would *loosen* security
+    silently: a `finance` session would stop owing a second factor.
+    """
+    assert "finance_manager" in roles.MFA_REQUIRED_ROLES
+    assert "finance" not in roles.MFA_REQUIRED_ROLES
+    assert identity.is_mfa_role("finance") is True
+    assert identity.is_mfa_role("finance_manager") is True
+    assert identity.is_mfa_role("owner") is True
+    assert identity.is_mfa_role("gm") is True
+    assert identity.is_mfa_role("reservation") is False
+    assert identity.is_mfa_role("operations") is False
+    assert identity.is_mfa_role("auditor") is False
