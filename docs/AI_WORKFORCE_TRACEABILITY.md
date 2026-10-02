@@ -63,7 +63,7 @@ Semua ❌ terpusat di satu tempat: **lapisan 6 agent AI-nya sendiri**, yang mema
 | AI Policy Gateway | ❌ | belum ada (belum ada agent yang perlu dilewatkan) |
 | Policy Engine | ✅ | `src/policy_engine.py` (ADR-0017) |
 | Approval Engine | ✅ | `src/approvals.py` |
-| Exception Engine | ❌ | tidak ada modul |
+| Exception Engine | ✅ | `src/exception_engine.py` (2026-10-02): kategori → playbook + severity dari tabel, penghitung anti-banjir insiden, laporan lewat outbox. Worker latar belum |
 | Identity / RBAC | ✅ | `src/identity.py` (+ TOTP/MFA) |
 | Audit / Observability | ✅ | `src/audit.py`, `src/observability.py`, `src/anchors.py` |
 | Outbox / Inbox / Queue | ❌ | ADR-0007 *accepted*, belum dibangun; tidak ada tabel |
