@@ -40,6 +40,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
 
+import booking_closure as CLOSURE
 import matching as MATCHING
 import policy_engine as PE
 import quote_calculator as QC
@@ -1861,6 +1862,87 @@ class ReservationKernel:
             )
         return booking_id
 
+    def close_booking(
+        self,
+        *,
+        booking_id: str,
+        command_id: str,
+        reason: Optional[str] = None,
+        actor: Optional[str] = None,
+        actor_role: Optional[str] = None,
+    ) -> str:
+        """Close a booking, if and only if §30's closure gate is satisfied.
+
+        §30: ``BOOKING_CLOSED`` only when the guest checked out, no guest issue is open, the
+        financial and supplier reconciliations are complete, the security deposit is resolved, the
+        incidents are closed and the required documents are complete — *otherwise* the platform
+        shows the blocker list. So the gate is a judgement, not a guard: the verdict is computed by
+        :func:`booking_closure.evaluate` (the module that owns §30's rule) and a refusal **carries
+        the list** rather than a bare no. Closing an already-closed booking is a no-op.
+
+        The gate fails closed on the facts no module records yet (supplier settlement, the
+        deposit's resolution, the required-documents list), which is deliberate: a booking closed on
+        an unverifiable fact could not be reopened honestly.
+        """
+
+        booking_id = require_ref(booking_id, "booking_id")
+        command_id = require_ref(command_id, "command_id")
+        _require_min_length(command_id, "command_id", 8)
+        reason = None if reason is None else require_text(reason, "reason", max_len=200)
+        now = self._now()
+        with self.transaction() as conn:
+            booking = self._require_booking(conn, booking_id)
+            if booking["status"] == "CLOSED":
+                return booking_id
+            verdict = CLOSURE.evaluate(conn, booking_id=booking_id, agency_id=self.agency_id)
+            if not verdict.ready:
+                raise DomainError(
+                    "§30's closure gate is not satisfied: " + ", ".join(verdict.blockers),
+                    code="BOOKING_NOT_CLOSABLE",
+                    booking_id=booking_id,
+                    status=booking["status"],
+                    blockers=list(verdict.blockers),
+                )
+            if not self._transition_gate(booking["status"], "CLOSED", "close_booking"):
+                raise DomainError(
+                    "state machine refuses this transition",
+                    code="BOOKING_TRANSITION_REFUSED",
+                    from_state=booking["status"],
+                    to_state="CLOSED",
+                )
+            conn.execute(
+                """
+                UPDATE bookings SET status = ?, updated_at = ?, version_lock = version_lock + 1
+                WHERE booking_id = ?
+                """,
+                ("CLOSED", now, booking_id),
+            )
+            self._append_state_event(
+                conn,
+                booking_id=booking_id,
+                from_state=booking["status"],
+                to_state="CLOSED",
+                command="close_booking",
+                command_id=command_id,
+                actor=actor or self.actor,
+                actor_role=actor_role or self.actor_role,
+                reason=reason,
+                evidence_ref=None,
+            )
+            self._audit(
+                conn,
+                action="booking.closed",
+                entity_type="booking",
+                entity_id=booking_id,
+                before={"status": booking["status"]},
+                after={"status": "CLOSED"},
+                reason=reason,
+                policy_version_id=booking["policy_version_id"],
+                evidence_ref=None,
+                actor=actor,
+            )
+        return booking_id
+
     # -- reads --------------------------------------------------------------- #
     def get_hold(self, hold_id: str) -> sqlite3.Row:
         return self._require_hold(self.conn, require_ref(hold_id, "hold_id"))
@@ -2591,6 +2673,7 @@ _KERNEL_TRANSITIONS: frozenset[tuple[str, str, str]] = frozenset(
         ("CONFIRMED", "CANCELLED", "cancel_booking"),
         ("PRE_ARRIVAL", "CANCELLED", "cancel_booking"),
         ("IN_STAY", "CANCELLED", "cancel_booking"),
+        ("COMPLETED", "CLOSED", "close_booking"),
     }
 )
 
