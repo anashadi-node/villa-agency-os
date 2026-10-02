@@ -1,4 +1,4 @@
-"""Stage 4 — the §9 capability workers (RES-W01…W03), pinned as claims.
+"""Stage 4 — the §9 capability workers (RES-W01…W08), pinned as claims.
 
 A worker has three steps and no fourth: **guard the thread, ask the door, delegate**. The claims
 below are about each step being enforced rather than intended:
@@ -24,7 +24,10 @@ below are about each step being enforced rather than intended:
    band: internal task/reminder);
 11. the hold worker takes one unit out of sale only through the same door and the owning module's
    own gate, deriving the window from the confirmed stay, the guest from the case row and the
-   policy version from the lookup the ranking and the price already used.
+   policy version from the lookup the ranking and the price already used;
+12. the booking status worker **answers and never confirms**: §9's three gates are read out
+   from the modules that own them, ``booking_id`` stays empty until a human's confirmation made
+   one, and a hold that was released does not secure the slot.
 
 The clock is frozen, the ids are deterministic and the database is an in-memory one: every claim
 here is reproducible, and none of them depends on how long a test took to run.
@@ -51,6 +54,9 @@ from test_wave4c_quotation_versions import policy as version_fixture
 AGENCY = RST.AGENCY
 HUMAN = RST.HUMAN
 OPS = RST.OPS
+
+#: The role a person holds when they record the guest's yes or release a hold.
+RESERVATION_ROLE = "reservation_manager"
 
 #: §56's allowance for MEDIUM tools, unpublished until an owner writes it down. The key is read
 #: from :mod:`ai_service` rather than restated, so this file cannot drift from the one it tests.
@@ -213,6 +219,30 @@ class ReservationWorkersTestCase(unittest.TestCase):
 
         kwargs.setdefault("unit_id", "unit_1")
         return fixture.workers.send_quote(fixture.conversation.conversation_id, **kwargs)
+
+    def held(self, fixture, **kwargs):
+        """Ask for the tentative hold through the RES-W07 worker."""
+
+        kwargs.setdefault("unit_id", "unit_1")
+        return fixture.workers.request_hold(fixture.conversation.conversation_id, **kwargs)
+
+    def offering(self, fixture, *, accept: bool = True):
+        """Send the offer through RES-W05 and, when asked, record the guest's yes (§11)."""
+
+        quotation = self.sent(fixture)
+        if accept:
+            fixture.workers.quotation().accept(
+                quotation.quotation_version_id, actor=HUMAN, actor_role=RESERVATION_ROLE
+            )
+        return quotation
+
+    def status_answer(self, fixture, **kwargs):
+        """Ask the RES-W08 worker where the reservation stands."""
+
+        kwargs.setdefault("hold_id", None)
+        return fixture.workers.booking_status(
+            fixture.conversation.conversation_id, **kwargs
+        )
 
     @staticmethod
     def quote_row(fixture, quote_id: str):
@@ -528,6 +558,7 @@ class ReservationWorkersTestCase(unittest.TestCase):
             RW.HOLD_WORKER: lambda: fixture.workers.request_hold(
                 conversation_id, unit_id="unit_1"
             ),
+            RW.BOOKING_WORKER: lambda: fixture.workers.booking_status(conversation_id),
         }
         for worker, attempt in attempts.items():
             with self.subTest(worker=worker):
@@ -1041,6 +1072,127 @@ class ReservationWorkersTestCase(unittest.TestCase):
         self.assertEqual(raised.exception.code, "UNIT_NOT_FOUND")
         self.assertEqual(self.count(fixture, "holds"), 0)
 
+    # -- RES-W08: the booking status ---------------------------------------- #
+
+    def test_the_booking_worker_reads_the_gates_and_claims_nothing(self):
+        """§9's invariant as a readout: the gates are checked, the booking is not claimed.
+
+        With the version accepted and the hold confirmed, two of §9's three gates are satisfied and
+        the third — verified client funds — has no home on this platform yet, so the answer says so
+        instead of implying it. Nothing in the answer calls this a booking: it is not one until a
+        human confirms it, and §9 reads the same way.
+        """
+
+        fixture = self.running(seed="w08")
+        self.inventory(fixture)
+        self.versions_in_force(fixture)
+        self.confirm_stay(fixture)
+        self.allow_medium(fixture, tools=(RW.HOLD_TOOL,))
+        hold = self.held(fixture)
+        self.allow_medium(fixture, tools=(RW.QUOTE_TOOL,))
+        self.offering(fixture)
+
+        answer = self.status_answer(fixture, hold_id=hold.hold_id)
+
+        self.assertTrue(answer.commercial["accepted"])
+        self.assertTrue(answer.inventory["secures_slot"])
+        self.assertEqual(answer.inventory["status"], HS.HOLD_CONFIRMED)
+        self.assertEqual(answer.missing, (RW.GATE_FINANCIAL,))
+        self.assertIsNone(answer.booking_id)
+        self.assertIsNone(answer.status)
+        self.assertFalse(answer.occupies_slot)
+        self.assertEqual(answer.financial["note"], RW.FINANCIAL_GATE_NOTE)
+        self.assertFalse(answer.financial["recorded"])
+        self.assertEqual(answer.as_dict()["missing"], [RW.GATE_FINANCIAL])
+        self.assertEqual(len(self.door_rows(fixture, tool=RW.BOOKING_TOOL)), 1)
+        reasons = self.allowed_reasons(fixture, tool=RW.BOOKING_TOOL)
+        self.assertTrue(reasons[0].startswith(RW.BOOKING_WORKER))
+        self.assertEqual(self.count(fixture, "bookings"), 0)
+
+    def test_the_booking_worker_reports_the_booking_a_human_confirmed(self):
+        """Once a human confirms, the row is the answer — and an unpaid one still shows the gap.
+
+        The confirmation itself is not the worker's: the kernel writes the booking under the human
+        actor, the case is linked to it through :mod:`cases`, and only then does the answer have a
+        booking to report. Confirmed with nothing paid, §9's financial gate stays open, and the
+        answer keeps saying so.
+        """
+
+        fixture = self.running(seed="w08b")
+        self.inventory(fixture)
+        self.versions_in_force(fixture)
+        self.confirm_stay(fixture)
+        self.allow_medium(fixture, tools=(RW.HOLD_TOOL,))
+        hold = self.held(fixture)
+        self.allow_medium(fixture, tools=(RW.QUOTE_TOOL,))
+        quotation = self.offering(fixture)
+        booking = fixture.workers.kernel().confirm_from_hold(
+            hold_id=hold.hold_id,
+            quote_id=quotation.quote_id,
+            idempotency_key="idem_book_w08",
+            command_id="cmd_book_w08",
+            adults=2,
+            actor=HUMAN,
+            actor_role=RESERVATION_ROLE,
+        )
+        fixture.workers.cases().link_booking(
+            fixture.case.case_id,
+            booking.booking_id,
+            actor=HUMAN,
+            command_id="cmd_link_w08",
+        )
+
+        answer = self.status_answer(fixture, hold_id=hold.hold_id)
+
+        self.assertEqual(answer.booking_id, booking.booking_id)
+        self.assertEqual(answer.status, HS.HOLD_CONFIRMED.replace("HOLD_", ""))
+        self.assertTrue(answer.occupies_slot)
+        self.assertEqual(answer.inventory["source"], "booking")
+        self.assertTrue(answer.inventory["secures_slot"])
+        self.assertEqual(answer.missing, (RW.GATE_FINANCIAL,))
+        self.assertFalse(answer.financial["recorded"])
+        self.assertEqual(answer.financial["amount_paid_minor"], 0)
+
+    def test_a_released_hold_does_not_secure_the_slot(self):
+        """§9's inventory gate is the supplier's confirmation — a released slot is not secured.
+
+        The guest let the hold go. The answer must not tell them the slot is still theirs, and the
+        command's absence of a booking is what makes that structurally true: no row, no claim.
+        """
+
+        fixture = self.running(seed="w08c")
+        self.inventory(fixture)
+        self.versions_in_force(fixture, card=False)
+        self.confirm_stay(fixture)
+        self.allow_medium(fixture, tools=(RW.HOLD_TOOL,))
+        hold = self.held(fixture)
+        fixture.workers.kernel().release_hold(
+            hold.hold_id, reason="guest chose another villa", actor=HUMAN
+        )
+
+        answer = self.status_answer(fixture, hold_id=hold.hold_id)
+
+        self.assertEqual(answer.inventory["status"], HS.HOLD_RELEASE_CONFIRMED)
+        self.assertFalse(answer.inventory["secures_slot"])
+        self.assertEqual(
+            answer.missing,
+            (RW.GATE_COMMERCIAL, RW.GATE_INVENTORY, RW.GATE_FINANCIAL),
+        )
+        self.assertIsNone(answer.booking_id)
+        self.assertFalse(answer.occupies_slot)
+        self.assertEqual(self.count(fixture, "bookings"), 0)
+
+    def test_the_booking_worker_refuses_when_there_is_nothing_to_report(self):
+        """No booking on the case and no hold named: refuse, do not guess which hold is meant."""
+
+        fixture = self.running(seed="w08d")
+
+        with self.assertRaises(RW.MissingRequirements) as raised:
+            self.status_answer(fixture)
+
+        self.assertIn(RW.BOOKING_WORKER, str(raised.exception))
+        self.assertEqual(self.door_rows(fixture, tool=RW.BOOKING_TOOL), [])
+
     # -- 7. the tools the workers hold --------------------------------------- #
 
     def test_the_tools_the_workers_hold_are_the_tools_the_catalogue_declares(self):
@@ -1059,6 +1211,7 @@ class ReservationWorkersTestCase(unittest.TestCase):
             (RW.QUOTATION_WORKER, RW.QUOTE_TOOL),
             (RW.FOLLOWUP_WORKER, RW.FOLLOWUP_TOOL),
             (RW.HOLD_WORKER, RW.HOLD_TOOL),
+            (RW.BOOKING_WORKER, RW.BOOKING_TOOL),
         ):
             with self.subTest(worker=worker):
                 self.assertIn(tool, declared)

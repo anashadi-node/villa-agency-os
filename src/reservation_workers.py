@@ -33,12 +33,12 @@ contrast, is an act with an outside effect: it takes a slot out of sale, which i
 consults it (§56: conversation text cannot raise privilege), so pasting what a guest wrote
 into it would put guest text into the audit chain in exchange for nothing.
 
-Scope: seven of §9's jobs — inquiry (RES-W01), matching (RES-W02), availability (RES-W03),
-pricing (RES-W04), the offer (RES-W05), the routine follow-up (RES-W06) and the tentative hold
-(RES-W07). The rest of the job list arrives with the modules it needs and follows the same three
-steps: guard, door, delegate.
+Scope: eight of §9's jobs — inquiry (RES-W01), matching (RES-W02), availability (RES-W03),
+pricing (RES-W04), the offer (RES-W05), the routine follow-up (RES-W06), the tentative hold
+(RES-W07) and the booking status (RES-W08). The rest of the job list arrives with the modules it
+needs and follows the same three steps: guard, door, delegate.
 
-Two of the five are worth reading together with §56. Pricing has no capability of its own — §56
+Three of the eight are worth reading together with §56. Pricing has no capability of its own — §56
 names the *answer* (``villa.answer_verified``) — so RES-W04 writes nothing; the priced stay
 becomes a row inside RES-W05, whose one act is the one §56 names for the offer
 (``quotation.send``, MEDIUM, owner allow-listed). A kill switch that leaves the AI able to answer
@@ -49,8 +49,10 @@ from __future__ import annotations
 
 import datetime as _dt
 import sqlite3
+from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence
 
+import booking_states as BS
 import cases as C
 import crm as CRM
 import intake as IN
@@ -86,6 +88,23 @@ QUOTE_TOOL = Q.SEND_TOOL
 #: name in code, only in the §56 seeds (``ai_tools``) and the gateway's effect table. Spelled
 #: here once, and pinned against the catalogue by the suite like the rest.
 FOLLOWUP_TOOL = "followup.routine"
+BOOKING_WORKER = "RES-W08"
+BOOKING_TOOL = "booking.status"
+
+#: §9's three gates, under the spec's own names, so the answer and the tests speak it.
+GATE_COMMERCIAL = "commercial"
+GATE_INVENTORY = "inventory"
+GATE_FINANCIAL = "financial"
+
+#: What the platform can and cannot see about §9's financial gate. §9 wants
+#: ``required_client_funds_verified == true`` plus whatever supplier-side conditions the policy or
+#: contract adds; this estate records a human's confirmation and the amount paid. Until the
+#: verification fact has a home of its own, the answer says so instead of implying it.
+FINANCIAL_GATE_NOTE = (
+    "no verified-funds fact is recorded yet: the platform stores the amount paid and the human "
+    "who confirmed it, not §9's required_client_funds_verified, nor policy-specific "
+    "supplier prerequisites"
+)
 
 #: Pricing is §56's *answer* capability, not a commercial act of its own: the AI tells a
 #: verified figure about this villa's rates. §56 has no separate name for the arithmetic (or for
@@ -114,6 +133,45 @@ class MissingRequirements(WorkerError):
 
 class NoPolicyInForce(WorkerError):
     """A hold was asked for under a stay no policy version covers. Refused, never invented."""
+
+
+@dataclass(frozen=True)
+class BookingStatusAnswer:
+    """Where a reservation stands, and which of §9's gates are still open (RES-W08).
+
+    Read-only by construction. ``status`` is the row's own word, ``booking_id`` stays empty
+    until a booking exists, and nothing in this object is a confirmation: the only writer of a
+    booking is :meth:`reservation_kernel.ReservationKernel.confirm_from_hold`, called by a human.
+    """
+
+    case_id: str
+    booking_id: Optional[str]
+    status: Optional[str]
+    occupies_slot: bool
+    unit_id: Optional[str]
+    check_in: Optional[str]
+    check_out: Optional[str]
+    commercial: Mapping[str, Any]
+    inventory: Mapping[str, Any]
+    financial: Mapping[str, Any]
+    missing: tuple[str, ...]
+
+    def as_dict(self) -> dict[str, Any]:
+        """The answer as plain data, ready for a prompt or a log line."""
+
+        return {
+            "case_id": self.case_id,
+            "booking_id": self.booking_id,
+            "status": self.status,
+            "occupies_slot": self.occupies_slot,
+            "unit_id": self.unit_id,
+            "check_in": self.check_in,
+            "check_out": self.check_out,
+            "commercial": dict(self.commercial),
+            "inventory": dict(self.inventory),
+            "financial": dict(self.financial),
+            "missing": list(self.missing),
+        }
 
     code = "RES_WORKER_HOLD_NO_POLICY"
 
@@ -599,6 +657,148 @@ class ReservationWorkers:
             actor_role=self.service.actor_role,
             principal_id=self.service.principal(),
         )
+
+    # -- RES-W08: the booking status --------------------------------------- #
+
+    def booking_status(
+        self,
+        conversation_id: str,
+        *,
+        hold_id: Optional[str] = None,
+        at: Any = None,
+    ) -> BookingStatusAnswer:
+        """Report where the reservation stands, and what §9 still requires (RES-W08).
+
+        §9 is the *booking confirmation invariant*: ``BOOKING_CONFIRMED`` is valid only when the
+        client accepted the applicable commercial version, the inventory is secured by an explicit
+        supplier/villa confirmation, and the required client funds are verified. §56 gives the AI
+        exactly one booking capability — ``booking.status``, LOW and read-only — and none of those
+        three gates is an act this service may perform on its own behalf. So the worker reports: the
+        row's own status when a booking exists, and the state of the three gates either way.
+
+        The architecture's "Must Not" list is why the *shape* matters: the AI may not claim a
+        requested hold is confirmed, nor that a reported payment is a received one. This answer makes
+        that claim impossible to construct — ``booking_id`` is empty until a booking exists, and
+        ``inventory["secures_slot"]`` is true only for a hold the supplier actually confirmed
+        (§6's source of truth), never for one we merely asked for.
+
+        ``hold_id`` names the hold the conversation is waiting on, because the estate does not yet
+        bind holds to conversations (§9's ``hold_reference`` is still unwritten). The worker refuses
+        rather than guess which hold a guest means.
+        """
+
+        conversation = self.service.require_thread(
+            conversation_id, what=f"{BOOKING_WORKER} answering where the booking stands"
+        )
+        case = self._case(conversation.case_id)
+        kernel = self.kernel()
+        booking = kernel.get_booking(case.booking_id) if case.booking_id else None
+        hold = kernel.get_hold(hold_id) if hold_id else None
+        if booking is None and hold is None:
+            raise MissingRequirements(
+                "this case has no booking yet and no hold was named, so there is nothing to report; "
+                "name the hold the guest is waiting on",
+                conversation_id=conversation.conversation_id,
+                case_id=case.case_id,
+                worker=BOOKING_WORKER,
+                missing=["hold_id"],
+            )
+        self._door(
+            conversation,
+            BOOKING_TOOL,
+            worker=BOOKING_WORKER,
+            what=f"the booking status of case {case.case_id}",
+            at=at,
+        )
+        if booking is not None:
+            unit_id: Any = booking["unit_id"]
+            check_in: Any = booking["check_in"]
+            check_out: Any = booking["check_out"]
+        else:
+            unit_id = hold["unit_id"]
+            check_in = hold["check_in"]
+            check_out = hold["check_out"]
+        commercial = self._commercial_gate(unit_id, check_in, check_out)
+        inventory = self._inventory_gate(booking=booking, hold=hold)
+        financial = self._financial_gate(booking)
+        missing = tuple(
+            name
+            for name, satisfied in (
+                (GATE_COMMERCIAL, bool(commercial["accepted"])),
+                (GATE_INVENTORY, bool(inventory["secures_slot"])),
+                (GATE_FINANCIAL, bool(financial["recorded"])),
+            )
+            if not satisfied
+        )
+        status = None if booking is None else str(booking["status"])
+        return BookingStatusAnswer(
+            case_id=case.case_id,
+            booking_id=None if booking is None else str(booking["booking_id"]),
+            status=status,
+            occupies_slot=bool(status is not None and status in BS.OCCUPYING_STATES),
+            unit_id=unit_id,
+            check_in=check_in,
+            check_out=check_out,
+            commercial=commercial,
+            inventory=inventory,
+            financial=financial,
+            missing=missing,
+        )
+
+    def _commercial_gate(self, unit_id: str, check_in: str, check_out: str) -> Mapping[str, Any]:
+        """§9's commercial gate, read from the module that owns the versions (§11)."""
+
+        service = self.quotation()
+        current = service.current(unit_id=unit_id, check_in=check_in, check_out=check_out)
+        if current is None:
+            return {"version_id": None, "status": None, "accepted": False, "accepted_at": None}
+        acceptance = service.acceptance(current.quotation_version_id)
+        return {
+            "version_id": current.quotation_version_id,
+            "status": current.status,
+            "accepted": acceptance is not None,
+            "accepted_at": None if acceptance is None else acceptance.accepted_at,
+        }
+
+    def _inventory_gate(self, *, booking: Any, hold: Any) -> Mapping[str, Any]:
+        """§9's inventory gate: the supplier's confirmation, never our own request.
+
+        A booking row already carries the hold it converted, so the slot is secured while the row
+        occupies it. Before that, only a hold the supplier confirmed secures the slot —
+        ``REQUESTED``/``AWAITING_SUPPLIER`` are our side of the conversation (§7).
+        """
+
+        if booking is not None:
+            return {
+                "source": "booking",
+                "hold_ref": None if booking["hold_ref"] is None else str(booking["hold_ref"]),
+                "status": str(booking["status"]),
+                "secures_slot": str(booking["status"]) in BS.OCCUPYING_STATES,
+            }
+        status = str(hold["status"])
+        return {
+            "source": "hold",
+            "hold_id": str(hold["hold_id"]),
+            "status": status,
+            "expires_at": str(hold["expires_at"]),
+            "secures_slot": status == RK.HOLD_CONFIRMED,
+        }
+
+    def _financial_gate(self, booking: Any) -> Mapping[str, Any]:
+        """§9's financial gate, as far as this platform can see it — see the note.
+
+        ``recorded`` is deliberately narrow: it is true when the booking carries an amount a human
+        confirmed, which is the closest fact the estate holds. It is *not* a claim that §9's
+        ``required_client_funds_verified`` was checked, and the answer carries the note that says so.
+        """
+
+        return {
+            "recorded": bool(booking is not None and int(booking["amount_paid_minor"]) > 0),
+            "amount_paid_minor": None if booking is None else int(booking["amount_paid_minor"]),
+            "currency": None if booking is None else str(booking["currency"]),
+            "payment_status": None if booking is None else str(booking["payment_status"]),
+            "note": FINANCIAL_GATE_NOTE,
+        }
 
     # -- RES-W06: the routine follow-up ------------------------------------ #
 
