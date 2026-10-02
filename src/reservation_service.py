@@ -539,7 +539,20 @@ class ReservationService:
         return self.get(conversation_id).writes_allowed
 
     def require_write(self, conversation_id: str, *, what: str) -> Conversation:
-        """The guard every capability worker opens with: refuse to act on a handed-off thread."""
+        """The guard the write path opens with: refuse to act on a handed-off thread."""
+
+        return self.require_thread(conversation_id, what=what)
+
+    def require_thread(self, conversation_id: str, *, what: str) -> Conversation:
+        """The guard every capability worker opens with: the AI must hold this thread to act.
+
+        The rule is one rung wide on purpose. ``AI_RUNNING`` is the only state in which the AI
+        says anything *or* looks anything up for a conversation: a thread a human owns (or is
+        owed) is not the AI's to search, ask about or answer, and a capability worker that
+        checked only the writes would still be a second voice in a conversation the §13 ladder
+        had already taken away from it. Reads are refused with the same error as writes, so an
+        operator reading the audit sees the same reason whichever worker strayed.
+        """
 
         conversation = self.get(conversation_id)
         if not conversation.writes_allowed:
@@ -659,6 +672,16 @@ class ReservationService:
                 code="RES_PRINCIPAL_REQUIRED",
             )
         return require_ref(self.principal_id, "principal_id")
+
+    def principal(self) -> str:
+        """The same name, for callers outside this class: a capability worker named it.
+
+        The workers ask the gateway on behalf of the *service's* principal, never a per-worker
+        identity of their own (§9 scales by concurrent workers, not by minting one identity per
+        worker), so they need one public way to read the name the conversation already carries.
+        """
+
+        return self._principal()
 
     # -- consent ------------------------------------------------------------ #
 

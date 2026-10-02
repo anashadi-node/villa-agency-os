@@ -37,7 +37,7 @@ Semua ❌ terpusat di satu tempat: **lapisan 6 agent AI-nya sendiri**, yang mema
 | **6** | Matriks tanggung jawab | Sama dengan 2A.1 | D3 `UNASSIGNED` | 🟡 |
 | **7** | Agent 1 — AI Control Tower | **Belum ada** | 0 berkas | ❌ |
 | **8** | Agent 2 — Commercial AI | **Belum ada** | 0 berkas | ❌ |
-| **9** | Agent 3 — AI Reservation Service | **Sebagian (2026-10-02)** — yang **ada**: ledger percakapan berisolasi (satu percakapan per (kasus, kanal), tanpa identitas mentah), tangga §13 utuh 8 rung, kosakata eskalasi tertutup 12 kode, paket handoff berdigest (fakta `ACCEPTED` saja, dirujuk bukan disalin), ambang keyakinan **deny-first**, handoff hanya ke peran yang **ada pemegangnya**, outbox + insiden untuk 3 pemicu yang punya playbook. Yang **belum**: 11 capability worker RES-W01…W11, CLI operator, telemetri KPI §22 | `src/reservation_service.py`, `src/schema/012_reservation_service.sql`; 37 tes; ADR-0042/0043/0044 | 🟡 |
+| **9** | Agent 3 — AI Reservation Service | **Sebagian (2026-10-02)** — yang **ada**: ledger percakapan berisolasi (satu percakapan per (kasus, kanal), tanpa identitas mentah), tangga §13 utuh 8 rung, kosakata eskalasi tertutup 12 kode, paket handoff berdigest (fakta `ACCEPTED` saja, dirujuk bukan disalin), ambang keyakinan **deny-first**, handoff hanya ke peran yang **ada pemegangnya**, outbox + insiden untuk 3 pemicu yang punya playbook. Yang **ada juga**: 3 capability worker pertama (RES-W01 inquiry, RES-W02 matching, RES-W03 availability) yang menempuh urutan tetap — jaga thread §13 → tanya pintu `ai_gateway` → delegasi ke modul pemilik aturan. Yang **belum**: 8 worker sisanya (RES-W04…W11), CLI operator, telemetri KPI §22 | `src/reservation_service.py`, `src/reservation_workers.py`, `src/schema/012_reservation_service.sql`; 55 tes (37+18); ADR-0042/0043/0044/0045 | 🟡 |
 | **10** | Agent 4 — Operations AI | **Belum ada** | 0 berkas | ❌ |
 | **11** | Agent 5 — Finance Admin AI | **Belum ada.** Larangan mutlaknya (tidak menyetujui/memindahkan uang) **sudah** ditegakkan di tingkat identitas | `src/ai_service.py` deny registry; `src/approvals.py` | ❌ |
 | **12** | Agent 6 — Revenue & BI AI | **Belum ada** | 0 berkas | ❌ |
@@ -81,7 +81,7 @@ Semua ❌ terpusat di satu tempat: **lapisan 6 agent AI-nya sendiri**, yang mema
 |---|---|---|---|---|---|
 | 1 | AI Control Tower | CT-W01…W10 | General Manager | GM; Owner untuk insiden material | ❌ |
 | 2 | Commercial AI | COM-W01…W11 | Commercial & Marketing Manager | lewat manager/GM | ❌ |
-| 3 | AI Reservation Service | RES-W01…W11 | Operations / Reservation Manager | lewat manager/GM | 🟡 inti (ledger + tangga §13 + eskalasi) ada 2026-10-02; worker belum |
+| 3 | AI Reservation Service | RES-W01…W03 ✅ · RES-W04…W11 belum | Operations / Reservation Manager | lewat manager/GM | 🟡 inti ledger+tangga §13 ada, 3 worker pertama ada 2026-10-02 |
 | 4 | Operations AI | OPS-W01…W10 | Operations Manager | GM/Owner per severity | ❌ |
 | 5 | Finance Admin AI | FIN-W01…W11 | Finance & Accounting Manager | **langsung GM + Owner** | ❌ |
 | 6 | Revenue & BI AI | RBI-W01…W12 | Revenue Manager / GM | **langsung GM + Owner** | ❌ |
