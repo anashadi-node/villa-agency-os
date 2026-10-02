@@ -59,3 +59,7 @@ So RES-W08 is an answer, and the one act that creates a booking stays where it a
   and test migration; (b) bind quotes and holds to the conversation (§9's `quote_reference` /
   `hold_reference`) so a worker need not be handed the hold id; (c) RES-W09…W11
   (amend/cancel assistance, pre-arrival communication, human handoff), each following ADR-0045.
+
+## Update 2026-10-02 — the gap this ADR recorded is now closed
+
+`confirm_from_hold` enforces §9's commercial gate as of **ADR-0050**: a booking is refused without an `ACCEPTED` version of the quote (`CONFIRM_NOT_ACCEPTED`), and refused when that accepted version covers another stay (`CONFIRM_ACCEPTED_OTHER_STAY`). The three gate readings this ADR's worker reports are unchanged — the answer still reads the same facts from the same owners — but the invariant behind them now has an enforcer, which is what this ADR said was missing.

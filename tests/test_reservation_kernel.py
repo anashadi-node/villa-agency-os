@@ -155,9 +155,44 @@ class KernelTestCase(unittest.TestCase):
         )
 
     def persist_quote(self, **kwargs):
+        """Persist the quote the way the platform does when a guest says yes.
+
+        §9's commercial gate means a booking needs the *accepted* version of this quote, so the
+        helper records one by default. ``accept=False`` builds the offer nobody has answered yet,
+        which is what the refusal tests need.
+        """
+        accept = kwargs.pop("accept", True)
         quote = self.quote(**kwargs)
         self.kernel.persist_quote(quote)
+        if accept:
+            self.accept_version(quote)
         return quote
+
+    def accept_version(self, quote, *, version=1, status="ACCEPTED", unit_id=None,
+                       check_in=None, check_out=None):
+        """Record the version the guest answered — the row `QuotationService.accept` writes.
+
+        Only the version row matters at this layer: the kernel gates on there being an accepted
+        version of *this quote for this stay*, while the three snapshots and the acceptance row
+        are the quotation module's own richer record (its tests pin those).
+        """
+        self.kernel.conn.execute(
+            "INSERT INTO quotation_versions (quotation_version_id, agency_id, property_id,"
+            " unit_id, check_in, check_out, version, quote_id, status, created_by, created_at,"
+            " sent_at) VALUES (?, 'agency_default', ?, ?, ?, ?, ?, ?, ?, 'user:owner-1', ?, ?)",
+            (
+                f"qv_{quote.quote_id}_{version}",
+                quote.property_id,
+                unit_id or quote.unit_id,
+                check_in or quote.check_in,
+                check_out or quote.check_out,
+                version,
+                quote.quote_id,
+                status,
+                NOW,
+                NOW,
+            ),
+        )
 
     def hold(self, unit_id="unit_1", check_in="2026-10-01", check_out="2026-10-03",
              key="idem_hold_0001", quote_ref=None, policy_version_id="policy_v1", **kwargs):
@@ -428,6 +463,60 @@ class TestNoDoubleBooking(KernelTestCase):
         )
         occupied = self.kernel.occupancy("unit_1", start="2026-09-30", end="2026-10-05")
         self.assertEqual([row["kind"] for row in occupied], ["booking"])
+
+
+class TestCommercialGate(KernelTestCase):
+    """§9: a booking needs the version the guest accepted — for the stay it covers."""
+
+    def test_a_booking_needs_the_version_the_guest_accepted(self):
+        """An offer that was only sent is not a contract, and the refusal writes nothing."""
+
+        quote = self.persist_quote(accept=False)
+        hold = self.hold(quote_ref=quote.quote_id)
+
+        with self.assertRaises(DomainError) as ctx:
+            self.kernel.confirm_from_hold(
+                hold_id=hold.hold_id,
+                quote_id=quote.quote_id,
+                idempotency_key="idem_gate_0001",
+                command_id="cmd_gate_0001",
+                adults=2,
+            )
+        self.assertEqual(ctx.exception.code, "CONFIRM_NOT_ACCEPTED")
+        self.assertEqual(self.row_count("bookings"), 0)
+        self.assertEqual(self.kernel.get_hold(hold.hold_id)["status"], "CONFIRMED")
+
+    def test_an_accepted_version_for_other_dates_does_not_book_these(self):
+        """A yes for other dates is not a yes for these."""
+
+        quote = self.persist_quote(accept=False)
+        self.accept_version(quote, check_in="2027-01-01", check_out="2027-01-05")
+        hold = self.hold(quote_ref=quote.quote_id)
+
+        with self.assertRaises(DomainError) as ctx:
+            self.kernel.confirm_from_hold(
+                hold_id=hold.hold_id,
+                quote_id=quote.quote_id,
+                idempotency_key="idem_gate_0002",
+                command_id="cmd_gate_0002",
+                adults=2,
+            )
+        self.assertEqual(ctx.exception.code, "CONFIRM_ACCEPTED_OTHER_STAY")
+        self.assertEqual(self.row_count("bookings"), 0)
+
+    def test_the_accepted_version_is_the_only_difference_that_lets_it_through(self):
+        quote = self.persist_quote()
+        hold = self.hold(quote_ref=quote.quote_id)
+
+        booking = self.kernel.confirm_from_hold(
+            hold_id=hold.hold_id,
+            quote_id=quote.quote_id,
+            idempotency_key="idem_gate_0003",
+            command_id="cmd_gate_0003",
+            adults=2,
+        )
+        self.assertEqual(booking.status, "CONFIRMED")
+        self.assertEqual(self.row_count("bookings"), 1)
 
 
 class TestEvidenceGates(KernelTestCase):

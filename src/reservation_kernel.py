@@ -1643,6 +1643,39 @@ class ReservationKernel:
                     expires_at=quote["expires_at"],
                 )
 
+            # §9's commercial gate: a booking rests on a price the guest *said yes to* — the
+            # accepted version of this quote, for this stay. Without it a confirmation turns an
+            # unanswered offer into a contract. The check sits before the booking row exists, and
+            # names its two refusals apart: nobody answered, or somebody answered other dates.
+            accepted = conn.execute(
+                "SELECT unit_id, check_in, check_out FROM quotation_versions"
+                " WHERE quote_id = ? AND agency_id = ? AND status = 'ACCEPTED'"
+                " ORDER BY version DESC",
+                (quote_id, self.agency_id),
+            ).fetchall()
+            if not accepted:
+                raise DomainError(
+                    f"quote {quote_id} carries no accepted version: a booking needs the version "
+                    "the guest accepted, not an offer that was only sent",
+                    code="CONFIRM_NOT_ACCEPTED",
+                    quote_id=quote_id,
+                )
+            if not any(
+                row["unit_id"] == hold["unit_id"]
+                and row["check_in"] == hold["check_in"]
+                and row["check_out"] == hold["check_out"]
+                for row in accepted
+            ):
+                raise DomainError(
+                    "the accepted version of this quote covers another stay: a yes for other "
+                    "dates is not a yes for these",
+                    code="CONFIRM_ACCEPTED_OTHER_STAY",
+                    quote_id=quote_id,
+                    unit_id=hold["unit_id"],
+                    check_in=hold["check_in"],
+                    check_out=hold["check_out"],
+                )
+
             unit = conn.execute(
                 "SELECT * FROM units WHERE unit_id = ? AND agency_id = ?",
                 (hold["unit_id"], self.agency_id),
