@@ -21,13 +21,22 @@ Three things follow, and each one is a claim pinned in
    indistinguishable from one that never happened — the same promise the estate's other
    fail-closed paths make.
 
+RES-W06 and RES-W07 are the two steps where "which module owns this?" is worth reading before
+the code. A routine follow-up is **not** a message: §56 tiers ``followup.routine`` LOW, and the
+estate's own rule is that chasing is done "by opening a task for a human, never by contact" —
+``messages.MessageService.draft`` refuses a machine author, because approval and sending are
+human acts. So the AI's follow-up is a row on the agency's own task queue. A tentative hold, by
+contrast, is an act with an outside effect: it takes a slot out of sale, which is why §56 tiers
+``hold.request_tentative`` MEDIUM and why the owner has to allow-list it before the AI may ask.
+
 ``intent`` is a short operational sentence written by *us*. The gateway records it and never
 consults it (§56: conversation text cannot raise privilege), so pasting what a guest wrote
 into it would put guest text into the audit chain in exchange for nothing.
 
-Scope: five of §9's jobs — inquiry (RES-W01), matching (RES-W02), availability (RES-W03),
-pricing (RES-W04) and the offer (RES-W05). The rest of the job list arrives with the modules it
-needs and follows the same three steps: guard, door, delegate.
+Scope: seven of §9's jobs — inquiry (RES-W01), matching (RES-W02), availability (RES-W03),
+pricing (RES-W04), the offer (RES-W05), the routine follow-up (RES-W06) and the tentative hold
+(RES-W07). The rest of the job list arrives with the modules it needs and follows the same three
+steps: guard, door, delegate.
 
 Two of the five are worth reading together with §56. Pricing has no capability of its own — §56
 names the *answer* (``villa.answer_verified``) — so RES-W04 writes nothing; the priced stay
@@ -42,12 +51,14 @@ import datetime as _dt
 import sqlite3
 from typing import Any, Mapping, Optional, Sequence
 
+import cases as C
 import crm as CRM
 import intake as IN
 import matching as M
+import ops_tasks as OT
 import quotation as Q
 import reservation_kernel as RK
-from primitives import DomainError, sha256_hex
+from primitives import DomainError, require_ref, sha256_hex
 from reservation_service import Conversation, ReservationService
 
 
@@ -58,6 +69,8 @@ MATCHING_WORKER = "RES-W02"
 AVAILABILITY_WORKER = "RES-W03"
 PRICING_WORKER = "RES-W04"
 QUOTATION_WORKER = "RES-W05"
+FOLLOWUP_WORKER = "RES-W06"
+HOLD_WORKER = "RES-W07"
 
 #: The catalogue names, spelled once here and pinned against :data:`ai_service`'s ``ai_tools``
 #: rows by ``test_the_tools_the_workers_hold_are_the_tools_the_catalogue_declares``. A typo must
@@ -67,7 +80,12 @@ SEARCH_TOOL = "villa.search"
 #: Named through the module that enforces each of these, so a rename cannot leave one
 #: file gating a tool the other no longer knows about.
 AVAILABILITY_TOOL = RK.AVAILABILITY_REQUEST_TOOL
+HOLD_TOOL = RK.HOLD_REQUEST_TOOL
 QUOTE_TOOL = Q.SEND_TOOL
+#: ``followup.routine`` has no module of its own to be named through: the estate never put the
+#: name in code, only in the §56 seeds (``ai_tools``) and the gateway's effect table. Spelled
+#: here once, and pinned against the catalogue by the suite like the rest.
+FOLLOWUP_TOOL = "followup.routine"
 
 #: Pricing is §56's *answer* capability, not a commercial act of its own: the AI tells a
 #: verified figure about this villa's rates. §56 has no separate name for the arithmetic (or for
@@ -92,6 +110,12 @@ class MissingRequirements(WorkerError):
     """A worker needed the inquiry's confirmed stay and the inquiry does not have one yet."""
 
     code = "RES_WORKER_MISSING_REQUIREMENTS"
+
+
+class NoPolicyInForce(WorkerError):
+    """A hold was asked for under a stay no policy version covers. Refused, never invented."""
+
+    code = "RES_WORKER_HOLD_NO_POLICY"
 
 
 class InvalidDate(WorkerError):
@@ -142,6 +166,8 @@ class ReservationWorkers:
         crm: Optional[Any] = None,
         intake: Optional[Any] = None,
         quotation: Optional[Any] = None,
+        ops: Optional[Any] = None,
+        cases: Optional[Any] = None,
     ) -> None:
         self.service = service
         self.conn: sqlite3.Connection = service.conn
@@ -153,6 +179,8 @@ class ReservationWorkers:
         self._crm = crm
         self._intake = intake
         self._quotation = quotation
+        self._ops = ops
+        self._cases = cases
 
     # -- the collaborators, constructed on first use ------------------------- #
 
@@ -190,6 +218,24 @@ class ReservationWorkers:
             )
         return self._quotation
 
+    def ops(self) -> Any:
+        """The module that owns the task queue (``ops_tasks``) — where internal work lives."""
+
+        if self._ops is None:
+            self._ops = OT.OpsTaskService(
+                self.conn, clock=self.clock, ids=self.ids, agency_id=self.agency_id
+            )
+        return self._ops
+
+    def cases(self) -> Any:
+        """The module that owns ``cases`` — read here for the guest and the owner it names."""
+
+        if self._cases is None:
+            self._cases = C.CaseService(
+                self.conn, self.clock, self.ids, agency_id=self.agency_id
+            )
+        return self._cases
+
     # -- the three steps, in one place -------------------------------------- #
 
     def _door(
@@ -215,6 +261,40 @@ class ReservationWorkers:
             correlation_id=conversation.conversation_id,
             at=at,
         )
+
+    def _case(self, case_id: str) -> Any:
+        """The case row this conversation carries, read through the module that owns it.
+
+        The guest reference and the case's owner are facts about the inquiry, not about the
+        message that arrived last: a worker that took either from the caller's arguments could be
+        handed a different guest's reference and no rule here would notice.
+        """
+
+        return self.cases().get(case_id)
+
+    def _policy_in_force(self, unit_id: str, check_in: str, check_out: str) -> str:
+        """The policy version covering this stay, from the rule that already chooses it.
+
+        :func:`matching.policy_for` is the same lookup the ranking and the price used, so a hold
+        cannot be taken under a version no other step agreed to. Which version covers a stay is
+        not re-decided here; only the refusal to hold without one is this module's.
+        """
+
+        unit = self.conn.execute(
+            "SELECT * FROM units WHERE unit_id = ? AND agency_id = ?",
+            (unit_id, self.agency_id),
+        ).fetchone()
+        if unit is None:
+            raise DomainError(f"unknown unit: {unit_id}", code="UNIT_NOT_FOUND", unit_id=unit_id)
+        row = M.policy_for(self.conn, unit, check_in, check_out)
+        if row is None:
+            raise NoPolicyInForce(
+                "no policy version covers this stay, so there is no hold to take under it",
+                unit_id=unit_id,
+                check_in=check_in,
+                check_out=check_out,
+            )
+        return str(row["policy_version_id"])
 
     def _requirements(self, case_id: str) -> Mapping[str, Any]:
         """The inquiry's current confirmed stay, straight from the §6 authority."""
@@ -520,6 +600,135 @@ class ReservationWorkers:
             principal_id=self.service.principal(),
         )
 
+    # -- RES-W06: the routine follow-up ------------------------------------ #
+
+    def follow_up(
+        self,
+        conversation_id: str,
+        *,
+        slot: str,
+        due_at: Any,
+        assignee: str,
+        priority: str = OT.DEFAULT_PRIORITY,
+        checklist: Sequence[str] = (),
+        at: Any = None,
+    ) -> tuple[Any, bool]:
+        """File the follow-up this inquiry is owed as *our* work (RES-W06).
+
+        §56 names this act ``followup.routine`` and tiers it LOW, and the estate has already
+        decided what a routine follow-up is: an **internal task/reminder**, not a message. That is
+        enforced one layer down — :meth:`messages.MessageService.draft` requires a human author,
+        because approval and sending are human acts — so a machine that "followed up" by drafting
+        words would be writing under a person's name. What the AI may do is put the work on the
+        agency's own queue and let a person pick it up, which is also what the collections sweep
+        does with an overdue invoice ("by opening a task for a human, never by contact").
+
+        ``slot`` is the piece of work this follow-up belongs to (the version the guest holds, the
+        hold that is running out, ``no-answer-yet``). It is an argument rather than a timestamp so
+        that the *same* follow-up is the same task: a retry, or a second worker, files nothing.
+        The deadline is the caller's — this module publishes no follow-up SLA and will not invent
+        one — and the queue will not let it be moved by a replay: same slot with a different
+        ``due_at`` is refused rather than silently rescheduled.
+
+        ``assignee`` is required for the same reason the queue requires it: a task without a named
+        owner is an unassigned promise, and choosing who chases a guest is a decision, not a
+        default this module may fill in.
+
+        Returns ``(task, created)`` exactly as :meth:`ops_tasks.OpsTaskService.ensure_task` does.
+        """
+
+        conversation = self.service.require_thread(
+            conversation_id, what=f"{FOLLOWUP_WORKER} filing the routine follow-up"
+        )
+        slot = require_ref(slot, "slot", max_len=64)
+        require_ref(assignee, "assignee", max_len=64)
+        self._door(
+            conversation,
+            FOLLOWUP_TOOL,
+            worker=FOLLOWUP_WORKER,
+            what=f"filing the routine follow-up on {slot}",
+            at=at,
+        )
+        task, created = self.ops().ensure_task(
+            kind=OT.KIND_GUEST_FOLLOWUP,
+            assignee=assignee,
+            due_at=due_at,
+            idempotency_key=self.followup_key(
+                conversation_id=conversation.conversation_id, slot=slot
+            ),
+            priority=priority,
+            case_id=conversation.case_id,
+            checklist=tuple(checklist),
+        )
+        return task, created
+
+    # -- RES-W07: the tentative hold --------------------------------------- #
+
+    def request_hold(
+        self,
+        conversation_id: str,
+        *,
+        unit_id: str,
+        check_in: Any = None,
+        check_out: Any = None,
+        quote_ref: Optional[str] = None,
+        evidence_id: Optional[str] = None,
+        ttl_minutes: Optional[int] = None,
+        at: Any = None,
+    ) -> Any:
+        """Ask the kernel for a tentative hold on one unit (RES-W07).
+
+        This is §9's second MEDIUM act — ``hold.request_tentative``, owner allow-listed — and the
+        first one that takes something **out of sale**: while the hold runs, other guests' checks
+        must treat the unit as taken. That outside effect is why the catalogue tiers it above the
+        AI's autonomous band.
+
+        Everything the kernel needs is derived from the versions in force instead of accepted from
+        the caller: the stay from the inquiry's confirmed facts, the guest from the case row, the
+        policy version from :func:`matching.policy_for` (the lookup the ranking and the price
+        already used). The idempotency key comes from the question — this conversation, this unit,
+        this window — so a retry asks once, while the same unit on other dates is another
+        question.
+
+        The kernel re-checks the actor, so this act passes two gates: this module's door, which
+        decides whether the AI may act at all under the §17 mode, and the owning module, which
+        decides whether *this* hold is legal. Neither is a second opinion about the other.
+        """
+
+        conversation = self.service.require_thread(
+            conversation_id, what=f"{HOLD_WORKER} asking for a tentative hold"
+        )
+        window_in, window_out = self._window(
+            conversation, check_in=check_in, check_out=check_out, worker=HOLD_WORKER
+        )
+        guest_ref = self._case(conversation.case_id).guest_ref
+        self._door(
+            conversation,
+            HOLD_TOOL,
+            worker=HOLD_WORKER,
+            what=f"a tentative hold on {unit_id} {window_in}..{window_out}",
+            at=at,
+        )
+        return self.kernel().request_hold(
+            unit_id=unit_id,
+            check_in=window_in,
+            check_out=window_out,
+            guest_ref=guest_ref,
+            policy_version_id=self._policy_in_force(unit_id, window_in, window_out),
+            idempotency_key=self.hold_key(
+                conversation_id=conversation.conversation_id,
+                unit_id=unit_id,
+                check_in=window_in,
+                check_out=window_out,
+            ),
+            actor=self.service.actor,
+            actor_role=self.service.actor_role,
+            principal_id=self.service.principal(),
+            quote_ref=quote_ref,
+            evidence_id=evidence_id,
+            ttl_minutes=ttl_minutes,
+        )
+
     def _window(
         self, conversation: Conversation, *, check_in: Any, check_out: Any, worker: str
     ) -> tuple[str, str]:
@@ -565,3 +774,27 @@ class ReservationWorkers:
             "ai-availability-request", conversation_id, unit_id, check_in, check_out
         )
         return f"ai-avail-{digest[:32]}"
+
+    @staticmethod
+    def followup_key(*, conversation_id: str, slot: str) -> str:
+        """The idempotency key for one follow-up, derived from the work slot it belongs to.
+
+        Derived, because "have we already chased this?" is a question about the work, not about
+        when someone asked. A retry after a restart and a second worker waking up to the same
+        silence are the same follow-up; a chased version and a chased hold are not.
+        """
+
+        digest = sha256_hex("ai-followup", conversation_id, slot)
+        return f"ai-follow-{digest[:32]}"
+
+    @staticmethod
+    def hold_key(*, conversation_id: str, unit_id: str, check_in: str, check_out: str) -> str:
+        """The idempotency key for one hold question, derived rather than random.
+
+        Derived, because the question is what must not be asked twice: a retry after a timeout
+        and a duplicate from a second worker are the same request, while the same unit on other
+        dates is a different one.
+        """
+
+        digest = sha256_hex("ai-hold-request", conversation_id, unit_id, check_in, check_out)
+        return f"ai-hold-{digest[:32]}"

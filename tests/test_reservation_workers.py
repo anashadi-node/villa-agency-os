@@ -18,7 +18,13 @@ below are about each step being enforced rather than intended:
    when the principal's §17 mode is narrowed — the door refuses, not the worker;
 8. no worker acts on a conversation a human owns (§13), and none of them leaves a row behind;
 9. what lands in the audit is the worker code and an operational sentence — never what the guest
-   wrote (§56 + §8).
+   wrote (§56 + §8);
+10. the follow-up worker files an **internal task** and contacts nobody — ``messages`` refuses a
+   machine author, so "the AI followed up" cannot mean "the AI wrote to the guest" (§56's LOW
+   band: internal task/reminder);
+11. the hold worker takes one unit out of sale only through the same door and the owning module's
+   own gate, deriving the window from the confirmed stay, the guest from the case row and the
+   policy version from the lookup the ranking and the price already used.
 
 The clock is frozen, the ids are deterministic and the database is an in-memory one: every claim
 here is reproducible, and none of them depends on how long a test took to run.
@@ -31,9 +37,12 @@ import unittest
 import ai_gateway as AG
 import ai_service as AIS
 import crm as CRM
+import hold_states as HS
 import intake as IN
+import messages as MS
+import ops_tasks as OT
 import reservation_workers as RW
-from primitives import DomainError, FrozenClock, IdFactory
+from primitives import DomainError, FrozenClock, IdFactory, parse_iso
 
 import test_reservation_service as RST
 from test_matching import seed_property, seed_unit
@@ -53,6 +62,12 @@ GUEST_WORD = "Canggu"
 
 STAY_IN = "2026-11-10"
 STAY_OUT = "2026-11-14"
+
+#: A follow-up deadline the caller owns: the workers publish no SLA, so the tests name one to
+#: prove the deadline travels through untouched (and that a replay cannot move it).
+FOLLOWUP_DUE = "2026-11-03T09:00:00+07:00"
+FOLLOWUP_DUE_LATER = "2026-11-05T09:00:00+07:00"
+FOLLOWUP_ASSIGNEE = "staff_014"
 
 #: The rate card a stay is priced from: one property, one season covering 2026, IDR. The rows
 #: are spelled here because ``insert_rate_card`` takes database rows, not dataclasses — the
@@ -504,6 +519,15 @@ class ReservationWorkersTestCase(unittest.TestCase):
             RW.AVAILABILITY_WORKER: lambda: fixture.workers.request_availability(
                 conversation_id, unit_id="unit_1"
             ),
+            RW.FOLLOWUP_WORKER: lambda: fixture.workers.follow_up(
+                conversation_id,
+                slot="no-answer-yet",
+                due_at=FOLLOWUP_DUE,
+                assignee=FOLLOWUP_ASSIGNEE,
+            ),
+            RW.HOLD_WORKER: lambda: fixture.workers.request_hold(
+                conversation_id, unit_id="unit_1"
+            ),
         }
         for worker, attempt in attempts.items():
             with self.subTest(worker=worker):
@@ -514,7 +538,8 @@ class ReservationWorkersTestCase(unittest.TestCase):
         self.assertEqual(self.count(fixture, "intake_proposals"), 0)
         self.assertEqual(self.count(fixture, "match_runs"), 0)
         self.assertEqual(self.count(fixture, "availability_checks"), 0)
-
+        self.assertEqual(self.count(fixture, "ops_tasks"), 0)
+        self.assertEqual(self.count(fixture, "holds"), 0)
 
     # -- 5. RES-W04: answer what the stay costs from the versions in force --- #
 
@@ -798,6 +823,224 @@ class ReservationWorkersTestCase(unittest.TestCase):
         self.assertEqual(self.count(fixture, "quotation_versions"), 0)
         self.assertEqual(self.door_rows(fixture, tool=RW.QUOTE_TOOL), [])
 
+    # -- RES-W06: the routine follow-up is our work, not a message ---------- #
+
+    def test_the_followup_worker_files_an_internal_task_and_contacts_nobody(self):
+        """§56's ``followup.routine`` is LOW because nothing leaves the building.
+
+        The claim is a pair: the work lands on the agency's own queue, *and* no message exists
+        afterwards. A draft would need a human author (``messages`` refuses a machine one), so
+        "the AI followed up" can only mean "the AI put the follow-up where a person will see it".
+        """
+
+        fixture = self.running(seed="w06")
+        task, created = fixture.workers.follow_up(
+            fixture.conversation.conversation_id,
+            slot="quote_offer",
+            due_at=FOLLOWUP_DUE,
+            assignee=FOLLOWUP_ASSIGNEE,
+        )
+        self.assertTrue(created)
+        self.assertEqual(task.kind, OT.KIND_GUEST_FOLLOWUP)
+        self.assertEqual(task.case_id, fixture.case.case_id)
+        self.assertEqual(task.assignee, FOLLOWUP_ASSIGNEE)
+        self.assertEqual(task.status, OT.STATUS_OPEN)
+        # The deadline travels as an instant: the queue stores it in UTC, so the test compares
+        # instants rather than spellings (the caller's +07:00 is the same moment).
+        self.assertEqual(parse_iso(task.due_at), parse_iso(FOLLOWUP_DUE))
+        self.assertEqual(self.count(fixture, "message_drafts"), 0)
+        self.assertEqual(len(self.allowed_reasons(fixture, tool=RW.FOLLOWUP_TOOL)), 1)
+        self.assertTrue(
+            self.allowed_reasons(fixture, tool=RW.FOLLOWUP_TOOL)[0].startswith(RW.FOLLOWUP_WORKER)
+        )
+
+    def test_the_same_slot_files_one_followup_and_a_new_deadline_is_refused(self):
+        """The key comes from the work, not from the clock — and the deadline is not ours to move.
+
+        Same slot and same deadline replays (one task, ``created=False``); the same slot with a
+        *different* deadline is refused by the queue rather than silently rescheduled, because a
+        date someone already agreed to is not this worker's to change.
+        """
+
+        fixture = self.running(seed="w06-replay")
+        conversation_id = fixture.conversation.conversation_id
+        first, created = fixture.workers.follow_up(
+            conversation_id, slot="no-answer-yet", due_at=FOLLOWUP_DUE, assignee=FOLLOWUP_ASSIGNEE
+        )
+        again, created_again = fixture.workers.follow_up(
+            conversation_id, slot="no-answer-yet", due_at=FOLLOWUP_DUE, assignee=FOLLOWUP_ASSIGNEE
+        )
+        self.assertTrue(created)
+        self.assertFalse(created_again)
+        self.assertEqual(first.task_id, again.task_id)
+        self.assertEqual(self.count(fixture, "ops_tasks"), 1)
+
+        with self.assertRaises(OT.DuplicateIdempotencyKey):
+            fixture.workers.follow_up(
+                conversation_id,
+                slot="no-answer-yet",
+                due_at=FOLLOWUP_DUE_LATER,
+                assignee=FOLLOWUP_ASSIGNEE,
+            )
+        self.assertEqual(self.count(fixture, "ops_tasks"), 1)
+
+    def test_the_followup_worker_will_not_name_the_owner_itself(self):
+        """A task without an owner is an unassigned promise: the caller names one, or nothing runs.
+
+        The refusal happens *before* the door, so a refused attempt is indistinguishable from one
+        that never happened — the same promise the estate's other fail-closed paths make.
+        """
+
+        fixture = self.running(seed="w06-assignee")
+        with self.assertRaises(DomainError):
+            fixture.workers.follow_up(
+                fixture.conversation.conversation_id,
+                slot="no-answer-yet",
+                due_at=FOLLOWUP_DUE,
+                assignee="  ",
+            )
+        self.assertEqual(self.count(fixture, "ops_tasks"), 0)
+        self.assertEqual(self.door_rows(fixture, tool=RW.FOLLOWUP_TOOL), [])
+
+    def test_a_message_draft_cannot_be_authored_by_the_ai_which_is_why_followup_is_a_task(self):
+        """Why RES-W06 files a task: ``messages`` refuses a machine author.
+
+        Pinned here because it is the load-bearing fact behind that design. If a future change ever
+        lets a machine author a draft, this test fails and the follow-up worker's shape deserves a
+        second look — the AI would then be able to do the one thing §56's LOW band never named:
+        write to the guest under a human's name.
+        """
+
+        fixture = self.running(seed="w06-authorship")
+        messages = MS.MessageService(
+            fixture.conn, clock=fixture.clock, ids=IdFactory(deterministic=True, seed="msg")
+        )
+        with self.assertRaises(MS.InvalidActor):
+            messages.draft(
+                case_id=fixture.case.case_id,
+                template="quote_offer",
+                channel="whatsapp_business",
+                recipient_ref="guest_ref_001",
+                bindings={},
+                created_by=fixture.service.actor,
+                created_by_role=fixture.service.actor_role,
+                reason="the AI tries to write to the guest",
+            )
+        self.assertEqual(self.count(fixture, "message_drafts"), 0)
+
+    # -- RES-W07: a tentative hold takes a slot out of sale ----------------- #
+
+    def test_the_hold_worker_takes_the_confirmed_stay_out_of_sale(self):
+        """MEDIUM, owner allow-listed — and everything it needs comes from a record, not a caller.
+
+        The window is the inquiry's confirmed stay, the guest is the case's own reference and the
+        policy version is the one the ranking and the price used. A hold therefore cannot be taken
+        under rules no other step agreed to, and the expiry carries the property's timezone (§7).
+        """
+
+        fixture = self.running(seed="w07")
+        self.inventory(fixture)
+        self.confirm_stay(fixture)
+        self.versions_in_force(fixture, card=False)  # a hold needs a policy, not a price
+        self.allow_medium(fixture, tools=(RW.HOLD_TOOL,))
+
+        outcome = fixture.workers.request_hold(
+            fixture.conversation.conversation_id, unit_id="unit_1"
+        )
+        row = fixture.conn.execute(
+            "SELECT * FROM holds WHERE hold_id = ?", (outcome.hold_id,)
+        ).fetchone()
+        self.assertEqual(row["status"], HS.HOLD_CONFIRMED)
+        self.assertEqual((row["check_in"], row["check_out"]), (STAY_IN, STAY_OUT))
+        self.assertEqual(row["guest_ref"], fixture.case.guest_ref)
+        self.assertEqual(row["policy_version_id"], "policy_v1")
+        self.assertEqual(row["unit_id"], "unit_1")
+        self.assertEqual(row["expires_timezone"], "Asia/Makassar")
+        self.assertFalse(outcome.replayed)
+        self.assertEqual(self.count(fixture, "holds"), 1)
+        self.assertEqual(self.count(fixture, "message_drafts"), 0)
+        # Two gates, and the audit shows both. The *door* (this module's) is the gateway row that
+        # carries the worker code; the owning module then re-checks the same actor through
+        # ``ai_service`` before it writes, and that check leaves the second row. Neither is a
+        # second opinion about the other: the door decides whether the AI may act at all, the
+        # kernel decides whether this hold is legal.
+        self.assertEqual(len(self.door_rows(fixture, tool=RW.HOLD_TOOL)), 1)
+        reasons = self.allowed_reasons(fixture, tool=RW.HOLD_TOOL)
+        self.assertEqual(len(reasons), 2)
+        self.assertEqual(
+            len([reason for reason in reasons if reason.startswith(RW.HOLD_WORKER)]), 1
+        )
+
+    def test_the_hold_worker_refuses_before_it_writes_anything_with_no_allowance(self):
+        """Nothing MEDIUM moves until the owner publishes the allowance — not even a hold."""
+
+        fixture = self.running(seed="w07-denied")
+        self.inventory(fixture)
+        self.confirm_stay(fixture)
+        self.versions_in_force(fixture, card=False)
+
+        with self.assertRaises(DomainError):
+            fixture.workers.request_hold(fixture.conversation.conversation_id, unit_id="unit_1")
+        self.assertEqual(self.count(fixture, "holds"), 0)
+
+    def test_the_same_window_is_one_hold_question(self):
+        """A retry asks once: the kernel replays its own row instead of taking a second slot."""
+
+        fixture = self.running(seed="w07-replay")
+        self.inventory(fixture)
+        self.confirm_stay(fixture)
+        self.versions_in_force(fixture, card=False)
+        self.allow_medium(fixture, tools=(RW.HOLD_TOOL,))
+        conversation_id = fixture.conversation.conversation_id
+
+        first = fixture.workers.request_hold(conversation_id, unit_id="unit_1")
+        again = fixture.workers.request_hold(conversation_id, unit_id="unit_1")
+        self.assertEqual(first.hold_id, again.hold_id)
+        self.assertTrue(again.replayed)
+        self.assertEqual(self.count(fixture, "holds"), 1)
+
+    def test_the_hold_worker_will_not_guess_the_window(self):
+        """No confirmed stay, no hold — and the refusal names the worker that actually asked."""
+
+        fixture = self.running(seed="w07-nowindow")
+        self.inventory(fixture)
+        self.versions_in_force(fixture, card=False)
+        self.allow_medium(fixture, tools=(RW.HOLD_TOOL,))
+
+        with self.assertRaises(RW.MissingRequirements) as raised:
+            fixture.workers.request_hold(fixture.conversation.conversation_id, unit_id="unit_1")
+        self.assertIn(RW.HOLD_WORKER, str(raised.exception))
+        self.assertEqual(self.count(fixture, "holds"), 0)
+        self.assertEqual(self.door_rows(fixture, tool=RW.HOLD_TOOL), [])
+
+    def test_a_hold_under_a_stay_no_policy_covers_is_refused(self):
+        """The version in force is looked up, never assumed: no policy, no hold."""
+
+        fixture = self.running(seed="w07-nopolicy")
+        self.inventory(fixture)
+        self.confirm_stay(fixture)
+        self.allow_medium(fixture, tools=(RW.HOLD_TOOL,))
+
+        with self.assertRaises(RW.NoPolicyInForce):
+            fixture.workers.request_hold(fixture.conversation.conversation_id, unit_id="unit_1")
+        self.assertEqual(self.count(fixture, "holds"), 0)
+
+    def test_the_hold_worker_reports_the_unit_it_does_not_have(self):
+        """An unknown unit is the kernel's refusal, not a second opinion written here."""
+
+        fixture = self.running(seed="w07-nounit")
+        self.inventory(fixture)
+        self.confirm_stay(fixture)
+        self.versions_in_force(fixture, card=False)
+        self.allow_medium(fixture, tools=(RW.HOLD_TOOL,))
+
+        with self.assertRaises(DomainError) as raised:
+            fixture.workers.request_hold(
+                fixture.conversation.conversation_id, unit_id="unit_elsewhere"
+            )
+        self.assertEqual(raised.exception.code, "UNIT_NOT_FOUND")
+        self.assertEqual(self.count(fixture, "holds"), 0)
+
     # -- 7. the tools the workers hold --------------------------------------- #
 
     def test_the_tools_the_workers_hold_are_the_tools_the_catalogue_declares(self):
@@ -814,6 +1057,8 @@ class ReservationWorkersTestCase(unittest.TestCase):
             (RW.AVAILABILITY_WORKER, RW.AVAILABILITY_TOOL),
             (RW.PRICING_WORKER, RW.PRICING_TOOL),
             (RW.QUOTATION_WORKER, RW.QUOTE_TOOL),
+            (RW.FOLLOWUP_WORKER, RW.FOLLOWUP_TOOL),
+            (RW.HOLD_WORKER, RW.HOLD_TOOL),
         ):
             with self.subTest(worker=worker):
                 self.assertIn(tool, declared)
