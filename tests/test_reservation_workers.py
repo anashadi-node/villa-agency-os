@@ -33,6 +33,12 @@ below are about each step being enforced rather than intended:
    today's policy), a notice inside every threshold reports *no step applies* rather than a zero
    refund, and a change request becomes a ``GUEST_FOLLOWUP`` task under a runbook that names it,
    because the queue's closed ``kind`` vocabulary cannot.
+14. the pre-arrival worker **assembles what a person sends and sends nothing**: the arrival
+   window is relayed from the policy version the *booking* names (never the version in force
+   today), an unfilled window is reported as absent rather than defaulted, the pre-arrival facts
+   this schema has no column for are named instead of implied, and the estate can still switch
+   the act off — §56 classes ``arrival.inform_verified`` an outbound WRITE, so READ_ONLY refuses
+   it even though the worker itself writes nothing.
 
 The clock is frozen, the ids are deterministic and the database is an in-memory one: every claim
 here is reproducible, and none of them depends on how long a test took to run.
@@ -49,6 +55,7 @@ import hold_states as HS
 import intake as IN
 import messages as MS
 import ops_tasks as OT
+import policy_engine as PE
 import reservation_workers as RW
 from primitives import DomainError, FrozenClock, IdFactory, parse_iso
 
@@ -251,6 +258,84 @@ class ReservationWorkersTestCase(unittest.TestCase):
                 quotation.quotation_version_id, actor=HUMAN, actor_role=RESERVATION_ROLE
             )
         return quotation
+
+    def arrival_window_policy(self, fixture, *, checkin_time="15:00", checkout_time="12:00"):
+        """A policy version that records the arrival window — the tenant filled the setting in.
+
+        Version 2 covers the same window as the shared fixture, so ``matching`` picks it for the
+        stay and the booking is made *under* it. That is what makes the window readable at booking
+        time: RES-W10 reads the version the booking names, never the version in force today.
+        """
+
+        base = version_fixture()
+        rules = base.rules
+        payload = dict(rules.payload)
+        if checkin_time is not None:
+            payload["checkin_time"] = checkin_time
+        if checkout_time is not None:
+            payload["checkout_time"] = checkout_time
+        version = PE.PolicyVersion(
+            policy_version_id="policy_v2",
+            property_id=base.property_id,
+            unit_scope=base.unit_scope,
+            version=2,
+            effective_from=base.effective_from,
+            effective_to=base.effective_to,
+            rules=PE.PolicyRules(
+                currency=rules.currency,
+                deposit_pct=rules.deposit_pct,
+                service_fee_pct=rules.service_fee_pct,
+                tax_pbjt_pct=rules.tax_pbjt_pct,
+                max_discount_pct=rules.max_discount_pct,
+                quote_valid_hours=rules.quote_valid_hours,
+                hold_ttl_minutes=rules.hold_ttl_minutes,
+                max_hold_extensions=rules.max_hold_extensions,
+                payload=payload,
+            ),
+            created_at=base.created_at,
+            source_doc_ref="policy/2026-arrival-window.pdf",
+            approved_by=HUMAN,
+        )
+        return fixture.workers.kernel().insert_policy_version(version.as_row())
+
+    def booked(self, fixture, *, window: bool = True, seed: str = "w10"):
+        """A confirmed booking on this case, through the path a person would walk.
+
+        RES-W10 answers *for a booking*, so the fixture needs a real one: the hold, the offer the
+        guest accepted, the kernel's confirmation and the case link. ``window`` decides whether the
+        governing policy version records an arrival window.
+        """
+
+        self.inventory(fixture)
+        self.versions_in_force(fixture)
+        if window:
+            self.arrival_window_policy(fixture)
+        self.confirm_stay(fixture)
+        self.allow_medium(fixture, tools=(RW.HOLD_TOOL,))
+        hold = self.held(fixture)
+        self.allow_medium(fixture, tools=(RW.QUOTE_TOOL,))
+        quotation = self.offering(fixture)
+        booking = fixture.workers.kernel().confirm_from_hold(
+            hold_id=hold.hold_id,
+            quote_id=quotation.quote_id,
+            idempotency_key=f"idem_book_{seed}",
+            command_id=f"cmd_book_{seed}",
+            adults=2,
+            actor=HUMAN,
+            actor_role=RESERVATION_ROLE,
+        )
+        fixture.workers.cases().link_booking(
+            fixture.case.case_id,
+            booking.booking_id,
+            actor=HUMAN,
+            command_id=f"cmd_link_{seed}",
+        )
+        return booking
+
+    def arrival_answer(self, fixture, **kwargs):
+        """Ask the RES-W10 worker for the thread's verified pre-arrival information."""
+
+        return fixture.workers.arrival_info(fixture.conversation.conversation_id, **kwargs)
 
     def status_answer(self, fixture, **kwargs):
         """Ask the RES-W08 worker where the reservation stands."""
@@ -1411,6 +1496,102 @@ class ReservationWorkersTestCase(unittest.TestCase):
         self.assertEqual(self.count(fixture, "ops_tasks"), 0)
         self.assertEqual(self.door_rows(fixture, tool=RW.SPECIAL_REQUEST_TOOL), [])
 
+    # -- 9. RES-W10: verified pre-arrival information ------------------------ #
+
+    def test_the_arrival_answer_reads_only_what_the_platform_recorded(self):
+        """Every field is a copy of a recorded fact, and reading them writes nothing."""
+
+        fixture = self.running(seed="w10a")
+        booking = self.booked(fixture)
+
+        answer = self.arrival_answer(fixture)
+
+        self.assertEqual(answer.case_id, fixture.case.case_id)
+        self.assertEqual(answer.booking_id, booking.booking_id)
+        self.assertEqual(answer.booking_status, "CONFIRMED")
+        self.assertEqual(answer.check_in, STAY_IN)
+        self.assertEqual(answer.check_out, STAY_OUT)
+        self.assertEqual(answer.nights, int(booking.nights))
+        # The window is the one the *booking* was made under — v2, the version with the setting.
+        self.assertEqual(answer.window["checkin_time"], "15:00")
+        self.assertEqual(answer.window["checkout_time"], "12:00")
+        self.assertEqual(answer.window["policy_version_id"], "policy_v2")
+        self.assertEqual(answer.window["policy_version"], 2)
+        self.assertEqual(answer.window["note"], RW.ARRIVAL_WINDOW_RECORDED)
+        # Unit and property are the tenant's own rows…
+        self.assertEqual(answer.unit["unit_id"], "unit_1")
+        self.assertEqual(answer.unit["unit_type"], "entire_villa")
+        self.assertEqual(answer.unit["max_guests"], 4)
+        self.assertEqual(answer.property["name"], "Villa Anantara")
+        self.assertEqual(answer.property["timezone"], "Asia/Makassar")
+        # …and the facts no table holds are named, never silently assumed.
+        self.assertEqual(answer.not_recorded, RW.ARRIVAL_NOT_STORED)
+        self.assertEqual(answer.note, RW.ARRIVAL_NOTE)
+        # A read: the only booking is the one a person confirmed, and no work was filed.
+        self.assertEqual(self.count(fixture, "bookings"), 1)
+        for table in ("ops_tasks", "approval_requests", "message_drafts"):
+            with self.subTest(table=table):
+                self.assertEqual(self.count(fixture, table), 0)
+        self.assertEqual(len(self.door_rows(fixture, tool=RW.ARRIVAL_TOOL)), 1)
+        self.assertTrue(
+            self.allowed_reasons(fixture, tool=RW.ARRIVAL_TOOL)[0].startswith(RW.ARRIVAL_WORKER)
+        )
+
+    def test_an_unfilled_arrival_window_is_reported_absent_not_defaulted(self):
+        """The tenant has not authored the setting: the answer says so instead of picking a time."""
+
+        fixture = self.running(seed="w10b")
+        self.booked(fixture, window=False)
+
+        answer = self.arrival_answer(fixture)
+
+        self.assertIsNone(answer.window["checkin_time"])
+        self.assertIsNone(answer.window["checkout_time"])
+        self.assertEqual(answer.window["policy_version_id"], "policy_v1")
+        self.assertEqual(answer.window["note"], RW.ARRIVAL_WINDOW_ABSENT)
+        self.assertIn("address", answer.not_recorded)
+
+    def test_a_case_without_a_booking_has_no_arrival_to_describe(self):
+        fixture = self.running(seed="w10c")
+
+        with self.assertRaises(RW.MissingRequirements) as raised:
+            self.arrival_answer(fixture)
+        self.assertEqual(raised.exception.code, "RES_WORKER_MISSING_REQUIREMENTS")
+        self.assertEqual(raised.exception.details["missing"], ["booking_id"])
+        self.assertEqual(self.door_rows(fixture, tool=RW.ARRIVAL_TOOL), [])
+
+    def test_a_booking_that_no_longer_holds_the_slot_has_no_arrival_ahead(self):
+        fixture = self.running(seed="w10d")
+        booking = self.booked(fixture, seed="w10d")
+        fixture.workers.kernel().cancel_booking(
+            booking_id=booking.booking_id,
+            reason="guest withdrew",
+            command_id="cmd_cancel_w10d",
+            actor=HUMAN,
+            actor_role=RESERVATION_ROLE,
+        )
+
+        with self.assertRaises(RW.MissingRequirements) as raised:
+            self.arrival_answer(fixture)
+        self.assertEqual(raised.exception.details["missing"], ["active_booking"])
+        self.assertEqual(raised.exception.details["status"], "CANCELLED")
+        self.assertEqual(self.count(fixture, "ops_tasks"), 0)
+
+    def test_the_arrival_answer_is_an_outbound_tool_the_estate_can_switch_off(self):
+        """§56 classes ``arrival.inform_verified`` WRITE — informing a guest is information leaving
+        the system — so READ_ONLY refuses it, even though this worker writes nothing itself."""
+
+        fixture = self.running(seed="w10e")
+        self.booked(fixture, seed="w10e")
+        fixture.gateway.set_mode(
+            fixture.principal.principal_id, AIS.AI_STATUS_READ_ONLY, actor=HUMAN, actor_role="owner"
+        )
+
+        with self.assertRaises(DomainError) as raised:
+            self.arrival_answer(fixture)
+        self.assertEqual(raised.exception.code, "AI_MODE_REFUSED")
+        self.assertEqual(self.door_rows(fixture, tool=RW.ARRIVAL_TOOL), [])
+
     # -- 7. the tools the workers hold --------------------------------------- #
 
     def test_the_tools_the_workers_hold_are_the_tools_the_catalogue_declares(self):
@@ -1432,6 +1613,7 @@ class ReservationWorkersTestCase(unittest.TestCase):
             (RW.BOOKING_WORKER, RW.BOOKING_TOOL),
             (RW.SPECIAL_REQUEST_WORKER, RW.TERMS_TOOL),
             (RW.SPECIAL_REQUEST_WORKER, RW.SPECIAL_REQUEST_TOOL),
+            (RW.ARRIVAL_WORKER, RW.ARRIVAL_TOOL),
         ):
             with self.subTest(worker=worker):
                 self.assertIn(tool, declared)

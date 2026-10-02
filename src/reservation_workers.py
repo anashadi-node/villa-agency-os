@@ -153,6 +153,41 @@ FINANCIAL_GATE_NOTE = (
     "supplier prerequisites"
 )
 
+#: §9's tenth step is pre-arrival communication, and §56 gives the AI exactly one arrival
+#: capability: ``arrival.inform_verified``, LOW. The catalogue is closed (§56 is the list), so the
+#: worker below holds that one tool — and the estate classes it WRITE, because informing a guest
+#: is the moment information leaves the system.
+ARRIVAL_WORKER = "RES-W10"
+ARRIVAL_TOOL = "arrival.inform_verified"
+
+#: What the answer *is*, said once so no caller can read it as a readiness claim: §28 puts
+#: READY behind the villa's own authorized evidence (“bukan AI assumption”).
+ARRIVAL_NOTE = (
+    "pre-arrival information assembled from this platform's own records (property, unit, stay and "
+    "the policy version the booking was made under); it is not a readiness confirmation — §28 "
+    "requires the villa's authorized evidence for READY"
+)
+
+#: Pre-arrival facts a guest asks for that this schema has no column for, so the platform holds no
+#: record of them. The answer names them instead of leaving a caller to assume they were checked.
+ARRIVAL_NOT_STORED: tuple[str, ...] = (
+    "address",
+    "directions",
+    "access_instructions",
+    "contact",
+)
+
+#: Said when the version the booking names records no arrival window. An unfilled tenant setting is
+#: reported as absent — never defaulted to a time this module would have to invent.
+ARRIVAL_WINDOW_ABSENT = (
+    "the policy version this booking was made under records no checkin_time/checkout_time, so this "
+    "stay has no recorded arrival window"
+)
+ARRIVAL_WINDOW_RECORDED = (
+    "the arrival window as recorded by the policy version this booking was made under"
+)
+
+
 #: Pricing is §56's *answer* capability, not a commercial act of its own: the AI tells a
 #: verified figure about this villa's rates. §56 has no separate name for the arithmetic (or for
 #: opening a version the guest cannot see), and the catalogue is the closed §56 list — so the
@@ -257,6 +292,50 @@ class CancellationTerms:
             "notice_days": self.notice_days,
             "ladder": None if self.ladder is None else [dict(step) for step in self.ladder],
             "applicable": None if self.applicable is None else dict(self.applicable),
+            "note": self.note,
+        }
+
+
+@dataclass(frozen=True)
+class ArrivalInfo:
+    """Verified pre-arrival information for one confirmed booking (RES-W10).
+
+    Every field is a copy of a recorded fact, carrying the provenance of the module it came from.
+    It is read-only by construction: what a guest receives is a message, and the estate refuses a
+    machine author for those (:meth:`messages.MessageService.draft`), so this object is what a
+    *person* sends — assembled, never dispatched.
+    """
+
+    case_id: str
+    booking_id: str
+    booking_status: str
+    unit_id: str
+    check_in: str
+    check_out: str
+    nights: int
+    unit: Mapping[str, Any]
+    property: Mapping[str, Any]
+    stay: Mapping[str, Any]
+    window: Mapping[str, Any]
+    not_recorded: tuple[str, ...]
+    note: str = ARRIVAL_NOTE
+
+    def as_dict(self) -> dict[str, Any]:
+        """JSON-ready view: a prompt, a UI and a log line need the same shape."""
+
+        return {
+            "case_id": self.case_id,
+            "booking_id": self.booking_id,
+            "booking_status": self.booking_status,
+            "unit_id": self.unit_id,
+            "check_in": self.check_in,
+            "check_out": self.check_out,
+            "nights": self.nights,
+            "unit": dict(self.unit),
+            "property": dict(self.property),
+            "stay": dict(self.stay),
+            "window": dict(self.window),
+            "not_recorded": list(self.not_recorded),
             "note": self.note,
         }
 
@@ -415,12 +494,14 @@ class ReservationWorkers:
 
         return self.cases().get(case_id)
 
-    def _policy_in_force(self, unit_id: str, check_in: str, check_out: str) -> str:
+    def _policy_row(self, unit_id: str, check_in: str, check_out: str) -> Mapping[str, Any]:
         """The policy version covering this stay, from the rule that already chooses it.
 
         :func:`matching.policy_for` is the same lookup the ranking and the price used, so a hold
         cannot be taken under a version no other step agreed to. Which version covers a stay is
-        not re-decided here; only the refusal to hold without one is this module's.
+        not re-decided here; only the refusal to work without one is this module's. The whole row
+        comes back (``matching`` returns it unprojected) so a caller can read what the tenant
+        authored under that version.
         """
 
         unit = self.conn.execute(
@@ -437,7 +518,12 @@ class ReservationWorkers:
                 check_in=check_in,
                 check_out=check_out,
             )
-        return str(row["policy_version_id"])
+        return row
+
+    def _policy_in_force(self, unit_id: str, check_in: str, check_out: str) -> str:
+        """The id of the version :meth:`_policy_row` resolved — RES-W07's hold reads it."""
+
+        return str(self._policy_row(unit_id, check_in, check_out)["policy_version_id"])
 
     def _requirements(self, case_id: str) -> Mapping[str, Any]:
         """The inquiry's current confirmed stay, straight from the §6 authority."""
@@ -884,6 +970,158 @@ class ReservationWorkers:
             "payment_status": None if booking is None else str(booking["payment_status"]),
             "note": FINANCIAL_GATE_NOTE,
         }
+
+    # -- RES-W10: verified pre-arrival information -------------------------- #
+
+    def _placed(self, unit_id: str) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
+        """The unit and the property it belongs to, as *recorded* — not as described by a guest."""
+
+        unit = self.conn.execute(
+            "SELECT * FROM units WHERE unit_id = ? AND agency_id = ?",
+            (unit_id, self.agency_id),
+        ).fetchone()
+        if unit is None:
+            raise DomainError(f"unknown unit: {unit_id}", code="UNIT_NOT_FOUND", unit_id=unit_id)
+        place = self.conn.execute(
+            "SELECT * FROM properties WHERE property_id = ? AND agency_id = ?",
+            (unit["property_id"], self.agency_id),
+        ).fetchone()
+        if place is None:
+            raise DomainError(
+                f"unit {unit_id} names a property this tenant has not recorded",
+                code="PROPERTY_NOT_FOUND",
+                unit_id=unit_id,
+                property_id=str(unit["property_id"]),
+            )
+        return unit, place
+
+    def _booking_policy_row(self, booking: Any) -> Mapping[str, Any]:
+        """The policy version this booking was made under, by the id the booking itself names.
+
+        Deliberately **not** :func:`matching.policy_for` a second time: that resolves the version
+        in force *today*, and the lesson RES-W09 reads the accepted ladder by is that a
+        guest-facing statement belongs to the version that governed the stay. The booking row
+        carries that id, so the arrival window a guest would be told is the one the stay was
+        priced, accepted and confirmed under.
+        """
+
+        row = self.conn.execute(
+            "SELECT * FROM policy_versions WHERE policy_version_id = ? AND property_id = ?",
+            (booking["policy_version_id"], booking["property_id"]),
+        ).fetchone()
+        if row is None:
+            raise DomainError(
+                "the policy version this booking names is not recorded, so its arrival window "
+                "cannot be read",
+                code="POLICY_VERSION_NOT_FOUND",
+                policy_version_id=str(booking["policy_version_id"]),
+            )
+        return row
+
+    def arrival_info(self, conversation_id: str, *, at: Any = None) -> ArrivalInfo:
+        """Assemble the verified pre-arrival information for this thread's confirmed booking.
+
+        §9's tenth step is pre-arrival communication and §28 puts it after ``BOOKING CONFIRMED``,
+        so a case without a booking has no arrival to describe — and a booking that no longer
+        holds the slot has no arrival ahead of it. Both are refusals, not empty answers.
+
+        Three things keep this an *answer* rather than an act: the estate refuses a machine author
+        for guest messages, §28 puts villa readiness behind the villa's own evidence, and every
+        field is a copy of a recorded fact naming its owner. The arrival window is relayed verbatim
+        from the policy version the booking names; a window the tenant has not authored is reported
+        as absent rather than defaulted.
+        """
+
+        conversation = self.service.require_thread(
+            conversation_id, what=f"{ARRIVAL_WORKER} assembling the pre-arrival information"
+        )
+        case = self._case(conversation.case_id)
+        booking = self.kernel().get_booking(case.booking_id) if case.booking_id else None
+        if booking is None:
+            raise MissingRequirements(
+                "pre-arrival information belongs to a confirmed booking (§28 puts PRE-ARRIVAL "
+                "after BOOKING CONFIRMED) and this case has none",
+                conversation_id=conversation.conversation_id,
+                case_id=case.case_id,
+                worker=ARRIVAL_WORKER,
+                missing=["booking_id"],
+            )
+        status = str(booking["status"])
+        if status not in BS.OCCUPYING_STATES:
+            raise MissingRequirements(
+                f"a booking whose status is {status} has no arrival ahead of it",
+                conversation_id=conversation.conversation_id,
+                case_id=case.case_id,
+                worker=ARRIVAL_WORKER,
+                booking_id=str(booking["booking_id"]),
+                status=status,
+                missing=["active_booking"],
+            )
+        self._door(
+            conversation,
+            ARRIVAL_TOOL,
+            worker=ARRIVAL_WORKER,
+            what=f"the pre-arrival information of booking {booking['booking_id']}",
+            at=at,
+        )
+        unit_id = str(booking["unit_id"])
+        check_in = str(booking["check_in"])
+        check_out = str(booking["check_out"])
+        nights = int(booking["nights"])
+        unit, place = self._placed(unit_id)
+        policy = self._booking_policy_row(booking)
+        payload = policy["payload"]
+        rules = json.loads(payload) if isinstance(payload, str) else dict(payload or {})
+        checkin_time = rules.get("checkin_time")
+        checkout_time = rules.get("checkout_time")
+        recorded = checkin_time is not None or checkout_time is not None
+        window = {
+            "checkin_time": None if checkin_time is None else str(checkin_time),
+            "checkout_time": None if checkout_time is None else str(checkout_time),
+            "policy_version_id": str(policy["policy_version_id"]),
+            "policy_version": int(policy["version"]),
+            "note": ARRIVAL_WINDOW_RECORDED if recorded else ARRIVAL_WINDOW_ABSENT,
+        }
+        unit_facts = {
+            "unit_id": str(unit["unit_id"]),
+            "name": str(unit["name"]),
+            "unit_type": str(unit["unit_type"]),
+            "bedrooms": int(unit["bedrooms"]),
+            "bathrooms": int(unit["bathrooms"]),
+            "base_capacity": int(unit["base_capacity"]),
+            "max_guests": int(unit["max_guests"]),
+            "status": str(unit["status"]),
+        }
+        place_facts = {
+            "property_id": str(place["property_id"]),
+            "name": str(place["name"]),
+            "property_type": str(place["property_type"]),
+            "region": str(place["region"]),
+            "province": str(place["province"]),
+            "timezone": str(place["timezone"]),
+            "status": str(place["status"]),
+        }
+        stay_facts = {
+            "booking_id": str(booking["booking_id"]),
+            "status": status,
+            "check_in": check_in,
+            "check_out": check_out,
+            "nights": nights,
+        }
+        return ArrivalInfo(
+            case_id=case.case_id,
+            booking_id=str(booking["booking_id"]),
+            booking_status=status,
+            unit_id=unit_id,
+            check_in=check_in,
+            check_out=check_out,
+            nights=nights,
+            unit=unit_facts,
+            property=place_facts,
+            stay=stay_facts,
+            window=window,
+            not_recorded=ARRIVAL_NOT_STORED,
+        )
 
     # -- RES-W06: the routine follow-up ------------------------------------ #
 
