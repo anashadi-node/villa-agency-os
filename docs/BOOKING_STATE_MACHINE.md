@@ -85,6 +85,34 @@ INQUIRY → QUALIFIED → AVAILABILITY_CONFIRMED → QUOTE_SENT → HOLD_ACTIVE
         → DEPOSIT_PAID → CONFIRMED → PRE_ARRIVAL → IN_STAY → COMPLETED → CLOSED
 ```
 
+Jalur ini **dijalankan utuh** oleh `scripts/go_live_smoke.py` di database kosong
+(webhook bertanda tangan → kasus → intake direview → bukti ketersediaan → quote →
+penawaran diterima tamu → hold → booking → invoice → pembayaran lewat webhook provider →
+dokumen → menginap → settlement supplier + deposit → gate §30 → `CLOSED`),
+dikunci oleh `tests/test_go_live_smoke.py`.
+
+### 2.1.1 Siapa yang menjalankan tiap langkah sesudah booking
+
+Setiap perpindahan status booking adalah **satu perintah bernama**, dijalankan aktor
+manusia yang tercatat, dijurnal di `booking_state_events` dan diaudit di `audit_events`
+dalam transaksi yang sama:
+
+| Perintah (`ReservationKernel`) | Dari → ke | Dijalankan oleh |
+|---|---|---|
+| `confirm_from_hold` | `HOLD_ACTIVE` → `CONFIRMED` | reservation, setelah bukti block villa (ADR-0033) |
+| `prepare_arrival` | `CONFIRMED` → `PRE_ARRIVAL` | tim reservasi, saat menyiapkan kedatangan tamu |
+| `check_in` | `PRE_ARRIVAL` → `IN_STAY` | tim reservasi/greeting, saat tamu tiba |
+| `complete_stay` | `IN_STAY` → `COMPLETED` | tim operasi, saat masa inap berakhir |
+| `cancel_booking` | (hampir semua status hidup) → `CANCELLED` | reservation + approval untuk uang (ADR-0002) |
+| `close_booking` | `COMPLETED` → `CLOSED` | sistem, **hanya bila** gate §30 lulus penuh |
+
+`prepare_arrival`, `check_in`, dan `complete_stay` adalah perintah yang **wajib ada**
+supaya `close_booking` bisa tercapai: gate §30 menuntut booking sudah `COMPLETED`, jadi
+tanpa ketiganya gate itu terimplementasi, teruji, dan **mustahil dibuka**. Ketiganya
+idempoten pada status yang sama (perintah yang diulang dari front desk bukan error) dan
+menolak lompatan status (`BOOKING_TRANSITION_REFUSED`) — diuji di
+`tests/test_booking_stay_progress.py`.
+
 ### 2.2 Jalur pintas (fast path) — melewati status pembukuan, bukan fakta
 
 | Sisi | Alasan bisnis |

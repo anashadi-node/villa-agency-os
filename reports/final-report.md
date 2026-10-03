@@ -1,153 +1,139 @@
-# Laporan Akhir Phase 1 — villa-agency-os
+# Villa Agency OS — Laporan Akhir & Paket Bukti Komersial
 
-Versi: 1.1 · Tanggal: 2026-09-21 · Commit kode: `dc6c27e` (ADR-0002 Opsi A) di atas `e83225a` · Eksekutor: Hermes Anantara v3
-(Ekosistem Copy Cloning Super Dev Builders)
-
-Repo: `/home/anashadi/villa-agency-os` — sistem operasi reservasi & agency untuk
-**Villa Management & Agency** (Bali + Yogyakarta). Fondasi deterministik sebelum lapisan AI
-diaktifkan.
-
-Keputusan akhir: **Phase 1 SELESAI dan PASS** (gate keamanan + gate mutu rilis). Kedua ADR
-sudah **Accepted**: ADR-0001 (storage/runtime) dan ADR-0002 **Opsi A** (okupansi saat
-pembatalan ditinjau — diputuskan pemilik sistem 2026-09-21, sudah diterapkan & diverifikasi)
-— lihat §6. Tidak ada keputusan bisnis yang menggantung.
+Versi: 2.0 · Tanggal: 2026-10-03 · Database acuan: dibuat dari nol saat laporan ini dibuat
+Sumber tunggal: repo `~/villa-agency-os`. **Setiap angka di bawah berasal dari keluaran
+perintah yang tertera di sebelahnya** — tidak ada klaim tanpa perintah.
 
 ---
 
-## 1. Apa yang dibangun
+## 1. Di mana sistem ini berdiri (dan kenapa itu bisa dipercaya)
 
-| Modul | Baris | Fungsi |
+Sistem ini adalah platform reservation & agency untuk villa management yang dijual /
+di-berlangganan **per agency** (ADR-0037): platform menyediakan tempat untuk setelan
+(provider pembayaran, nomor WhatsApp, daftar villa, tarif pajak, rate card, peran), dan
+**agency pemakainya yang mengisi**. Platform tidak memilih vendor untuk tenant.
+
+Inti yang menentukan nilainya — uang, tanggal, status, bukti, gate §30 — deterministic,
+diaudit, dan sudah berjalan utuh dari webhook tamu sampai booking `CLOSED` di database kosong.
+
+## 2. Bukti yang bisa dijalankan ulang oleh pembeli
+
+| Bukti | Perintah | Hasil terverifikasi 2026-10-03 |
 |---|---|---|
-| `src/primitives.py` | 668 | Uang = integer minor unit + ISO-4217 (tidak pernah float), `FrozenClock`, `IdFactory` deterministik, fingerprint, redaksi, tata bahasa error ber-kode |
-| `src/schema_loader.py` | 808 | Penerap DDL + pembaca model skema (tabel/kolom/index/trigger/enum) untuk kedua dialek |
-| `src/schema/001_initial.sql` ⇄ `001_initial.pg.sql` | 416 / 420 | **Twin semantik**: 13 tabel, 14 enum, 13 index, 8 trigger, 1 seed. Berkas kedua **dibangkitkan** dari yang pertama |
-| `src/schema/002_pg_range_exclusions.pg.sql` | 70 | Pengerasan khusus PostgreSQL (EXCLUDE pada `daterange`) — eksplisit **di luar** pasangan twin |
-| `src/policy_engine.py` | 548 | Satu objek policy versioned + fingerprint stabil; batas nilai mencerminkan CHECK di DDL |
-| `src/quote_calculator.py` | 713 | Aritmetika harga deterministik: musim, long-stay, cleaning, ekstra, deposit, pajak, service |
-| `src/reservation_kernel.py` | 1553 | Hold → booking → jurnal; **inti 0 double booking** |
-| `src/booking_states.py` | 1051 | State machine 32 status (116 sisi legal dari 1024 pasangan) + 3 guard |
-| `src/audit.py` | 878 | Jurnal audit ber-rantai hash, append-only, penjaga PII, anker eksternal |
-| `src/gates.py` | 1466 | Gerbang contract-pack, ketersediaan, unit, keluar (redaksi P0..P4) |
-| `tests/` (8 berkas) | 7241 | 586 test lulus (2814 subtest); 589 lulus dengan PostgreSQL hidup |
-| `docs/` (7 dokumen + 2 ADR) | ~760 | Charter, Property Contract Pack, Policy Matrix, Data Model, State Machine, klasifikasi data, retensi/insiden |
-| `reports/` (3 laporan) | ~380 | Gate keamanan, gate mutu rilis, serah terima (berkas ini) |
+| Suite tes + semua gerbangnya | `make check` | **3463 lulus, 4 skip, 3950 subtest, 0 gagal**; secret-scan 0 temuan (275 berkas); unsafe-scan 0 temuan; twin skema cocok; `PRE-DEPLOY GATE: PASS` |
+| Suite yang sama di interpreter kedua | `python3 -m pytest tests/ -q` | 3463 lulus, 4 skip (bebas-interpreter: 3.12.3/SQLite 3.45.1 dan 3.11.16/SQLite 3.53.1) |
+| Skema PostgreSQL diterapkan ke server **kosong** | `VILLA_PG_DSN=... python3 -m pytest tests/test_schema.py` | 75 lulus (4 di antaranya tes PostgreSQL hidup: DDL, model, trigger, dan `EXCLUDE` anti-tumpang-tindih) |
+| Jalur tamu utuh di database kosong | `python3 scripts/go_live_smoke.py --db /tmp/go-live.db --report /tmp/go-live.json` | **`GO-LIVE SMOKE: PASS` — 16/16 langkah, keluar 0** |
+| Gerbang go-live per tenant | `python3 scripts/preflight.py --db ... --anchor-dir ...` | `NO-GO` dengan daftar yang bisa dibaca: anker belum diterbitkan, data demo ada, kesiapan tenant belum diisi — **fail-closed, seperti desainnya** |
+| Perintah operasional terdokumentasi | `docs/DEPLOYMENT.md`, `docs/TENANT_SETUP.md`, `docs/OPERATIONS_RUNBOOK.md` | dijalankan satu per satu di database baru, semua sesuai dokumentasi (seed, scheduler dry+real, observability, dashboard 11 halaman) |
 
-Cakupan domain yang melekat di kode: timezone per properti (`Asia/Makassar` untuk Bali,
-`Asia/Jakarta` untuk Yogyakarta), PBJT (pajak daerah Bali), deposit & service fee, bukti
-ketersediaan bertingkat (A–D) dengan aturan "hanya A/B boleh mengonfirmasi".
-
-## 2. Bukti eksekusi (dapat direproduksi)
+## 3. Bukti jalur tamu end-to-end (keluaran nyata, satu kali jalan)
 
 ```
-$ python3 -m pytest tests/
-586 passed, 3 skipped, 2814 subtests passed in 2.52s
-3 skipped = uji PostgreSQL hidup (aktif bila VILLA_PG_DSN diset)
-
-$ VILLA_PG_DSN=postgresql://…@127.0.0.1:55433/villa_test python3 -m pytest tests/
-589 passed, 2827 subtests passed in 3.27s  (PostgreSQL 16, container sekali pakai; 0 skip)
-
-$ make check
-compile OK · pytest OK · SECRET-SCAN PASS (0 findings, 40 file) · UNSAFE-SCAN PASS (0 findings, 40 file)
-twin parity OK · === PRE-DEPLOY GATE: PASS ===
+ 1. tenant          OK      7. offer accepted   OK     13. stay            OK
+ 2. policy values   OK      8. hold             OK     14. settlement      OK
+ 3. inbound webhook OK      9. booking          OK     15. closure §30     OK
+ 4. intake review   OK     10. invoice          OK     16. evidence        OK
+ 5. availability    OK     11. payment          OK
+ 6. quote           OK     12. documents        OK
 ```
 
-Yang dibuktikan uji PostgreSQL hidup: kedua berkas PostgreSQL terpasang dari nol, katalog
-identik dengan model SQLite, dan dua hold ACTIVE yang tumpang tindih ditolak
-`ExclusionViolation` — sedangkan stay berdempetan tetap diterima karena rentang half-open.
+Fakta yang dihasilkan perjalanan itu (dari `report.json` run tersebut):
 
-## 3. Defect nyata yang ditemukan & diperbaiki (30 tercatat)
-
-Enam yang paling berkonsekuensi:
-
-1. **Uang**: `Money.minor_units` mengembalikan eksponen (0 untuk IDR), bukan jumlah minor
-   unit → setiap perhitungan uang salah.
-2. **Double booking**: `IN_STAY → NO_SHOW` tadinya sisi legal; no-show bukan status okupansi,
-   jadi slot bisa dilepas saat tamu sedang menginap. Sekarang ditolak.
-3. **PII**: `audit._normalise_key` tidak memecah camelCase → kunci `guestName` lolos dari
-   registry field terlarang; nama tamu tersimpan apa adanya di jurnal.
-4. **Referensi**: `require_ref` menerima `bad/id"` dan `-`, padahal id dipakai di nama file,
-   log, dan prompt.
-5. **Integritas audit**: `prev_hash` hanya dicek panjangnya (64), bukan bentuk hex.
-6. **Fail-closed**: `ContractPack.from_row` crash saat kolom `items` rusak, bukan menolak.
-
-Daftar lengkap D-1..D-30: `reports/release-quality-gate.md` §4. Tidak ada defect yang
-"diperbaiki" dengan melonggarkan assertion.
-
-## 4. Keputusan arsitektur
-
-| ADR | Isi | Status |
-|---|---|---|
-| ADR-0001 | SQLite untuk dev/test, PostgreSQL untuk produksi; berkas skema kembar wajib setara, dijaga test parity | **Accepted** |
-| ADR-0002 | Okupansi saat `CANCELLATION_REQUESTED` / `CANCELLATION_REVIEW` / `DISPUTED` | **Accepted (Opsi A)** — diputuskan 2026-09-21, diterapkan & diverifikasi (§6) |
-
-Pendukung keputusan lain: berkas PostgreSQL **dibangkitkan** dari berkas SQLite
-(`scripts/generate_pg_twin.py`) sehingga tidak bisa melenceng diam-diam; uang selalu integer
-minor unit + ISO-4217; policy ada di satu objek versioned ber-fingerprint (payload dibekukan
-agar fingerprint stabil).
-
-## 5. Cara menjalankan
-
-```
-make test            # seluruh suite
-make check           # gerbang pre-deploy: syntax + test + secret + unsafe + parity twin
-make schema-parity   # buktikan twin Postgres identik dengan SQLite
-make pg-twin         # bangkitkan ulang berkas twin (setelah mengubah DDL)
-
-# uji PostgreSQL hidup (DB sekali pakai — setUpClass me-reset skema public)
-docker run -d --rm -p 127.0.0.1:55432:5432 -e POSTGRES_HOST_AUTH_METHOD=trust \
-  -e POSTGRES_USER=villa_test -e POSTGRES_DB=villa_test postgres:16-alpine
-VILLA_PG_DSN=postgresql://villa_test@127.0.0.1:55432/villa_test python3 -m pytest tests/
-```
-
-Aturan kredensial repo: `.env` tidak pernah di-commit, kredensial asli tidak pernah ditempel
-ke chat/tiket/dokumen/AI co-pilot, nilai contoh hanya `[REDACTED]`/placeholder.
-
-## 6. ADR-0002 — diputuskan: Opsi A diterapkan
-
-**Keputusan pemilik sistem (2026-09-21): Opsi A.** `CANCELLATION_REQUESTED`,
-`CANCELLATION_REVIEW`, dan `DISPUTED` sekarang **menahan** tanggal: unit tetap terkunci
-sampai pembatalannya diputuskan (`→ CANCELLED`) atau sengketa ditutup. Sebelumnya ketiganya
-melepas slot, sehingga booking yang sedang ditinjau — atau tamu yang masih **fisik di dalam
-villa** — bisa dijual ulang (risiko double booking).
-
-Perubahan (5 berkas kode/DDL + 3 berkas test): predikat `uq_bookings_active_slot` 5 → 8
-status, `OCCUPYING_STATES`, `OCCUPYING_BOOKING_STATES`, dan `ex_bookings_no_overlap`
-(PostgreSQL) ikut disamakan; twin PostgreSQL diregenerasi dan parity-nya hijau.
-
-Ditegakkan di **tiga lapis**, masing-masing dengan testnya sendiri:
-
-| Lapis | Test |
+| Fakta | Nilai |
 |---|---|
-| Pemeriksaan okupansi kernel | `test_reservation_kernel.py::TestNoDoubleBooking::test_cancellation_under_review_still_blocks_a_new_hold` |
-| Index parsial SQLite (`uq_bookings_active_slot`) | `test_booking_states.py::TestAgainstSqlite::test_review_and_dispute_bindings_are_refused_by_the_database` + `test_a_decided_cancellation_does_release_the_slot` |
-| EXCLUDE PostgreSQL (`ex_bookings_no_overlap`) | `test_schema.py::TestLivePostgres::test_booking_exclusion_holds_the_dates_during_review_and_dispute` |
+| Kasus | `case_744c0b7d6fee0355` (dibuka oleh webhook WhatsApp **bertanda tangan**) |
+| Quote | `quote_b85c63f08fe6f57e` — **IDR 5.775.000** untuk 3 malam (2 dewasa, 1 anak) |
+| Hold | `hold_94ced2b7db70a837` — hold kedua pada jendela yang sama **ditolak** |
+| Booking | `book_0f524d4e9406c3c3` → **CLOSED** |
+| Riwayat status | `HOLD_ACTIVE→CONFIRMED → PRE_ARRIVAL → IN_STAY → COMPLETED` |
+| Invoice | `INV-202610-00001` (nomor dari urutan, bukan angka manual) |
+| Pembayaran | `payment_788d6e21cc630246` — intent hosted + webhook provider bertanda tangan; **4 entri ledger diverifikasi utuh** |
+| Settlement supplier | 4.042.500 minor DUE → PAID (rute `route_default`) |
+| Deposit | 2.000.000 minor → RETURNED |
+| Dokumen wajib | CONFIRMATION + RECEIPT tercatat (kebijakan `operations.booking.required_document_kinds`) |
+| Rantai audit | 18 baris, **hash-chain terverifikasi** setelah seluruh perjalanan |
 
-Biaya yang diterima sadar: unit bisa tertahan selama review; itu dibayar dengan
-**mempercepat keputusan pembatalan**, bukan dengan membuka slot sebelum ada keputusan.
-Kalau keputusan ini ingin dibatalkan, cukup kembalikan predikat 8 → 5 di tiga tempat dan
-hapus lima test di atas — tidak ada data lama yang menjadi tidak valid. Rincian: `docs/adr/0002-occupancy-during-cancellation-review.md`.
+**Gerbang §30 — tujuh pemeriksaan, semuanya lulus sebelum `CLOSED`:**
 
-## 7. Yang belum dikerjakan (Phase 2, jangan diklaim ada)
+1. `guest_checked_out` — booking `COMPLETED`
+2. `open_guest_issues` — kasus terbuka 0, follow-up tamu hidup 0
+3. `financial_reconciliation` — invoice 5.775.000 dari 5.775.000 tersettle; rekonsiliasi terbuka 0
+4. `supplier_reconciliation` — 4.042.500 IDR DUE 1 / PAID 1
+5. `security_deposit_resolved` — 2.000.000 IDR RETURNED 1
+6. `incidents_closed` — tidak ada insiden terbuka yang menyebut booking ini
+7. `required_documents` — 2 dari 2 jenis dokumen wajib tercatat
 
-1. Penerbitan anker rantai audit ke sistem kedua (file mingguan / WORM).
-2. Uji redaksi `apply_redaction` per kelas data P0..P4 secara menyeluruh.
-3. Lapisan AI (narrative/intake) — sengaja ditunda sampai fondasi deterministik selesai.
-4. Uji beban/volume, observability (metrik/panel), dan SOP operasional harian.
-5. Integrasi kanal nyata (WhatsApp/OTA) — belum ada kredensial apa pun di repo ini.
+## 4. Yang ditemukan & diperbaiki pada audit 2026-10-03
 
-## 8. Jejak commit
+Audit ini menemukan **tiga defect nyata**. Dua di antaranya membuat janji sistem tidak bisa
+dibuktikan sama sekali — bukan kosmetik.
 
+**4.1 Gate §30 mustahil tercapai (blocker).**
+Bukti: hanya `cancel_booking` dan `close_booking` menulis `bookings.status`; `booking_states.apply_transition()`
+murni validator dan tidak dipanggil kode produksi mana pun. Gate menuntut booking `COMPLETED`,
+tetapi **tidak ada perintah yang bisa menghasilkan `COMPLETED`**. Satu-satunya test yang pernah
+mencapai booking selesai melakukannya dengan `UPDATE` mentah — bentuk khas perintah yang hilang.
+Akibatnya: gate terimplementasi, teruji, dan tak bisa dibuka; jalur tamu berhenti di `CONFIRMED`.
+Perbaikan: `prepare_arrival`, `check_in`, `complete_stay` di `ReservationKernel` (satu penulis per
+tabel, dijurnal + diaudit dalam transaksi yang sama, idempoten pada status yang sama, menolak
+lompatan status). Dikunci `tests/test_booking_stay_progress.py` (10 tes).
+
+**4.2 Skema PostgreSQL tidak bisa dibuat dari nol (blocker dialek produksi).**
+Bukti: `001_initial.pg.sql` mati saat diterapkan ke server kosong dengan
+`relation "evidence_objects" does not exist` — `contract_versions` dan `rate_versions`
+mendeklarasikan FK ke tabel yang baru dibuat ±1.500 baris kemudian. SQLite menoleransi FK
+maju; PostgreSQL tidak. `make schema-parity` tak menangkapnya karena hanya membandingkan
+*model*, tak pernah menerapkan DDL ke server. **Empat tes PostgreSQL hidup tidak pernah
+berjalan** (`skipUnless VILLA_PG_DSN`).
+Perbaikan: urutan tabel dibereskan di `001_initial.sql` (0 rujukan maju tersisa), twin
+diregenerasi. Bukti: `tests/test_schema.py` + `VILLA_PG_DSN` → 75 lulus (sebelumnya 4 ERROR).
+
+**4.3 Fixture tes busuk** (terungkap setelah 4.2): `test_range_exclusion_really_blocks_an_overlap`
+memakai status hold `'ACTIVE'` yang sudah dihapus WAVE 4-B (ADR-0020). Diganti `'CONFIRMED'`
+(anggota `OCCUPYING_HOLD_STATES`).
+
+**4.4 Paket komersial & dokumen menyimpang dari kenyataan.**
+`SALES_PACKAGE.md` menyebut 22 modul / 34 tabel / 2.282 test (aktual 51 / 72 / 3.463);
+`DATA_MODEL.md` menyebut 13 tabel (aktual 72); `README.md` masih menyatakan "Phase 1 berjalan";
+dua docstring menunjuk berkas tes yang tidak ada; satu keputusan bisnis menunjuk nama ADR yang
+salah. Semua diperbaiki dan angkanya kini cocok dengan keluaran perintah.
+
+## 5. Batas yang jujur — belum ditutup
+
+Ini bukan daftar "nanti", ini daftar **yang tidak boleh diklaim sudah selesai**:
+
+1. **Keputusan bisnis per agency masih menunggu pengisian** (provider pembayaran per rel,
+   nomor WhatsApp, daftar villa, tarif PBJT per kabupaten, rate card, pemegang peran). Platform
+   menolak jalan sampai terisi — itu perilaku yang benar, bukan bug.
+2. **Anker rantai audit belum diterbitkan** di lingkungan mana pun; produksi harus menerbitkan
+   berkala (`make anchor-publish`) supaya penghapusan baris terakhir pun terdeteksi.
+3. **Pekerja latar (systemd/scheduler) untuk outbox belum dipasang**: event sudah ditulis satu
+   transaksi dengan state bisnisnya, tetapi pengiriman nyata (email/WA/webhook) belum berjalan.
+4. **Halaman dashboard Phase 4 untuk `channels.py` dan `shadow_eval.py` belum ada** — kedua modul
+   sudah teruji, tetapi belum punya pemanggil produksi.
+5. **Pelapisan bahasa (ADR-0011) belum tuntas**: teks Indonesia lama masih ada di `dashboard.py`
+   (158), `connectors.py` (90), `incidents.py` (74), `cases.py` (42). Dijaga ratchet — boleh
+   menyusut, tidak boleh bertambah.
+6. **Modul DLP (pencegahan kebocoran data) belum ada** (baru ada pemindai setelan berbahaya).
+7. **Belum ada bukti di lingkungan produksi nyata**: semua bukti di laporan ini dari
+   database lokal/PM2 container. Pemasangan produksi (PostgreSQL + anker + monitoring)
+   dijalankan lewat `docs/DEPLOYMENT.md` dan belum dieksekusi.
+
+## 6. Cara memverifikasi ulang (5 menit)
+
+```bash
+cd ~/villa-agency-os
+python3 scripts/go_live_smoke.py --db /tmp/go-live.db --report /tmp/go-live.json   # 16/16, keluar 0
+make check                                                                          # 3463 lulus + semua scan
+VILLA_PG_DSN=<postgres-kosong> python3 -m pytest tests/test_schema.py -q             # skema PG benar-benar berlaku
+python3 scripts/preflight.py --db data/villa.db --anchor-dir /var/lib/villa/anchors  # gerbang go-live per tenant
 ```
-dc6c27e  feat(schema,kernel): ADR-0002 Opsi A — pembatalan ditinjau & sengketa menahan slot (5 test, termasuk PostgreSQL hidup)
-41a7b1a  docs(reports): tutup gate Phase 1 — laporan akhir, angka terverifikasi, 6 defect baru
-e83225a  test(audit,gates): 276 test baru + 3 perbaikan modul; verifikasi mandiri atas hasil delegasi
-9ae52e1  test(schema): buktikan 001+002 di PostgreSQL 16 nyata; laporan gate keamanan & mutu
-1ccdcce  fix(guardrails): scan docs for secrets, mata-rantai false positive, artefak .tmp
-8c4c777  feat(kernel): Phase 1 reservation kernel — deterministik, fail-closed, parity SQLite⇄PostgreSQL
-```
 
-Catatan proses: dua suite terakhir (`test_audit.py`, `test_gates.py`) ditulis oleh agen
-otomatis yang saya delegasikan, lalu **saya verifikasi sendiri**: dua test di dalamnya gagal
-saat dijalankan (klaim agen "semua hijau" tidak akurat) dan tiga perubahan modul yang mereka
-lakukan di luar permintaan saya direview satu per satu. Ringkasan agen tidak pernah dipakai
-sebagai bukti.
+Jika salah satu dari empat perintah di atas gagal, laporan ini tidak berlaku lagi — buktinya
+adalah perintahnya, bukan dokumen ini.
+
+---
+
+*Laporan ini menggantikan `reports/final-report.md` versi 2026-09-21 (yang menggambarkan
+kondisi Phase 1 dan sudah tidak berlaku).*

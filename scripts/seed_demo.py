@@ -10,8 +10,9 @@ with ``demo_`` and every property name contains "Contoh": `scripts/preflight.py`
 refuses a production database that contains them.
 
 The flow-level proof — inquiry → intake → match → quote → hold → payment →
-confirmation → document — lives in the tests (see ``tests/test_end_to_end_scenario.py``
-and the module suites), not here.
+confirmation → document → stay → settlement → closure — is ``scripts/go_live_smoke.py``,
+which drives the public API on a database created from nothing and is itself covered by
+``tests/test_go_live_smoke.py``. This seeder stays what it is: a fast demo fixture.
 
     python3 scripts/seed_demo.py --db /tmp/demo/villa.db
     python3 scripts/seed_demo.py --db /tmp/demo/villa.db --dry-run

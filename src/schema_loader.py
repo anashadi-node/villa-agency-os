@@ -12,8 +12,9 @@ capabilities live here:
    :func:`apply_schema` runs the DDL exactly once, guarded by ``schema_meta``.
 2. **Parse** — :func:`parse_schema_model` turns DDL text into a normalised
    structural model (tables, columns, keys, indexes, triggers, enum literals).
-   ``tests/test_schema_parity.py`` diffs the two dialects' models, so drift
-   fails the suite instead of silently reaching production.
+   ``tests/test_schema.py`` diffs the two dialects' models and, with ``VILLA_PG_DSN``
+   set, applies both files to a live PostgreSQL server, so drift fails the suite
+   instead of silently reaching production.
 
 Fail-closed rules: an unsupported construct raises :class:`SchemaParseError`
 instead of being skipped, and a statement that cannot be classified raises

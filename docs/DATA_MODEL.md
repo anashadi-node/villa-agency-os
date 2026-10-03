@@ -1,8 +1,8 @@
-# Data Model — 34 Tabel, Kunci, dan Aturan Bukti
+# Data Model — 72 Tabel, Kunci, dan Aturan Bukti
 
-Versi: 1.0 · Tanggal: 2026-09-21 · Sumber: `src/schema/001_initial.sql` (SQLite) ⇄ `src/schema/001_initial.pg.sql` (PostgreSQL, generated)
+Versi: 1.1 · Tanggal: 2026-10-03 · Sumber: `src/schema/001_initial.sql` (SQLite) ⇄ `src/schema/001_initial.pg.sql` (PostgreSQL, generated)
 
-Angka ringkas dari skema saat ini: **13 tabel, 13 index (2 di antaranya unique parsial), 8 trigger, 14 enum**. Hitung ulang kapan saja dengan:
+Angka ringkas dari skema saat ini: **72 tabel, 62 index (2 di antaranya unique parsial), 64 trigger, 104 enum**. Hitung ulang kapan saja dengan:
 
 ```bash
 python3 -c "import sys; sys.path.insert(0,'src'); import schema_loader as s; m=s.parse_schema_model('sqlite'); print(len(m.tables), len(m.indexes), len(m.triggers), len(m.enums))"

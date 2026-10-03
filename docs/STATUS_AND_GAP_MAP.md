@@ -1,6 +1,15 @@
 # Peta Status & Gap — Villa Agency OS
 **Tanggal periksa: 2026-09-28** · **Pembaruan 2026-10-02**: tahap 4 (AI Reservation Service) — inti selesai · Sumber acuan: Master Spec v1.1 (invariant domain) + **AI Workforce Architecture V1.1** (organisasi & lapisan AI) · Bukti: kode, tes, gerbang, preflight
 
+> **CATATAN STATUS (2026-10-03) — baca ini dulu.** Dokumen ini adalah **potret bertanggal
+> 2026-09-28/10-02**, bukan status hari ini. Beberapa baris di bawah sudah tidak berlaku:
+> lapisan AI Reservation Service (agent #3) **sudah ada kodenya** (`src/reservation_service.py`,
+> `src/reservation_workers.py` 11 worker, `src/ai_gateway.py`), begitu pula `channels.py`,
+> `shadow_eval.py`, KPI, dan dashboard Phase 4. Status terkini ada di
+> `docs/PHASE2_TO_4_EXECUTION_PLAN.md` §5 dan buktinya di `reports/final-report.md`.
+> Dokumentasi tidak dihapus karena fungsi aslinya — daftar kekurangan bertanggal — tetap
+> berguna selama dibaca sebagai potret, bukan sebagai klaim hari ini.
+
 ---
 
 ## 0. Cara membaca peta ini
@@ -11,7 +20,7 @@ Setiap baris di bawah punya **bukti yang bisa diperiksa ulang**, bukan pendapat.
 - ⚠️ **BELUM OK** — belum ada / belum lengkap, ini kerjaan
 - ❓ **PERLU KEPUTUSAN ANDA** — software tidak boleh menebak
 
-Satu hal yang saya tegaskan di depan, karena ini akar semua yang di bawah: **platform ini hari ini adalah sistem DOMAIN yang kuat, dan lapisan AI WORKFORCE yang masih nol.** Dua hal berbeda, dan peta ini memisahkannya dengan jelas.
+Satu hal yang saya tegaskan di depan, karena ini akar semua yang di bawah: **pada tanggal potret ini (2026-09-28) platform adalah sistem DOMAIN yang kuat, dan lapisan AI WORKFORCE yang masih nol.** Dua hal berbeda, dan peta ini memisahkannya dengan jelas. *(Sejak 2026-10-02 lapisan AI Reservation Service — agent #3 — sudah punya kode; lihat catatan status di atas.)*
 
 ---
 

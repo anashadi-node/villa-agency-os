@@ -118,6 +118,68 @@ CREATE INDEX ix_vsr_lookup ON villa_supplier_relationships (agency_id, property_
 -- and AI_EXTRACTED → ACTIVE is forbidden: an extraction may only ever be a *draft*
 -- source, because the CHECK below refuses ACTIVE without a named human verifier and
 -- approver. That is the invariant enforced structurally, not by convention.
+
+-- --------------------------------------------------------------------------
+-- --------------------------------------------------------------------------
+-- Evidence objects — the document attack surface (Master Spec v1.1 §27, §12, §19)
+--
+-- `documents` (above) holds documents this system *generates*. This section holds
+-- files that arrive from outside — supplier contracts, payment proofs, screenshots,
+-- bank references — the surface §53(8) names as an attack vector.
+--
+-- The pipeline is a database invariant, not a convention:
+--   UPLOAD → QUARANTINE → TYPE/SIZE VALIDATION → MALWARE SCAN → CLASSIFICATION →
+--   SAFE STORAGE → AUTHORIZED ACCESS
+-- `ck_evidence_stored_requires_clean_scan` refuses STORED without a named scanner and
+-- a CLEAN verdict, so "quarantine was skipped" is not a state any code path can write.
+-- Files are never hard-deleted (§39): deletion is a status with an audit event.
+-- --------------------------------------------------------------------------
+CREATE TABLE evidence_objects (
+    evidence_id      TEXT NOT NULL,
+    agency_id        TEXT NOT NULL DEFAULT 'agency_default',
+    kind             TEXT NOT NULL CHECK (kind IN (
+                         'EMAIL','WHATSAPP','PDF','SCREENSHOT','PORTAL_REFERENCE',
+                         'PHONE_CONFIRMATION_NOTE','BANK_REFERENCE','OTHER')),
+    status           TEXT NOT NULL CHECK (status IN (
+                         'QUARANTINED','VALIDATED','SCAN_PENDING','SCANNED','CLASSIFIED',
+                         'STORED','REJECTED','SCAN_FAILED','DELETED')),
+    classification   TEXT CHECK (classification IS NULL OR classification IN ('L1','L2','L3','L4')),
+    access_policy    TEXT NOT NULL CHECK (access_policy IN ('AGENCY_SCOPED','NEED_TO_KNOW','RESTRICTED_VAULT')),
+    original_filename TEXT NOT NULL CHECK (length(original_filename) >= 1),
+    content_type     TEXT NOT NULL CHECK (length(content_type) >= 3),
+    byte_size        INTEGER NOT NULL CHECK (byte_size >= 0),
+    sha256           TEXT NOT NULL CHECK (length(sha256) = 64),
+    uploaded_by      TEXT NOT NULL CHECK (length(uploaded_by) >= 1),
+    quarantine_ref   TEXT NOT NULL CHECK (length(quarantine_ref) >= 1),
+    storage_backend  TEXT,
+    storage_key      TEXT,
+    scan_provider    TEXT,
+    scan_verdict     TEXT CHECK (scan_verdict IS NULL OR scan_verdict IN ('CLEAN','INFECTED','UNKNOWN')),
+    scanned_at       TEXT,
+    rejection_reason TEXT,
+    retention_until  TEXT,
+    version          INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL,
+    CONSTRAINT pk_evidence_objects PRIMARY KEY (evidence_id),
+    CONSTRAINT fk_evidence_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    CONSTRAINT ck_evidence_classified CHECK (
+        status NOT IN ('CLASSIFIED','STORED') OR classification IS NOT NULL
+    ),
+    CONSTRAINT ck_evidence_stored_requires_clean_scan CHECK (
+        status <> 'STORED'
+        OR (storage_key IS NOT NULL AND storage_backend IS NOT NULL
+            AND scan_provider IS NOT NULL AND scan_verdict = 'CLEAN' AND scanned_at IS NOT NULL)
+    ),
+    CONSTRAINT ck_evidence_restricted_vault CHECK (
+        classification IS NULL OR classification <> 'L4' OR access_policy = 'RESTRICTED_VAULT'
+    ),
+    CONSTRAINT ck_evidence_rejection CHECK (
+        status <> 'REJECTED' OR (rejection_reason IS NOT NULL AND length(rejection_reason) >= 3)
+    )
+);
+CREATE INDEX ix_evidence_scope ON evidence_objects (agency_id, status, classification);
+
 CREATE TABLE contract_versions (
     contract_version_id TEXT    NOT NULL,
     agency_id    TEXT    NOT NULL DEFAULT 'agency_default',
@@ -1681,68 +1743,6 @@ BEFORE DELETE ON incident_steps
 BEGIN
     SELECT RAISE(ABORT, 'incident_steps: riwayat append-only tidak boleh dihapus (no DELETE)');
 END;
-
--- --------------------------------------------------------------------------
--- --------------------------------------------------------------------------
--- Evidence objects — the document attack surface (Master Spec v1.1 §27, §12, §19)
---
--- `documents` (above) holds documents this system *generates*. This section holds
--- files that arrive from outside — supplier contracts, payment proofs, screenshots,
--- bank references — the surface §53(8) names as an attack vector.
---
--- The pipeline is a database invariant, not a convention:
---   UPLOAD → QUARANTINE → TYPE/SIZE VALIDATION → MALWARE SCAN → CLASSIFICATION →
---   SAFE STORAGE → AUTHORIZED ACCESS
--- `ck_evidence_stored_requires_clean_scan` refuses STORED without a named scanner and
--- a CLEAN verdict, so "quarantine was skipped" is not a state any code path can write.
--- Files are never hard-deleted (§39): deletion is a status with an audit event.
--- --------------------------------------------------------------------------
-CREATE TABLE evidence_objects (
-    evidence_id      TEXT NOT NULL,
-    agency_id        TEXT NOT NULL DEFAULT 'agency_default',
-    kind             TEXT NOT NULL CHECK (kind IN (
-                         'EMAIL','WHATSAPP','PDF','SCREENSHOT','PORTAL_REFERENCE',
-                         'PHONE_CONFIRMATION_NOTE','BANK_REFERENCE','OTHER')),
-    status           TEXT NOT NULL CHECK (status IN (
-                         'QUARANTINED','VALIDATED','SCAN_PENDING','SCANNED','CLASSIFIED',
-                         'STORED','REJECTED','SCAN_FAILED','DELETED')),
-    classification   TEXT CHECK (classification IS NULL OR classification IN ('L1','L2','L3','L4')),
-    access_policy    TEXT NOT NULL CHECK (access_policy IN ('AGENCY_SCOPED','NEED_TO_KNOW','RESTRICTED_VAULT')),
-    original_filename TEXT NOT NULL CHECK (length(original_filename) >= 1),
-    content_type     TEXT NOT NULL CHECK (length(content_type) >= 3),
-    byte_size        INTEGER NOT NULL CHECK (byte_size >= 0),
-    sha256           TEXT NOT NULL CHECK (length(sha256) = 64),
-    uploaded_by      TEXT NOT NULL CHECK (length(uploaded_by) >= 1),
-    quarantine_ref   TEXT NOT NULL CHECK (length(quarantine_ref) >= 1),
-    storage_backend  TEXT,
-    storage_key      TEXT,
-    scan_provider    TEXT,
-    scan_verdict     TEXT CHECK (scan_verdict IS NULL OR scan_verdict IN ('CLEAN','INFECTED','UNKNOWN')),
-    scanned_at       TEXT,
-    rejection_reason TEXT,
-    retention_until  TEXT,
-    version          INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
-    created_at       TEXT NOT NULL,
-    updated_at       TEXT NOT NULL,
-    CONSTRAINT pk_evidence_objects PRIMARY KEY (evidence_id),
-    CONSTRAINT fk_evidence_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
-    CONSTRAINT ck_evidence_classified CHECK (
-        status NOT IN ('CLASSIFIED','STORED') OR classification IS NOT NULL
-    ),
-    CONSTRAINT ck_evidence_stored_requires_clean_scan CHECK (
-        status <> 'STORED'
-        OR (storage_key IS NOT NULL AND storage_backend IS NOT NULL
-            AND scan_provider IS NOT NULL AND scan_verdict = 'CLEAN' AND scanned_at IS NOT NULL)
-    ),
-    CONSTRAINT ck_evidence_restricted_vault CHECK (
-        classification IS NULL OR classification <> 'L4' OR access_policy = 'RESTRICTED_VAULT'
-    ),
-    CONSTRAINT ck_evidence_rejection CHECK (
-        status <> 'REJECTED' OR (rejection_reason IS NOT NULL AND length(rejection_reason) >= 3)
-    )
-);
-CREATE INDEX ix_evidence_scope ON evidence_objects (agency_id, status, classification);
-
 -- Temporary authorized access (§27: "temporary signed/authorized URLs"; no permanent
 -- public links for confidential/restricted files). The raw token is never stored —
 -- only its digest — and a grant is always bounded in time and purpose.

@@ -3,8 +3,10 @@
 **Sistem operasi reservation & agency untuk Villa Management (Bali + Yogyakarta)** —
 fondasi deterministik sebelum lapisan AI diaktifkan.
 
-Status: **Phase 0 selesai, Phase 1 (Reservation Kernel) berjalan.**
-AI co-pilot, pembayaran, dan integrasi kanal belum diaktifkan (lihat `docs/`).
+Status: **Phase 0–4 selesai** — kernel, uang, dokumen, kanal, dan bukti go-live
+end-to-end sudah berjalan; yang tersisa hanya keputusan bisnis per agency
+(`docs/GO_LIVE_DECISIONS.md`) dan pemasangan produksi (`docs/DEPLOYMENT.md`).
+Bukti jalur tamu utuh: `python3 scripts/go_live_smoke.py --db /tmp/go-live.db`.
 
 ---
 
@@ -83,6 +85,9 @@ villa-agency-os/
 ```bash
 # Test suite (bukti utama)
 python3 -m pytest tests/ -q --tb=short
+
+# Bukti jalur tamu utuh: 16 langkah di database kosong, keluar 0 hanya bila semuanya lulus
+python3 scripts/go_live_smoke.py --db /tmp/go-live.db --report /tmp/go-live.json
 
 # Gerbang pre-deploy lengkap (syntax + test + secret scan + unsafe scan + parity skema)
 make check
@@ -251,7 +256,7 @@ Ringkasan produk untuk calon pembeli: `docs/SALES_PACKAGE.md`.
 ## Dokumen wajib baca sebelum mengubah kode
 
 1. `docs/BOOKING_STATE_MACHINE.md` — invariant & transisi resmi.
-2. `docs/DATA_MODEL.md` — tabel, kunci, dan aturan bukti (34 tabel).
+2. `docs/DATA_MODEL.md` — tabel, kunci, dan aturan bukti (72 tabel di `src/schema/001_initial.sql` + 14 migrasi).
 3. `docs/POLICY_MATRIX.md` — apa yang boleh berbeda per properti/kanal.
 4. `docs/DATA_CLASSIFICATION_AND_ACCESS.md` — apa yang tidak boleh masuk AI.
 5. `docs/GO_LIVE_DECISIONS.md` — keputusan bisnis yang harus ada sebelum go-live.

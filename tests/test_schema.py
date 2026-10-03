@@ -347,7 +347,14 @@ class TestLivePostgres(unittest.TestCase):
                 self.assertEqual(cur.fetchone()[0], 1, constraint)
 
     def test_range_exclusion_really_blocks_an_overlap(self):
-        """End-to-end proof: two overlapping ACTIVE holds must be rejected by PG."""
+        """End-to-end proof: two overlapping occupying holds must be rejected by PG.
+
+        The status is ``CONFIRMED`` — one of ``OCCUPYING_HOLD_STATES`` — not ``ACTIVE``:
+        WAVE 4-B (ADR-0020) replaced the hold vocabulary, and this fixture kept the old
+        value because the live-PostgreSQL class never ran while the schema file could not
+        be applied to an empty server. A probe that cannot insert its own first row proves
+        nothing about the constraint it means to test.
+        """
         import psycopg2
 
         seed = [
@@ -382,7 +389,7 @@ class TestLivePostgres(unittest.TestCase):
             " created_at, expires_at, expires_timezone, closed_at, close_reason,"
             " extended_count)"
             " VALUES ('hold_pg_1', 'unit_pg_probe', 'prop_pg_probe', '2026-10-01',"
-            " '2026-10-03', 2, 'ACTIVE', 'guest_probe', NULL, 'policy_probe',"
+            " '2026-10-03', 2, 'CONFIRMED', 'guest_probe', NULL, 'policy_probe',"
             " 'evid_pg_probe', 'idem_pg_0001', '2026-09-21T00:00:00+00:00',"
             " '2026-09-22T00:00:00+00:00', 'Asia/Makassar', NULL, NULL, 0)"
         )
@@ -392,7 +399,7 @@ class TestLivePostgres(unittest.TestCase):
             " created_at, expires_at, expires_timezone, closed_at, close_reason,"
             " extended_count)"
             " VALUES ('hold_pg_2', 'unit_pg_probe', 'prop_pg_probe', '2026-10-02',"
-            " '2026-10-04', 2, 'ACTIVE', 'guest_probe2', NULL, 'policy_probe',"
+            " '2026-10-04', 2, 'CONFIRMED', 'guest_probe2', NULL, 'policy_probe',"
             " 'evid_pg_probe', 'idem_pg_0002', '2026-09-21T00:00:00+00:00',"
             " '2026-09-22T00:00:00+00:00', 'Asia/Makassar', NULL, NULL, 0)"
         )
@@ -415,7 +422,7 @@ class TestLivePostgres(unittest.TestCase):
                     " idempotency_key, created_at, expires_at, expires_timezone, closed_at,"
                     " close_reason, extended_count) VALUES ('hold_pg_3', 'unit_pg_probe',"
                     " 'prop_pg_probe',"
-                    " '2026-10-03', '2026-10-05', 2, 'ACTIVE', 'guest_probe3', NULL,"
+                    " '2026-10-03', '2026-10-05', 2, 'CONFIRMED', 'guest_probe3', NULL,"
                     " 'policy_probe', 'evid_pg_probe', 'idem_pg_0003',"
                     " '2026-09-21T00:00:00+00:00', '2026-09-22T00:00:00+00:00',"
                     " 'Asia/Makassar', NULL, NULL, 0)"

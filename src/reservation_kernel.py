@@ -1862,6 +1862,134 @@ class ReservationKernel:
             )
         return booking_id
 
+    # -- the stay itself ----------------------------------------------------- #
+    def prepare_arrival(
+        self,
+        *,
+        booking_id: str,
+        command_id: str,
+        actor: Optional[str] = None,
+        actor_role: Optional[str] = None,
+    ) -> str:
+        """Mark that the agency is now working the arrival (``CONFIRMED`` → ``PRE_ARRIVAL``)."""
+        return self._stay_command(
+            booking_id=booking_id,
+            command_id=command_id,
+            to_state="PRE_ARRIVAL",
+            command="prepare_arrival",
+            actor=actor,
+            actor_role=actor_role,
+        )
+
+    def check_in(
+        self,
+        *,
+        booking_id: str,
+        command_id: str,
+        actor: Optional[str] = None,
+        actor_role: Optional[str] = None,
+    ) -> str:
+        """The guest has arrived (``PRE_ARRIVAL`` → ``IN_STAY``)."""
+        return self._stay_command(
+            booking_id=booking_id,
+            command_id=command_id,
+            to_state="IN_STAY",
+            command="check_in",
+            actor=actor,
+            actor_role=actor_role,
+        )
+
+    def complete_stay(
+        self,
+        *,
+        booking_id: str,
+        command_id: str,
+        actor: Optional[str] = None,
+        actor_role: Optional[str] = None,
+    ) -> str:
+        """The stay is over (``IN_STAY`` → ``COMPLETED``).
+
+        This is the last step §30 waits for: :meth:`close_booking` refuses until the
+        booking is ``COMPLETED`` (or already ``CLOSED``), so before this command
+        existed a booking could be confirmed but never closed — the closure gate was
+        implemented, tested and unreachable. It frees the slot (``COMPLETED`` is not an
+        occupying status): the dates have passed, so the inventory is no longer held.
+        """
+        return self._stay_command(
+            booking_id=booking_id,
+            command_id=command_id,
+            to_state="COMPLETED",
+            command="complete_stay",
+            actor=actor,
+            actor_role=actor_role,
+        )
+
+    def _stay_command(
+        self,
+        *,
+        booking_id: str,
+        command_id: str,
+        to_state: str,
+        command: str,
+        actor: Optional[str],
+        actor_role: Optional[str],
+    ) -> str:
+        """One guarded step of the stay, journalled and audited in one transaction.
+
+        The gate is :attr:`_transition_gate`, not a comparison against this method's
+        own idea of the sequence: an injected state machine (``booking_states``) decides
+        which edges exist. A replay — the booking is already in ``to_state`` — is a
+        no-op, which is what makes a retried command from a flaky front desk safe.
+        """
+        booking_id = require_ref(booking_id, "booking_id")
+        command_id = require_ref(command_id, "command_id")
+        _require_min_length(command_id, "command_id", 8)
+        now = self._now()
+        with self.transaction() as conn:
+            booking = self._require_booking(conn, booking_id)
+            if booking["status"] == to_state:
+                return booking_id
+            if not self._transition_gate(booking["status"], to_state, command):
+                raise DomainError(
+                    f"state machine refuses {booking['status']} -> {to_state} for {command}",
+                    code="BOOKING_TRANSITION_REFUSED",
+                    from_state=booking["status"],
+                    to_state=to_state,
+                    command=command,
+                )
+            conn.execute(
+                """
+                UPDATE bookings SET status = ?, updated_at = ?, version_lock = version_lock + 1
+                WHERE booking_id = ?
+                """,
+                (to_state, now, booking_id),
+            )
+            self._append_state_event(
+                conn,
+                booking_id=booking_id,
+                from_state=booking["status"],
+                to_state=to_state,
+                command=command,
+                command_id=command_id,
+                actor=actor or self.actor,
+                actor_role=actor_role or self.actor_role,
+                reason=None,
+                evidence_ref=None,
+            )
+            self._audit(
+                conn,
+                action=f"booking.{command}",
+                entity_type="booking",
+                entity_id=booking_id,
+                before={"status": booking["status"]},
+                after={"status": to_state},
+                reason=None,
+                policy_version_id=booking["policy_version_id"],
+                evidence_ref=None,
+                actor=actor,
+            )
+        return booking_id
+
     def close_booking(
         self,
         *,
@@ -2673,6 +2801,11 @@ _KERNEL_TRANSITIONS: frozenset[tuple[str, str, str]] = frozenset(
         ("CONFIRMED", "CANCELLED", "cancel_booking"),
         ("PRE_ARRIVAL", "CANCELLED", "cancel_booking"),
         ("IN_STAY", "CANCELLED", "cancel_booking"),
+        # The stay itself. Without these three edges a confirmed booking could never
+        # reach COMPLETED, and `close_booking` — §30's gate — could never open.
+        ("CONFIRMED", "PRE_ARRIVAL", "prepare_arrival"),
+        ("PRE_ARRIVAL", "IN_STAY", "check_in"),
+        ("IN_STAY", "COMPLETED", "complete_stay"),
         ("COMPLETED", "CLOSED", "close_booking"),
     }
 )
