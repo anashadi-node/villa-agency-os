@@ -82,8 +82,8 @@ terbuka (fase yang bergantung padanya tetap *paper*), atau backup belum diverifi
 | Fase | Status |
 |---|---|
 | Phase 0–1 (kernel, ADR-0002) | **Selesai** — 607 test hijau, `make check` PASS |
-| Phase 2 | **Dikerjakan** (skema + guard DB selesai, modul menyusul) |
-| Phase 3 | Belum mulai |
-| Phase 4 | Belum mulai |
+| Phase 2 | **Selesai** (2026-10-03 — modul + gerbang §9/§30 lengkap, ADR-0050–0056) |
+| Phase 3 | **Selesai** (2026-10-03 — deposit & settlement berpunya via CLI `closure_facts.py`, ADR-0055/0056) |
+| Phase 4 | **Modul lengkap 2026-10-03** — `channels.py` (ADR-0059), `shadow_eval.py` (ADR-0058), KPI (ADR-0057), dashboard/anchors/observability/preflight sudah ada; tersisa: bukti go-live end-to-end + `reports/final-report.md` |
 
 Dokumen ini diperbarui setiap fase ditutup, bersama `reports/final-report.md`.
