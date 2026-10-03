@@ -205,10 +205,18 @@ class TestStructuralParity(unittest.TestCase):
                 )
 
     def test_check_constraints_match_by_name_and_expression(self):
+        # One documented dialect difference (ADR: the GLOB transform in generate_pg_twin):
+        # SQLite's `x glob '[a-z]*'` (possibly inside a compound constraint) and
+        # PostgreSQL's `x ~ '^[a-z]'` mean the same thing. The sqlite side is normalised
+        # with the same rule the generator applies, so the comparison stays exact for
+        # every other constraint.
+        def normalise(expr: str) -> str:
+            return re.sub(r"(\w+) GLOB '\[a-z\]\*'", r"\1 ~ '^[a-z]'", expr, flags=re.IGNORECASE)
+
         for name, table in self.sqlite.tables.items():
             with self.subTest(table=name):
                 self.assertEqual(
-                    [(c[0], c[1]) for c in table.checks],
+                    [(c[0], normalise(c[1])) for c in table.checks],
                     [(c[0], c[1]) for c in self.pg.tables[name].checks],
                 )
 

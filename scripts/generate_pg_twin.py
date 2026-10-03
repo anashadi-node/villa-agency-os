@@ -118,6 +118,11 @@ def generate(sqlite_sql: str) -> str:
             continue
 
         pg_body = re.sub(r"\bINTEGER\b", "BIGINT", body)
+        # SQLite's GLOB has no PostgreSQL equivalent: a `[a-z]*` glob on one identifier
+        # column (ck_agency_roles_id) is a prefix pattern, i.e. a regex anchor in PG.
+        # Case-insensitive and inline, because the constraint may be compound
+        # ("role_id glob '[a-z]*' and length(role_id) between 2 and 64").
+        pg_body = re.sub(r"(\w+) GLOB '\[a-z\]\*'", r"\1 ~ '^[a-z]'", pg_body, flags=re.IGNORECASE)
         pg_body = pg_body.rstrip().rstrip(";")
         if kind == "create_table":
             stats["tables"] += 1

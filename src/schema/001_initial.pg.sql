@@ -2112,7 +2112,7 @@ CREATE TABLE agency_roles (
     created_at  TEXT    NOT NULL,
     CONSTRAINT pk_agency_roles PRIMARY KEY (agency_id, role_id),
     CONSTRAINT fk_agency_roles_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
-    CONSTRAINT ck_agency_roles_id CHECK (role_id GLOB '[a-z]*' AND length(role_id) BETWEEN 2 AND 64)
+    CONSTRAINT ck_agency_roles_id CHECK (role_id ~ '^[a-z]' AND length(role_id) BETWEEN 2 AND 64)
 );
 
 CREATE INDEX ix_agency_roles_blueprint ON agency_roles (agency_id, based_on, status);
