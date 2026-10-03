@@ -1168,6 +1168,33 @@ class CaseService:
             ).fetchone()
         return CaseMessage.from_row(message_row)
 
+    def message_by_command(self, case_id: str, *, command_id: str) -> CaseMessage:
+        """The message one command recorded — the answer an idempotent replay returns.
+
+        A replayed webhook must not look like an error to the carrier: the first delivery
+        is the fact, and this read hands it back unchanged. The command's timeline row
+        names the message it created (``refs``), so the lookup is exact, never "latest".
+        """
+
+        require_ref(case_id, "case_id")
+        require_ref(command_id, "command_id")
+        row = self.conn.execute(
+            """
+            SELECT m.* FROM case_messages m
+            JOIN case_events e ON e.case_id = m.case_id
+            WHERE e.case_id = ? AND e.command_id = ? AND e.kind = 'MESSAGE_IN'
+              AND e.refs LIKE '%' || m.case_message_id || '%'
+            """,
+            (case_id, command_id),
+        ).fetchone()
+        if row is None:
+            raise DuplicateCommand(
+                f"command_id has not recorded a message for this case: {command_id}",
+                case_id=case_id,
+                command_id=command_id,
+            )
+        return CaseMessage.from_row(row)
+
     # -- writes: status ----------------------------------------------------- #
     def transition(
         self,
