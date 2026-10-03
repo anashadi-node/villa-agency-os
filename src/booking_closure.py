@@ -21,7 +21,7 @@ check                         owner of the fact
 ``supplier_reconciliation``   **no owner** — recorded gap
 ``security_deposit_resolved`` **no owner** — recorded gap
 ``incidents_closed``          ``incidents`` (attribution by ``affected_refs``)
-``required_documents``        **no declared list** — recorded gap
+``required_documents``        one policy key: ``operations.booking.required_document_kinds`` (ADR-0054; unpublished stays fail-closed)
 ============================  ==================================================
 
 Where no owner exists the check fails **closed** and says so by name: "the platform cannot see
@@ -41,6 +41,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from primitives import DomainError, require_ref
+
+import documents as DOCS
+import policy_engine as PE
 
 __all__ = [
     "CHECK_CHECKED_OUT",
@@ -104,9 +107,14 @@ DEPOSIT_GAP = (
     "whether it was returned, forfeited or applied"
 )
 
-#: Which document kinds a closed booking needs is tenant/policy data and no policy key declares it,
-#: so the check cannot pass on its own — the recorded kinds are reported instead.
+#: §30's required-documents gap: with no published revision the check fails closed and says
+#: exactly that, with the kinds already recorded for the booking reported alongside.
 DOCUMENTS_GAP = "no policy declares which document kinds a closed booking requires"
+
+#: §30's required-documents list is **tenant data declared through one policy key** (ADR-0054):
+#: the tenant publishes the kinds it requires; the platform only says what it can record. An
+#: *unpublished* key stays fail-closed — silence is an unfinished gate, never a pass.
+REQUIRED_DOCUMENT_KINDS_KEY = "operations.booking.required_document_kinds"
 
 
 class ClosureError(DomainError):
@@ -313,23 +321,88 @@ def _incidents(
 def _documents(
     conn: sqlite3.Connection, *, booking_id: str, agency_id: str
 ) -> ClosureCheck:
-    """§30's required documents: the *required* list is tenant data and no policy declares it."""
+    """§30's required documents: the *required* list is one published policy key (ADR-0054).
 
-    kinds = sorted(
-        {
-            str(row["kind"])
-            for row in conn.execute(
-                "SELECT DISTINCT kind FROM documents"
-                " WHERE booking_id = ? AND agency_id = ? AND status = 'GENERATED'",
-                (booking_id, agency_id),
-            ).fetchall()
-        }
-    )
-    recorded = ", ".join(kinds) if kinds else "none"
+    The tenant declares the kinds it requires; the platform can only say which kinds it is
+    able to record, so a declared kind outside :data:`documents.DOCUMENT_KINDS` fails closed
+    by name — a list naming an unrecordable kind would otherwise hold every booking open
+    forever while looking like diligence. An empty published list is a real decision (the
+    tenant requires none) and passes; an *unpublished* one is not and fails closed.
+    """
+
+    resolver = PE.PolicyResolver(conn, agency_id=agency_id)
+    try:
+        value = resolver.resolve(REQUIRED_DOCUMENT_KINDS_KEY)
+    except PE.PolicyValueNotPublished:
+        kinds = sorted(
+            {
+                str(row["kind"])
+                for row in conn.execute(
+                    "SELECT DISTINCT kind FROM documents"
+                    " WHERE booking_id = ? AND agency_id = ? AND status = 'GENERATED'",
+                    (booking_id, agency_id),
+                ).fetchall()
+            }
+        )
+        recorded = ", ".join(kinds) if kinds else "none"
+        return _check(
+            CHECK_DOCUMENTS,
+            False,
+            f"{DOCUMENTS_GAP}; documents recorded for this booking: {recorded}",
+        )
+    declared = value.as_json()
+    if (
+        not isinstance(declared, list)
+        or any(not isinstance(kind, str) or not kind.strip() for kind in declared)
+    ):
+        return _check(
+            CHECK_DOCUMENTS,
+            False,
+            f"policy {REQUIRED_DOCUMENT_KINDS_KEY} revision {value.policy_revision_id}"
+            f" declares a list of document kinds that this platform cannot read:"
+            f" {declared!r}",
+        )
+    required = tuple(dict.fromkeys(kind.strip().upper() for kind in declared))
+    unknowable = tuple(kind for kind in required if kind not in DOCS.DOCUMENT_KINDS)
+    if unknowable:
+        return _check(
+            CHECK_DOCUMENTS,
+            False,
+            f"policy {REQUIRED_DOCUMENT_KINDS_KEY} revision {value.policy_revision_id}"
+            f" requires document kinds this platform cannot record: {', '.join(unknowable)}"
+            f" (recordable kinds: {', '.join(DOCS.DOCUMENT_KINDS)})",
+        )
+    recorded = {
+        str(row["kind"])
+        for row in conn.execute(
+            "SELECT DISTINCT kind FROM documents"
+            " WHERE booking_id = ? AND agency_id = ? AND status = 'GENERATED'",
+            (booking_id, agency_id),
+        ).fetchall()
+    }
+    missing = tuple(kind for kind in required if kind not in recorded)
+    if required and not missing:
+        return _check(
+            CHECK_DOCUMENTS,
+            True,
+            f"all {len(required)} required document kinds are recorded for this booking"
+            f" (policy {REQUIRED_DOCUMENT_KINDS_KEY} revision {value.policy_revision_id})"
+            f": {', '.join(required)}",
+        )
+    if not required:
+        return _check(
+            CHECK_DOCUMENTS,
+            True,
+            f"policy {REQUIRED_DOCUMENT_KINDS_KEY} revision {value.policy_revision_id}"
+            " requires no document kinds",
+        )
+    recorded_text = ", ".join(sorted(recorded)) if recorded else "none"
     return _check(
         CHECK_DOCUMENTS,
         False,
-        f"{DOCUMENTS_GAP}; documents recorded for this booking: {recorded}",
+        f"required document kinds not recorded for this booking: {', '.join(missing)}"
+        f" (required by policy {REQUIRED_DOCUMENT_KINDS_KEY} revision"
+        f" {value.policy_revision_id}; kinds recorded so far: {recorded_text})",
     )
 
 

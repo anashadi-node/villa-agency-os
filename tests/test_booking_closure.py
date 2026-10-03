@@ -8,8 +8,11 @@ it judges recorded facts, not provenance.
 The claims:
 
 1. every §30 condition is asked, in the spec's order, and the answer is the blocker list;
-2. the facts no module records yet (supplier settlement, the deposit's resolution, the required
-   documents list) fail **closed** and say so by name instead of passing quietly;
+2. the facts no module records yet (supplier settlement, the deposit's resolution) fail
+   **closed** and say so by name instead of passing quietly; the required-documents list is
+   tenant data declared through one policy key (``operations.booking.required_document_kinds``,
+   ADR-0054) — an unpublished key fails closed like the rest, a published one is judged, a kind
+   the platform cannot record fails closed by name, and an empty published list is a decision;
 3. a settled invoice with no open reconciliation case satisfies the financial check, and an open
    dispute or a short payment reopens it;
 4. an open case, a live guest follow-up or an open incident naming the booking blocks closure — and
@@ -24,7 +27,8 @@ import unittest
 from unittest import mock
 
 import booking_closure as CLOSURE
-from primitives import DomainError
+import policy_engine as PE
+from primitives import DomainError, FrozenClock
 from test_reservation_kernel import KernelTestCase, NOW
 
 AGENCY = "agency_default"
@@ -375,6 +379,60 @@ class TestClosureGate(BookingClosureTestCase):
             "UPDATE bookings SET security_deposit_minor = 0 WHERE booking_id = ?", (booking,)
         )
         self.assertTrue(self.check(booking, CLOSURE.CHECK_DEPOSIT).ok)
+
+    # -- the required-documents policy key (ADR-0054) ------------------------ #
+
+    def publish_documents(self, kinds):
+        """The tenant declares its required document kinds through one policy revision."""
+
+        return PE.PolicyResolver(
+            self.kernel.conn, clock=FrozenClock.at(NOW), agency_id=AGENCY
+        ).publish(
+            CLOSURE.REQUIRED_DOCUMENT_KINDS_KEY,
+            list(kinds),
+            effective_from="2026-09-20",
+            source_doc_ref="ADR-0054: tenant declares the documents a closed booking needs",
+            approved_by="owner_anas",
+        )
+
+    def test_a_published_list_the_booking_satisfies_passes_and_names_its_revision(self):
+        booking = self.booked()
+        self.document(booking_id=booking, kind="CONFIRMATION")
+        revision = self.publish_documents(["CONFIRMATION"])
+
+        check = self.check(booking, CLOSURE.CHECK_DOCUMENTS)
+        self.assertTrue(check.ok)
+        self.assertIn(revision.policy_revision_id, check.detail)
+        verdict = self.verdict(booking)
+        self.assertNotIn(CLOSURE.CHECK_DOCUMENTS, verdict.blockers)
+
+    def test_a_published_list_with_an_unrecorded_kind_names_it(self):
+        booking = self.booked()
+        self.document(booking_id=booking, kind="CONFIRMATION")
+        self.publish_documents(["CONFIRMATION", "INVOICE"])
+
+        check = self.check(booking, CLOSURE.CHECK_DOCUMENTS)
+        self.assertFalse(check.ok)
+        self.assertIn("INVOICE", check.detail)
+        self.assertIn("recorded so far: CONFIRMATION", check.detail)
+        self.assertIn(CLOSURE.CHECK_DOCUMENTS, self.verdict(booking).blockers)
+
+    def test_a_kind_the_platform_cannot_record_fails_closed_by_name(self):
+        booking = self.booked()
+        self.publish_documents(["PASSPORT_SCAN"])
+
+        check = self.check(booking, CLOSURE.CHECK_DOCUMENTS)
+        self.assertFalse(check.ok)
+        self.assertIn("PASSPORT_SCAN", check.detail)
+        self.assertIn("cannot record", check.detail)
+
+    def test_an_empty_published_list_is_a_decision_not_silence(self):
+        booking = self.booked()
+        self.publish_documents([])
+
+        check = self.check(booking, CLOSURE.CHECK_DOCUMENTS)
+        self.assertTrue(check.ok)
+        self.assertIn("requires no document kinds", check.detail)
 
     def test_the_gate_refuses_a_booking_it_cannot_find(self):
         with self.assertRaises(CLOSURE.BookingNotFound) as raised:

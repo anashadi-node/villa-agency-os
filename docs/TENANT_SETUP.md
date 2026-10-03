@@ -207,5 +207,30 @@ go-live stays refused until each of them has a holder (decision D17)
 
 ---
 
+## 6. Dokumen wajib sebelum booking ditutup — Anda yang menentukan (§30)
+
+Sistem tidak menutup booking (`CLOSED`) sebelum tujuh kondisi §30 terpenuhi — salah satunya:
+**dokumen wajib lengkap**. Daftar dokumen itu adalah keputusan bisnis Anda, bukan platform:
+
+```bash
+VILLA_DB=/path/villa.db python3 scripts/publish_policy_value.py set \
+  --key operations.booking.required_document_kinds \
+  --value '["CONFIRMATION","INVOICE"]' \
+  --source-doc-ref "SOP-penutupan-booking-2026.pdf" \
+  --approved-by "nama-anda"
+```
+
+Yang perlu tahu:
+
+| Aturan | Artinya untuk Anda |
+|---|---|
+| Kosakata tertutup | Kind yang sah: `CONFIRMATION`, `RECEIPT`, `INVOICE`, `CONTRACT`, `NOTICE`, `REPORT` — kind lain ditolak gerbang (dengan nama) supaya kebingungan konfigurasi tidak terlihat seperti ketelitian |
+| Belum menyetel = tetap terkunci | Tanpa revisi terbit, tak ada booking yang bisa ditutup — sama seperti kondisi §30 lain yang belum ada pemiliknya |
+| Daftar kosong = keputusan | `[]` berarti Anda tidak mewajibkan dokumen apa pun — sah, karena Anda yang memutuskan dan jejaknya terekam |
+| Revisi permanen | Setiap perubahan disimpan (append-only) dengan sumber dokumen dan nama penyetuju; nilai lama tetap bisa diperiksa ulang |
+| Cek nilai sekarang | `VILLA_DB=... python3 scripts/publish_policy_value.py show --key operations.booking.required_document_kinds` |
+
+---
+
 *Dokumen ini ditulis dari kode dan dokumen repository pada 2026-10-02. Setiap angka di sini bisa
 diminta diperiksa ulang dengan `make check` dan `scripts/preflight.py`.*
