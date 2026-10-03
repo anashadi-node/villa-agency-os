@@ -20,10 +20,12 @@ diaudit, dan sudah berjalan utuh dari webhook tamu sampai booking `CLOSED` di da
 
 | Bukti | Perintah | Hasil terverifikasi 2026-10-03 |
 |---|---|---|
-| Suite tes + semua gerbangnya | `make check` | **3463 lulus, 4 skip, 3950 subtest, 0 gagal**; secret-scan 0 temuan (275 berkas); unsafe-scan 0 temuan; twin skema cocok; `PRE-DEPLOY GATE: PASS` |
+| Suite tes + semua gerbangnya | `make check` | **3471 lulus, 4 skip, 3950 subtest, 0 gagal**; secret-scan 0 temuan (278 berkas); unsafe-scan 0 temuan; twin skema cocok; `PRE-DEPLOY GATE: PASS` |
 | Suite yang sama di interpreter kedua | `python3 -m pytest tests/ -q` | 3463 lulus, 4 skip (bebas-interpreter: 3.12.3/SQLite 3.45.1 dan 3.11.16/SQLite 3.53.1) |
 | Skema PostgreSQL diterapkan ke server **kosong** | `VILLA_PG_DSN=... python3 -m pytest tests/test_schema.py` | 75 lulus (4 di antaranya tes PostgreSQL hidup: DDL, model, trigger, dan `EXCLUDE` anti-tumpang-tindih) |
+| Seluruh suite di atas PostgreSQL hidup | `VILLA_PG_DSN=... python3 -m pytest tests/ -q` | 3467 tes terkumpul, keluar **0**, tanpa kegagalan |
 | Jalur tamu utuh di database kosong | `python3 scripts/go_live_smoke.py --db /tmp/go-live.db --report /tmp/go-live.json` | **`GO-LIVE SMOKE: PASS` — 16/16 langkah, keluar 0** |
+| **Onboarding tenant (white-label)** | `scripts/import_villas.py --template/--file/--apply`, `scripts/manage_roles.py list/seed/appoint/rename/add/disable`, `scripts/publish_policy_value.py set/show` | **semua `rc=0`** di `/tmp/tenant-verify`: 1 villa+unit diimpor (2 baris audit), 8 peran di-seed, tangga uang (finance_manager, gm, owner) terisi, kebijakan dokumen wajib diterbitkan; `preflight` berhenti menyebut "money ladder has no holder" |
 | Gerbang go-live per tenant | `python3 scripts/preflight.py --db ... --anchor-dir ...` | `NO-GO` dengan daftar yang bisa dibaca: anker belum diterbitkan, data demo ada, kesiapan tenant belum diisi — **fail-closed, seperti desainnya** |
 | Perintah operasional terdokumentasi | `docs/DEPLOYMENT.md`, `docs/TENANT_SETUP.md`, `docs/OPERATIONS_RUNBOOK.md` | dijalankan satu per satu di database baru, semua sesuai dokumentasi (seed, scheduler dry+real, observability, dashboard 11 halaman) |
 
@@ -66,7 +68,7 @@ Fakta yang dihasilkan perjalanan itu (dari `report.json` run tersebut):
 
 ## 4. Yang ditemukan & diperbaiki pada audit 2026-10-03
 
-Audit ini menemukan **tiga defect nyata**. Dua di antaranya membuat janji sistem tidak bisa
+Audit ini menemukan **lima defect nyata**. Tiga di antaranya membuat janji sistem tidak bisa
 dibuktikan sama sekali — bukan kosmetik.
 
 **4.1 Gate §30 mustahil tercapai (blocker).**
@@ -93,8 +95,18 @@ diregenerasi. Bukti: `tests/test_schema.py` + `VILLA_PG_DSN` → 75 lulus (sebel
 memakai status hold `'ACTIVE'` yang sudah dihapus WAVE 4-B (ADR-0020). Diganti `'CONFIRMED'`
 (anggota `OCCUPYING_HOLD_STATES`).
 
-**4.4 Paket komersial & dokumen menyimpang dari kenyataan.**
-`SALES_PACKAGE.md` menyebut 22 modul / 34 tabel / 2.282 test (aktual 51 / 72 / 3.463);
+**4.4 Perintah di dokumen onboarding ditolak platform sendiri (blocker white-label).**
+`docs/TENANT_SETUP.md` mengajarkan `--actor "Mr. Owner"` pada enam tempat; platform menolaknya
+dengan `INVALID_FIELD: actor must not contain whitespace` — dan penolakan itu benar: aktor
+adalah **rujukan**, bukan nama orang. Artinya customer pertama yang mengikuti dokumen akan
+berhenti di langkah pertama impor villa. Bukti: perintah dijalankan apa adanya di `/tmp/tenant-verify`
+(plan-only `rc=0`, `--apply` `rc=1`), lalu dijalankan dengan `--actor owner_anas` → `VERDICT: APPLIED`.
+Perbaikan: enam contoh diganti token yang sah + aturan token aktor ditulis di dokumen.
+Dikunci `tests/test_tenant_onboarding_path.py` (8 tes) — termasuk tes yang **memaku penolakan**
+itu, supaya dokumen tidak bisa diam-diam kembali mengajarkan perintah yang tidak bisa jalan.
+
+**4.5 Paket komersial & dokumen menyimpang dari kenyataan.**
+`SALES_PACKAGE.md` menyebut 22 modul / 34 tabel / 2.282 test (aktual 51 / 72 / 3.471);
 `DATA_MODEL.md` menyebut 13 tabel (aktual 72); `README.md` masih menyatakan "Phase 1 berjalan";
 dua docstring menunjuk berkas tes yang tidak ada; satu keputusan bisnis menunjuk nama ADR yang
 salah. Semua diperbaiki dan angkanya kini cocok dengan keluaran perintah.
@@ -104,8 +116,11 @@ salah. Semua diperbaiki dan angkanya kini cocok dengan keluaran perintah.
 Ini bukan daftar "nanti", ini daftar **yang tidak boleh diklaim sudah selesai**:
 
 1. **Keputusan bisnis per agency masih menunggu pengisian** (provider pembayaran per rel,
-   nomor WhatsApp, daftar villa, tarif PBJT per kabupaten, rate card, pemegang peran). Platform
-   menolak jalan sampai terisi — itu perilaku yang benar, bukan bug.
+   nomor WhatsApp, daftar villa pelanggan sendiri, tarif PBJT per kabupaten, rate card, pemegang
+   peran, serta 14 kunci kebijakan lain yang belum diterbitkan). **Mekanismenya sudah terbukti
+   jalan** — impor villa, peran, dan penerbitan kebijakan semuanya `rc=0` (bukti §2 baris
+   onboarding tenant) — yang belum ada adalah **isinya**, dan isi itu keputusan pemilik agency,
+   bukan pekerjaan platform. Platform menolak jalan sampai terisi; itu perilaku benar, bukan bug.
 2. **Anker rantai audit belum diterbitkan** di lingkungan mana pun; produksi harus menerbitkan
    berkala (`make anchor-publish`) supaya penghapusan baris terakhir pun terdeteksi.
 3. **Pekerja latar (systemd/scheduler) untuk outbox belum dipasang**: event sudah ditulis satu
@@ -117,20 +132,27 @@ Ini bukan daftar "nanti", ini daftar **yang tidak boleh diklaim sudah selesai**:
    menyusut, tidak boleh bertambah.
 6. **Modul DLP (pencegahan kebocoran data) belum ada** (baru ada pemindai setelan berbahaya).
 7. **Belum ada bukti di lingkungan produksi nyata**: semua bukti di laporan ini dari
-   database lokal/PM2 container. Pemasangan produksi (PostgreSQL + anker + monitoring)
-   dijalankan lewat `docs/DEPLOYMENT.md` dan belum dieksekusi.
+   database lokal dan satu container PostgreSQL uji. Pemasangan produksi (PostgreSQL +
+   anker + monitoring) dijalankan lewat `docs/DEPLOYMENT.md` dan belum dieksekusi.
 
-## 6. Cara memverifikasi ulang (5 menit)
+## 6. Cara memverifikasi ulang (10 menit)
 
 ```bash
 cd ~/villa-agency-os
 python3 scripts/go_live_smoke.py --db /tmp/go-live.db --report /tmp/go-live.json   # 16/16, keluar 0
-make check                                                                          # 3463 lulus + semua scan
-VILLA_PG_DSN=<postgres-kosong> python3 -m pytest tests/test_schema.py -q             # skema PG benar-benar berlaku
-python3 scripts/preflight.py --db data/villa.db --anchor-dir /var/lib/villa/anchors  # gerbang go-live per tenant
+make check                                                                          # 3471 lulus + semua scan
+VILLA_PG_DSN=<postgres-kosong> python3 -m pytest tests/test_schema.py               # skema PG benar-benar berlaku
+VILLA_PG_DSN=<postgres-kosong> python3 -m pytest tests/ -q                          # seluruh suite di PostgreSQL
+
+# Onboarding seperti customer baru (semua di /tmp, tak menyentuh data/villa.db):
+python3 scripts/import_villas.py --template > /tmp/villa-list.csv
+VILLA_DB=/tmp/tenant.db python3 scripts/import_villas.py --file /tmp/villa-list.csv --actor owner_anas \
+    --agency agency_default --actor-role owner --source-ref villa-list-okt-2026.csv --apply
+VILLA_DB=/tmp/tenant.db python3 scripts/manage_roles.py seed --apply --actor owner_anas --actor-role owner
+VILLA_DB=/tmp/tenant.db python3 scripts/manage_roles.py list                        # tangga uang harus punya pemegang
 ```
 
-Jika salah satu dari empat perintah di atas gagal, laporan ini tidak berlaku lagi — buktinya
+Jika salah satu perintah di atas gagal, laporan ini tidak berlaku lagi — buktinya
 adalah perintahnya, bukan dokumen ini.
 
 ---

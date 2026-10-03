@@ -90,6 +90,11 @@ boleh dikosongkan beserta bawaannya:
 
 Aturan penulisan id: huruf kecil, angka, tanda hubung atau garis bawah (3–64 karakter).
 
+Aturan penulisan **nama aktor** (`--actor`): juga wajib satu token tanpa spasi — platform
+menolaknya (`INVALID_FIELD: actor must not contain whitespace`). Karena itu contoh di
+dokumen ini memakai `owner_anas`, bukan "Mr. Owner": aktor adalah **rujukan**, bukan nama
+lengkap orang. Nama panggilan manusia tidak pernah perlu masuk sistem.
+
 ### 3.2 Dua langkah, dan langkah pertama tidak menulis apa pun
 
 ```bash
@@ -98,7 +103,7 @@ python3 scripts/import_villas.py --file villa-list.csv
 
 # 2. baru menulis, bila rencananya bersih
 VILLA_DB=data/villa.db python3 scripts/import_villas.py --file villa-list.csv \
-    --agency agency_default --actor "Mr. Owner" --actor-role owner \
+    --agency agency_default --actor owner_anas --actor-role owner \
     --source-ref "villa-list-okt-2026.csv" --apply
 ```
 
@@ -153,25 +158,25 @@ python3 scripts/manage_roles.py list
 
 # mulai dari cetak biru platform (8 peran ADR-0035) - sekali saja
 VILLA_DB=data/villa.db python3 scripts/manage_roles.py seed \
-    --apply --actor "Mr. Owner" --actor-role owner
+    --apply --actor owner_anas --actor-role owner
 
 # beri nama sendiri sesuai istilah agency Anda
 VILLA_DB=data/villa.db python3 scripts/manage_roles.py rename \
     --role finance_manager --label "Bagian Keuangan Pajak" \
-    --apply --actor "Mr. Owner"
+    --apply --actor owner_anas
 
 # tambah peran baru (wewenangnya mengikuti cetak biru yang Anda pilih)
 VILLA_DB=data/villa.db python3 scripts/manage_roles.py add \
     --role finance_helper --label "Asisten Keuangan" --based-on finance_manager \
-    --apply --actor "Mr. Owner"
+    --apply --actor owner_anas
 
 # isi pemegang peran (rujukan, bukan nama orang)
 VILLA_DB=data/villa.db python3 scripts/manage_roles.py appoint \
-    --role gm --holder mr_ceo --apply --actor "Mr. Owner"
+    --role gm --holder mr_ceo --apply --actor owner_anas
 
 # nonaktifkan peran yang tidak dipakai (harus dikosongkan dulu pemegangnya)
 VILLA_DB=data/villa.db python3 scripts/manage_roles.py disable \
-    --role commercial_manager --apply --actor "Mr. Owner"
+    --role commercial_manager --apply --actor owner_anas
 ```
 
 Tanpa `--apply`, semua perintah hanya **merencanakan** dan tidak menulis apa pun.
