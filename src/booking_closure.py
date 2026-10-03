@@ -19,7 +19,7 @@ check                         owner of the fact
 ``financial_reconciliation``  ``invoices`` + ``payments`` (``SUCCEEDED``), with
                               an ``OPEN`` ``reconciliation_cases`` row blocking
 ``supplier_reconciliation``   **no owner** — recorded gap
-``security_deposit_resolved`` **no owner** — recorded gap
+``security_deposit_resolved`` ``deposit_resolutions`` (ADR-0055; unresolved remainder fails-closed)
 ``incidents_closed``          ``incidents`` (attribution by ``affected_refs``)
 ``required_documents``        one policy key: ``operations.booking.required_document_kinds`` (ADR-0054; unpublished stays fail-closed)
 ============================  ==================================================
@@ -274,13 +274,59 @@ def _supplier(conn: sqlite3.Connection, *, booking_id: str, agency_id: str) -> C
     return _check(CHECK_SUPPLIER, False, SUPPLIER_GAP)
 
 
-def _deposit(conn: sqlite3.Connection, booking: Any) -> ClosureCheck:
-    """§30's security deposit: nothing to resolve when none is held, otherwise a recorded gap."""
+def _deposit(
+    conn: sqlite3.Connection, *, booking_id: str, agency_id: str, booking: Any
+) -> ClosureCheck:
+    """§30's security deposit: the recorded resolutions must account for the amount held.
+
+    The booking keeps the *amount held*; :mod:`deposit_resolutions` (ADR-0055) keeps what
+    became of it. The gate re-checks the arithmetic the writer enforces — a courtesy at the
+    writer is a contract here: the parts recorded must sum to exactly the amount held, in
+    the booking's own currency, and anything else fails closed by name.
+    """
 
     held = int(booking["security_deposit_minor"])
     if held == 0:
         return _check(CHECK_DEPOSIT, True, "no security deposit is held")
-    return _check(CHECK_DEPOSIT, False, f"{held} minor held. {DEPOSIT_GAP}")
+    rows = conn.execute(
+        "SELECT action, currency, SUM(amount_minor) AS total, COUNT(*) AS parts"
+        " FROM deposit_resolutions"
+        " WHERE booking_id = ? AND agency_id = ? GROUP BY action, currency ORDER BY action",
+        (booking_id, agency_id),
+    ).fetchall()
+    if not rows:
+        return _check(CHECK_DEPOSIT, False, f"{held} minor held. {DEPOSIT_GAP}")
+    booking_currency = str(booking["currency"]).upper()
+    foreign = tuple(
+        str(row["currency"]) for row in rows if str(row["currency"]).upper() != booking_currency
+    )
+    if foreign:
+        return _check(
+            CHECK_DEPOSIT,
+            False,
+            f"deposit resolution recorded in a currency the booking does not hold"
+            f" ({', '.join(sorted(set(foreign)))}; booking holds {booking_currency})",
+        )
+    parts = ", ".join(f"{row['action']} {row['total']} minor ({row['parts']})" for row in rows)
+    resolved = sum(int(row["total"]) for row in rows)
+    if resolved > held:
+        return _check(
+            CHECK_DEPOSIT,
+            False,
+            f"deposit resolution recorded beyond the amount held: {resolved} minor resolved,"
+            f" {held} minor held ({parts})",
+        )
+    if resolved < held:
+        return _check(
+            CHECK_DEPOSIT,
+            False,
+            f"{held - resolved} of {held} minor held remains unresolved ({parts})",
+        )
+    return _check(
+        CHECK_DEPOSIT,
+        True,
+        f"the {held} minor held is resolved in {booking_currency}: {parts}",
+    )
 
 
 def _incidents(
@@ -435,7 +481,7 @@ def evaluate(
             total_minor=int(booking["total_minor"]),
         ),
         _supplier(conn, booking_id=booking_id, agency_id=agency_id),
-        _deposit(conn, booking),
+        _deposit(conn, booking_id=booking_id, agency_id=agency_id, booking=booking),
         _incidents(conn, booking_id=booking_id, agency_id=agency_id),
         _documents(conn, booking_id=booking_id, agency_id=agency_id),
     )

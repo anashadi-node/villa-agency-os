@@ -1250,6 +1250,39 @@ CREATE TABLE reconciliation_cases (
 
 CREATE INDEX ix_recon_open ON reconciliation_cases (agency_id, status, due_at);
 
+-- §30's security-deposit resolution fact (ADR-0055): what happened to the money a booking
+-- holds, decided by a person and carried by evidence. Append-only: a resolution that can be
+-- edited is a resolution nobody has to prove. `idempotency_key` makes a retry of the same
+-- decision the same fact, never a second one.
+CREATE TABLE deposit_resolutions (
+    deposit_resolution_id TEXT NOT NULL,
+    agency_id             TEXT NOT NULL DEFAULT 'agency_default',
+    booking_id            TEXT NOT NULL,
+    action                TEXT NOT NULL CHECK (action IN ('RETURNED','FORFEITED','APPLIED')),
+    amount_minor          BIGINT NOT NULL CHECK (amount_minor > 0),
+    currency              TEXT NOT NULL CHECK (length(currency) = 3),
+    decided_by            TEXT NOT NULL,
+    actor_role            TEXT NOT NULL,
+    evidence_ref          TEXT NOT NULL CHECK (length(evidence_ref) >= 3),
+    note                  TEXT,
+    idempotency_key       TEXT NOT NULL,
+    created_at            TEXT NOT NULL,
+    CONSTRAINT pk_deposit_resolutions PRIMARY KEY (deposit_resolution_id),
+    CONSTRAINT uq_deposit_resolutions_idem UNIQUE (agency_id, idempotency_key),
+    CONSTRAINT fk_deposit_resolution_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    CONSTRAINT fk_deposit_resolution_booking FOREIGN KEY (booking_id) REFERENCES bookings (booking_id)
+);
+
+CREATE INDEX ix_deposit_resolutions_booking ON deposit_resolutions (agency_id, booking_id);
+
+CREATE TRIGGER trg_deposit_resolutions_no_update
+    BEFORE UPDATE ON deposit_resolutions
+    FOR EACH ROW EXECUTE FUNCTION villa_reject_mutation();
+
+CREATE TRIGGER trg_deposit_resolutions_no_delete
+    BEFORE DELETE ON deposit_resolutions
+    FOR EACH ROW EXECUTE FUNCTION villa_reject_mutation();
+
 CREATE TABLE documents (
     document_id    TEXT NOT NULL,
     agency_id      TEXT NOT NULL DEFAULT 'agency_default',
