@@ -18,7 +18,7 @@ check                         owner of the fact
                               and ``ops_tasks`` of kind ``GUEST_FOLLOWUP``
 ``financial_reconciliation``  ``invoices`` + ``payments`` (``SUCCEEDED``), with
                               an ``OPEN`` ``reconciliation_cases`` row blocking
-``supplier_reconciliation``   **no owner** — recorded gap
+``supplier_reconciliation``   ``supplier_settlements`` (ADR-0056; DUE/PAID arithmetic fail-closed)
 ``security_deposit_resolved`` ``deposit_resolutions`` (ADR-0055; unresolved remainder fails-closed)
 ``incidents_closed``          ``incidents`` (attribution by ``affected_refs``)
 ``required_documents``        one policy key: ``operations.booking.required_document_kinds`` (ADR-0054; unpublished stays fail-closed)
@@ -93,15 +93,16 @@ OPEN_TASK_STATUSES: tuple[str, ...] = ("OPEN", "IN_PROGRESS", "BLOCKED")
 #: ``incidents.status``.
 OPEN_INCIDENT_STATUSES: tuple[str, ...] = ("OPEN", "MITIGATING")
 
-#: The gap, said once so the blocker list can carry it: ``supplier_route`` owns contracts, rates and
-#: verification of the villa relationship — not the money that settles between agency and supplier.
+#: The gap, said once so the blocker list can carry it: no ``supplier_settlements`` row at all
+#: means no one has even declared what the supplier is owed (ADR-0056) — the check cannot judge
+#: an empty ledger, so it stays closed and names the fact.
 SUPPLIER_GAP = (
     "no module records the supplier settlement: supplier_route owns contracts and rates, not the "
     "money that settles between agency and supplier"
 )
 
-#: The deposit's resolution has no record either: the booking stores the amount held, and nothing
-#: stores whether it was returned, forfeited or applied.
+#: The deposit's gap, same shape: no ``deposit_resolutions`` row at all means the booking stores
+#: only the amount held — nothing says whether it was returned, forfeited or applied.
 DEPOSIT_GAP = (
     "no module records the security deposit's resolution: the booking stores the amount held, not "
     "whether it was returned, forfeited or applied"
@@ -264,14 +265,71 @@ def _financial(
     )
 
 
-def _supplier(conn: sqlite3.Connection, *, booking_id: str, agency_id: str) -> ClosureCheck:
-    """§30's supplier reconciliation — **no owner yet**, so the check fails closed and says why.
+def _supplier(
+    conn: sqlite3.Connection, *, booking_id: str, agency_id: str
+) -> ClosureCheck:
+    """§30's supplier settlement: what was paid must match what was declared due (ADR-0056).
 
-    ``supplier_route`` verifies contracts, rates and the villa relationship; nothing records the
-    settlement between agency and supplier. A booking may not be closed on a fact no module holds.
+    ``supplier_route`` verifies contracts and rates; :mod:`supplier_settlements` now owns the
+    money that settles them — ``DUE`` names what the supplier is owed (contract/SOP as
+    evidence), ``PAID`` records the parts. The gate holds the arithmetic the writer enforces:
+    no declaration, under-payment and over-payment all fail closed by name, because "close
+    the booking anyway" is how money disappears.
     """
 
-    return _check(CHECK_SUPPLIER, False, SUPPLIER_GAP)
+    rows = conn.execute(
+        "SELECT action, currency, SUM(amount_minor) AS total, COUNT(*) AS parts"
+        " FROM supplier_settlements"
+        " WHERE booking_id = ? AND agency_id = ? GROUP BY action, currency ORDER BY action",
+        (booking_id, agency_id),
+    ).fetchall()
+    if not rows:
+        return _check(CHECK_SUPPLIER, False, SUPPLIER_GAP)
+    booking = conn.execute(
+        "SELECT currency, villa_supplier_relationship_id FROM bookings"
+        " WHERE booking_id = ? AND agency_id = ?",
+        (booking_id, agency_id),
+    ).fetchone()
+    booking_currency = str(booking["currency"]).upper()
+    foreign = tuple(
+        str(row["currency"]) for row in rows if str(row["currency"]).upper() != booking_currency
+    )
+    if foreign:
+        return _check(
+            CHECK_SUPPLIER,
+            False,
+            "supplier settlement recorded in a currency the booking does not use"
+            f" ({', '.join(sorted(set(foreign)))}; booking uses {booking_currency})",
+        )
+    due = next((int(row["total"]) for row in rows if row["action"] == "DUE"), 0)
+    paid = next((int(row["total"]) for row in rows if row["action"] == "PAID"), 0)
+    parts = ", ".join(f"{row['action']} {row['total']} minor ({row['parts']})" for row in rows)
+    if due == 0:
+        return _check(
+            CHECK_SUPPLIER,
+            False,
+            f"payments recorded but nothing declares what the supplier is owed ({parts})",
+        )
+    if paid < due:
+        return _check(
+            CHECK_SUPPLIER,
+            False,
+            f"{due - paid} of {due} minor owed to the supplier"
+            f" (route {booking['villa_supplier_relationship_id']}) remains unsettled ({parts})",
+        )
+    if paid > due:
+        return _check(
+            CHECK_SUPPLIER,
+            False,
+            f"supplier settlement paid beyond what was declared due: {paid} minor paid,"
+            f" {due} minor due ({parts})",
+        )
+    return _check(
+        CHECK_SUPPLIER,
+        True,
+        f"the {due} minor owed to the supplier is settled in {booking_currency}"
+        f" (route {booking['villa_supplier_relationship_id']}): {parts}",
+    )
 
 
 def _deposit(
