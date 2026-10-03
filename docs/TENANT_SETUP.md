@@ -232,5 +232,39 @@ Yang perlu tahu:
 
 ---
 
+## 7. Merekam fakta penutupan booking — deposit & settlement supplier (§30)
+
+Sebelum booking bisa ditutup, dua fakta uang **Anda yang merekamnya** (dengan bukti), lewat
+satu perintah — bukan lewat kode:
+
+```bash
+VILLA_DB=/path/villa.db python3 scripts/closure_facts.py settlement --booking B \
+  --action DUE --amount 7000000 --currency IDR \
+  --decided-by "nama-staf" --actor-role finance_manager \
+  --evidence-ref contract_route_v1 --idempotency-key settle-due-B
+
+VILLA_DB=/path/villa.db python3 scripts/closure_facts.py settlement --booking B \
+  --action PAID --amount 7000000 --currency IDR \
+  --decided-by "nama-staf" --actor-role finance_manager \
+  --evidence-ref transfer_sup_001 --idempotency-key settle-paid-B
+
+VILLA_DB=/path/villa.db python3 scripts/closure_facts.py deposit --booking B \
+  --action RETURNED --amount 2000000 --currency IDR \
+  --decided-by "nama-staf" --actor-role finance_manager \
+  --evidence-ref deposit_receipt_001 --idempotency-key dep-B
+
+VILLA_DB=/path/villa.db python3 scripts/closure_facts.py status --booking B   # lihat gerbang §30
+```
+
+| Aturan | Artinya untuk Anda |
+|---|---|
+| Manusia, bukan mesin | Perintah dengan identitas `ai:` / `service:` ditolak — keputusan uang adalah keputusan orang |
+| Bukti wajib | Setiap rekaman wajib `--evidence-ref` (kontrak, bukti transfer, kuitansi) dan terekam di rantai audit |
+| `DUE` dulu, baru `PAID` | Yang dibayar tidak boleh melebihi yang dinyatakan; kelebihan ditolak (`SUPPLIER_OVER_PAID`) |
+| Kunci idempoten | Ulangi perintah dengan kunci yang sama = satu fakta, bukan dua |
+| Hanya lihat? | `status` aman dibaca kapan saja; penulisan wajib `VILLA_DB` eksplisit |
+
+---
+
 *Dokumen ini ditulis dari kode dan dokumen repository pada 2026-10-02. Setiap angka di sini bisa
 diminta diperiksa ulang dengan `make check` dan `scripts/preflight.py`.*
