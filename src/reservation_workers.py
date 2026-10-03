@@ -33,10 +33,12 @@ contrast, is an act with an outside effect: it takes a slot out of sale, which i
 consults it (§56: conversation text cannot raise privilege), so pasting what a guest wrote
 into it would put guest text into the audit chain in exchange for nothing.
 
-Scope: eight of §9's jobs — inquiry (RES-W01), matching (RES-W02), availability (RES-W03),
+Scope: eleven of §9's jobs — inquiry (RES-W01), matching (RES-W02), availability (RES-W03),
 pricing (RES-W04), the offer (RES-W05), the routine follow-up (RES-W06), the tentative hold
-(RES-W07) and the booking status (RES-W08). The rest of the job list arrives with the modules it
-needs and follows the same three steps: guard, door, delegate.
+(RES-W07), the booking status (RES-W08), amend/cancel assist (RES-W09), pre-arrival
+(RES-W10) and the handoff itself (RES-W11). Each follows the same three steps: guard, door,
+delegate — where a door exists in the closed §56 catalogue, and none where the act only
+narrows the machine's authority (RES-W11).
 
 Three of the eight are worth reading together with §56. Pricing has no capability of its own — §56
 names the *answer* (``villa.answer_verified``) — so RES-W04 writes nothing; the priced stay
@@ -186,6 +188,21 @@ ARRIVAL_WINDOW_ABSENT = (
 ARRIVAL_WINDOW_RECORDED = (
     "the arrival window as recorded by the policy version this booking was made under"
 )
+
+#: §9's eleventh step is the handoff itself — the AI's way *out*. §56 names no tool for it and
+#: the catalogue is the closed §56 list, so RES-W11 holds **no** tool: handing a conversation to
+#: a human only ever *narrows* what the machine may do, and gating a safety valve behind a
+#: deny-first allowance would leave a guest with an AI that must not continue but cannot leave.
+#: The audit the act leaves is written by the module that owns §13 (:mod:`reservation_service`);
+#: this worker only guards the thread and prefixes the reason, so a person grepping the audit
+#: finds the worker code without this file writing a row of its own.
+HANDOFF_WORKER = "RES-W11"
+HANDOFF_REASON_MAX = 260  # §13 keeps a 300-char reason; the prefix is spelled once below
+
+#: Why the reason is prefixed, said once: an operational sentence, written by *us* — the same
+#: discipline the gateway's ``intent`` follows. Guest text is still refused by ``require_text``'s
+#: length check plus the caller's own judgement; the prefix makes the worker greppable.
+HANDOFF_REASON_PREFIX = f"{HANDOFF_WORKER}: "
 
 
 #: Pricing is §56's *answer* capability, not a commercial act of its own: the AI tells a
@@ -1123,9 +1140,64 @@ class ReservationWorkers:
             not_recorded=ARRIVAL_NOT_STORED,
         )
 
-    # -- RES-W06: the routine follow-up ------------------------------------ #
+    # -- RES-W11: the handoff — the AI's way out --------------------------- #
 
+    def hand_off(
+        self,
+        conversation_id: str,
+        *,
+        trigger: Optional[str] = None,
+        reason: str,
+    ) -> Any:
+        """Put this conversation on its way to a human (§9, §13) — and keep nothing.
 
+        §13's ladder has two rungs between "AI running" and "handed to a person" — the
+        escalation and the request — and a worker that offered the second alone would be
+        refused every time. So the two rungs are one gesture here, and each is recorded by
+        the module that owns the ladder:
+
+        1. **guard** — read the thread through the module that owns it, so a foreign id
+           fails as *not found* and a human-owned one fails as a refused rung;
+        2. **door** — none. §56's catalogue has no name for stopping, and inventing one is
+           an owner decision; the gate that matters here is §13's own ladder. A safety
+           valve behind a deny-first allowance would leave a guest with an AI that must not
+           continue but cannot leave;
+        3. **delegate** — :meth:`reservation_service.ReservationService.escalate` (with a
+           trigger from the *closed* vocabulary, unless the thread already carries one)
+           then :meth:`reservation_service.ReservationService.hand_off`, which records the
+           digest package and the outbox event. This worker writes no row of its own.
+
+        The reason is an operational sentence, not guest text: prefixed with the worker
+        code so the audit answers "which part of the workforce handed this over" with one
+        grep, and length-checked *before* the prefix so the prefix never pushes a valid
+        sentence past the service's 300-char bound.
+        """
+
+        conversation_id = require_ref(conversation_id, "conversation_id")
+        reason = require_text(reason, "reason", max_len=HANDOFF_REASON_MAX)
+        prefixed = f"{HANDOFF_REASON_PREFIX}{reason}"
+        # The guard is a read: tenant scoping and the §13 ladder live in the service.
+        conversation = self.service.get(conversation_id)
+        if conversation.state == "AI_RUNNING":
+            # From the top of the ladder the trigger is required: the closed vocabulary is
+            # what the handoff is counted and routed by, and a free-text reason is neither.
+            if trigger is None:
+                raise MissingRequirements(
+                    "a handoff from a running AI must name its escalation trigger",
+                    conversation_id=conversation_id,
+                )
+            self.service.escalate(conversation_id, trigger=trigger, reason=prefixed)
+        elif conversation.state == "ESCALATION_TRIGGERED":
+            # The escalation is already on the ladder (a detected trigger, or an earlier
+            # worker): completing the handoff adds the second rung and nothing else.
+            if trigger is not None:
+                raise WorkerError(
+                    "this conversation already carries an escalation trigger, so the "
+                    "handoff does not get a new one",
+                    code="HANDOFF_TRIGGER_LOCKED",
+                    conversation_id=conversation_id,
+                )
+        return self.service.hand_off(conversation_id, reason=prefixed)
 
     @staticmethod
     def _accepted_for_stay(quotation: Any, hold: Any) -> Any:

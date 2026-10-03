@@ -39,6 +39,12 @@ below are about each step being enforced rather than intended:
    this schema has no column for are named instead of implied, and the estate can still switch
    the act off — §56 classes ``arrival.inform_verified`` an outbound WRITE, so READ_ONLY refuses
    it even though the worker itself writes nothing.
+15. the handoff worker (RES-W11) is the AI's way **out**, gated by nothing §56 defines: the two
+   §13 ladder rungs (escalation from the closed trigger vocabulary, then the request) are one
+   gesture recorded by the module that owns them, the trigger is *required* from a running AI
+   and *locked* once the ladder already carries one, a second handoff is refused, and the valve
+   stays open even under READ_ONLY — because a safety valve behind a deny-first allowance would
+   leave a guest with an AI that must not continue but cannot leave.
 
 The clock is frozen, the ids are deterministic and the database is an in-memory one: every claim
 here is reproducible, and none of them depends on how long a test took to run.
@@ -56,6 +62,7 @@ import intake as IN
 import messages as MS
 import ops_tasks as OT
 import policy_engine as PE
+import reservation_service as RS
 import reservation_workers as RW
 from primitives import DomainError, FrozenClock, IdFactory, parse_iso
 
@@ -162,6 +169,13 @@ class ReservationWorkersTestCase(unittest.TestCase):
         """The same, escalated and handed to a human: the AI has been silenced (§13)."""
 
         fixture = self.scaffold.handed_off(**kwargs)
+        fixture.workers = RW.ReservationWorkers(fixture.service)
+        return fixture
+
+    def escalated(self, **kwargs):
+        """The same, escalated but not yet handed off: the ladder carries its trigger."""
+
+        fixture = self.scaffold.escalated(**kwargs)
         fixture.workers = RW.ReservationWorkers(fixture.service)
         return fixture
 
@@ -1641,6 +1655,96 @@ class ReservationWorkersTestCase(unittest.TestCase):
         fixture = self.running(seed="pid")
         self.assertEqual(fixture.workers.service.principal(), fixture.principal.principal_id)
         self.assertEqual(fixture.conversation.principal_id, fixture.principal.principal_id)
+
+    # -- 15. RES-W11: the handoff is the AI's way out ------------------------ #
+
+    def test_the_handoff_walks_both_ladder_rungs_the_service_owns(self):
+        fixture = self.running(seed="w11a")
+        conversation_id = fixture.conversation.conversation_id
+        package = fixture.workers.hand_off(
+            conversation_id,
+            trigger="CUSTOMER_REQUESTS_HUMAN",
+            reason="the guest asked for a person",
+        )
+        self.assertEqual(fixture.service.state(conversation_id), "HANDOFF_PENDING")
+        self.assertTrue(package.fingerprint)
+        # The audit answers "which workforce part did this" with one grep — the reason the
+        # ladder carries is the worker's operational sentence, prefixed, never guest text.
+        rungs = fixture.service.events(conversation_id)
+        self.assertEqual([r.kind for r in rungs][-2:], ["ESCALATED", "HANDOFF_REQUESTED"])
+        self.assertTrue(all(r.reason.startswith(RW.HANDOFF_WORKER) for r in rungs[1:]))
+        outbox = [
+            row["event_type"]
+            for row in fixture.conn.execute(
+                "SELECT event_type FROM outbox_events ORDER BY rowid"
+            ).fetchall()
+        ]
+        self.assertEqual(
+            outbox, [RS.ESCALATED_EVENT, RS.HANDOFF_REQUESTED_EVENT]
+        )  # a customer-requested human opens no incident (§9's playbook list)
+
+    def test_a_handoff_without_a_trigger_records_nothing(self):
+        fixture = self.running(seed="w11b")
+        conversation_id = fixture.conversation.conversation_id
+        with self.assertRaises(RW.MissingRequirements):
+            fixture.workers.hand_off(conversation_id, reason="just hand it over")
+        self.assertEqual(fixture.service.state(conversation_id), "AI_RUNNING")
+        self.assertEqual(len(fixture.service.events(conversation_id)), 1)
+        self.assertEqual(
+            fixture.conn.execute("SELECT COUNT(*) AS n FROM outbox_events").fetchone()["n"], 0
+        )
+
+    def test_the_handoff_completes_when_the_trigger_is_already_on_the_ladder(self):
+        fixture = self.escalated(seed="w11c")
+        conversation_id = fixture.conversation.conversation_id
+        package = fixture.workers.hand_off(conversation_id, reason="take it from here")
+        self.assertEqual(fixture.service.state(conversation_id), "HANDOFF_PENDING")
+        self.assertTrue(package.fingerprint)
+
+    def test_an_escalated_thread_does_not_get_a_second_trigger(self):
+        fixture = self.escalated(seed="w11d")
+        conversation_id = fixture.conversation.conversation_id
+        with self.assertRaises(DomainError) as caught:
+            fixture.workers.hand_off(
+                conversation_id,
+                trigger="AI_UNCERTAINTY",
+                reason="take it from here",
+            )
+        self.assertEqual(caught.exception.code, "HANDOFF_TRIGGER_LOCKED")
+        self.assertEqual(fixture.service.state(conversation_id), "ESCALATION_TRIGGERED")
+        self.assertEqual(len(fixture.service.events(conversation_id)), 2)
+
+    def test_a_handed_off_thread_cannot_be_handed_off_again(self):
+        fixture = self.handed_off(seed="w11e")
+        with self.assertRaises(RS.RungRefused):
+            fixture.workers.hand_off(fixture.conversation.conversation_id, reason="again")
+
+    def test_the_handoff_is_the_valve_even_read_only_leaves_open(self):
+        fixture = self.running(seed="w11f")
+        conversation_id = fixture.conversation.conversation_id
+        fixture.gateway.set_mode(
+            fixture.principal.principal_id,
+            AIS.AI_STATUS_READ_ONLY,
+            actor=HUMAN,
+            actor_role="owner",
+        )
+        package = fixture.workers.hand_off(
+            conversation_id,
+            trigger="AI_UNCERTAINTY",
+            reason="the narrowed mode cannot finish this inquiry",
+        )
+        self.assertEqual(fixture.service.state(conversation_id), "HANDOFF_PENDING")
+        self.assertTrue(package.fingerprint)
+
+    def test_a_foreign_conversation_fails_as_not_found_before_any_rung(self):
+        fixture = self.running(seed="w11g")
+        with self.assertRaises(RS.ConversationNotFound):
+            fixture.workers.hand_off(
+                "conv_nowhere", trigger="AI_UNCERTAINTY", reason="no such thread"
+            )
+        self.assertEqual(
+            fixture.conn.execute("SELECT COUNT(*) AS n FROM outbox_events").fetchone()["n"], 0
+        )
 
 
 if __name__ == "__main__":
