@@ -75,7 +75,7 @@ villa-agency-os/
 │   ├── observability.py      # metrik + health berjenjang + Prometheus
 │   ├── dashboard.py          # dashboard internal (stdlib http.server, read-only)
 │   └── anchors.py            # publikasi & verifikasi anker rantai audit
-├── templates/                # 11 berkas HTML dashboard (9 halaman + base + error), di-escape terpusat
+├── templates/                # 13 berkas HTML dashboard (12 halaman terdaftar + base), di-escape terpusat
 ├── tests/                    # pytest — bukti empiris; angka terkini dari `make check`
 ├── demo/                     # aplikasi demo untuk rapat (tanpa internet, tanpa akun, data contoh)
 └── scripts/                  # preflight, anchor, twin generator, scan, `audit_structure.py`, `build_deliverables.py`

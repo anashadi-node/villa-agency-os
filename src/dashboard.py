@@ -45,7 +45,7 @@ import re
 import secrets
 import sys
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from types import MappingProxyType
@@ -54,6 +54,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 import anchors as anchors_module
 import gates as gates_module
+import shadow_eval as shadow_eval_module
 from approvals import (
     MIN_IDEMPOTENCY_KEY_LENGTH,
     ROLE_RANK,
@@ -61,6 +62,8 @@ from approvals import (
     ApprovalService,
 )
 from audit import AuditEvent, ChainAnchor, verify_chain
+from decimal import Decimal, InvalidOperation
+
 from hold_states import LIVE_HOLD_STATES, OCCUPYING_HOLD_STATES
 from primitives import (
     DEFAULT_AGENCY_ID,
@@ -148,6 +151,8 @@ PAGE_ROLES: Mapping[str, tuple[str, ...]] = MappingProxyType(
         "operations": ("reservation", "operations", "owner"),
         "approvals": ("reservation", "operations", "finance", "owner", "auditor", "gm"),
         "properties": ALL_ROLES,
+        "channels": ("reservation", "operations", "owner"),
+        "shadow_eval": ("operations", "owner", "auditor"),
         "audit": ("owner", "auditor", "gm"),
         "error": ALL_ROLES,
     }
@@ -221,6 +226,31 @@ PENDING_APPROVAL_STATUS = "PENDING"
 #: The calendar window ``/inventory`` renders.
 CALENDAR_DAYS = 7
 
+#: How far back ``/channels`` counts what arrived, and how far back
+#: ``/shadow_eval`` measures an extractor (ADR-0038's rolling window).
+CHANNEL_WINDOW_DAYS = 30
+SHADOW_WINDOW_DAYS = 90
+
+#: Hard cap on an operational queue: a queue is read at a glance, and an
+#: unbounded table is how one bad row turns a page into a wall.
+QUEUE_LIMIT = 50
+
+#: The channels the schema allows, in the order the page lists them. A channel
+#: with no traffic keeps its row with a zero, so "nothing arrived" is shown
+#: rather than implied by a missing line.
+CHANNEL_LABELS: Mapping[str, str] = MappingProxyType(
+    {
+        "website": "Website",
+        "email": "Email",
+        "whatsapp_business": "WhatsApp Business",
+        "dashboard": "Dashboard",
+        "phone": "Phone",
+    }
+)
+
+#: Draft statuses that mean "a human approved it, nobody has sent it yet".
+UNSENT_DRAFT_STATUSES: tuple[str, ...] = ("APPROVED",)
+
 #: Hard cap on a POST body: a dashboard form is small, and an unbounded read is
 #: how a trivial request becomes a memory exhaustion.
 MAX_FORM_BYTES = 64 * 1024
@@ -245,6 +275,8 @@ NAV: tuple[tuple[str, str], ...] = (
     ("operations", "/operations"),
     ("approvals", "/approvals"),
     ("properties", "/properties"),
+    ("channels", "/channels"),
+    ("shadow_eval", "/shadow_eval"),
     ("audit", "/audit"),
 )
 PAGE_TITLES: Mapping[str, str] = MappingProxyType(
@@ -257,6 +289,8 @@ PAGE_TITLES: Mapping[str, str] = MappingProxyType(
         "operations": "Operasi",
         "approvals": "Antrean Approval",
         "properties": "Properti & Unit",
+        "channels": "Channels",
+        "shadow_eval": "AI Quality (Shadow)",
         "audit": "Rantai Audit",
         "error": "Galat",
     }
@@ -327,6 +361,56 @@ def _as_int(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _rate_percent(value: Any) -> str:
+    """A rate that is already a fraction, rendered as a percent without a float.
+
+    ``shadow_eval`` hands back a :class:`Decimal`; going through a float to print
+    it would be the one place a rate could come back as ``94.99999%``.
+    """
+    if value is None:
+        return "—"
+    try:
+        percent = Decimal(str(value)) * 100
+    except (InvalidOperation, ValueError):
+        return "—"
+    return f"{percent.normalize():f}%"
+
+
+def _shadow_verdict(measurement: Any, min_cases: int) -> str:
+    """Why an extractor does or does not meet the bar — the reason, not a lone flag.
+
+    The order mirrors ``shadow_eval``'s own rule: volume first, then a rate that
+    exists, then the unsupported-claim veto — ADR-0038 ranks that veto above the
+    rate on purpose, because one claim with no source refuses the bar even at
+    perfect agreement.
+    """
+    if measurement.cases < min_cases:
+        return f"not enough evidence ({measurement.cases}/{min_cases} cases)"
+    if measurement.agreement_rate is None:
+        return "no decided field yet"
+    if measurement.unsupported:
+        return f"refused: {measurement.unsupported} unsupported claim(s)"
+    return "meets the bar" if measurement.meets_bar else "below the bar"
+
+
+def _age_minutes(value: Any, now: Any) -> Optional[int]:
+    """How long something has been waiting, in whole minutes.
+
+    A timestamp stored without a zone cannot be measured against an aware clock;
+    the caller shows ``—`` instead of guessing, because a wrong age on a queue page
+    is how a stuck item stays invisible.
+    """
+    if not value:
+        return None
+    try:
+        moment = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        return None
+    return max(0, int((now - moment).total_seconds() // 60))
 
 
 # --------------------------------------------------------------------------- #
@@ -1931,6 +2015,254 @@ class Dashboard:
             ),
         }
 
+    # -- the two surfaces the wave left without a page ------------------ #
+    def _empty_banner(self) -> Markup:
+        """The explicit "this database is empty" banner, or nothing when it is not."""
+
+        if not self.database_is_empty():
+            return Markup("")
+        return Markup(
+            '<p class="empty banner" data-empty="1">Empty database: there is no '
+            "operational data to show yet.</p>"
+        )
+
+    def view_channels(self, principal: Principal) -> dict[str, Any]:
+        """What arrived on each channel, and what is staged to leave it.
+
+        The dashboard never sends: ``channels.ChannelAdapter`` does, and only for a
+        draft a human approved. So the number only this page can give is the queue —
+        an approved draft no worker has collected yet is invisible everywhere else,
+        and a queue nobody can see is a queue that grows.
+
+        Every query is scoped through ``cases``: neither ``case_messages`` nor
+        ``message_drafts`` carries an ``agency_id`` of its own, so the join is what
+        keeps one tenant's traffic off another tenant's page.
+        """
+        cutoff = to_iso(self.clock.now() - timedelta(days=CHANNEL_WINDOW_DAYS))
+        inbound = {
+            str(row["channel"]): row
+            for row in self._rows(
+                "SELECT m.channel AS channel, COUNT(*) AS n, MAX(m.received_at) AS last_at"
+                " FROM case_messages m JOIN cases c ON c.case_id = m.case_id"
+                " WHERE c.agency_id = ? AND m.direction = 'INBOUND' AND m.received_at >= ?"
+                " GROUP BY m.channel",
+                (self.agency_id, cutoff),
+            )
+        }
+        drafts = self._rows(
+            "SELECT d.channel AS channel, d.status AS status, COUNT(*) AS n,"
+            " MIN(d.created_at) AS oldest_at"
+            " FROM message_drafts d JOIN cases c ON c.case_id = d.case_id"
+            " WHERE c.agency_id = ? GROUP BY d.channel, d.status ORDER BY d.channel, d.status",
+            (self.agency_id,),
+        )
+        queue = self._rows(
+            "SELECT d.draft_id AS draft_id, d.case_id AS case_id, d.channel AS channel,"
+            " d.template AS template, d.grounding AS grounding, d.approved_at AS approved_at"
+            " FROM message_drafts d JOIN cases c ON c.case_id = d.case_id"
+            " WHERE c.agency_id = ? AND d.status = 'APPROVED' AND d.sent_at IS NULL"
+            " ORDER BY d.approved_at LIMIT ?",
+            (self.agency_id, QUEUE_LIMIT),
+        )
+        grounding = self._rows(
+            "SELECT d.grounding AS grounding, COUNT(*) AS n"
+            " FROM message_drafts d JOIN cases c ON c.case_id = d.case_id"
+            " WHERE c.agency_id = ? GROUP BY d.grounding ORDER BY d.grounding",
+            (self.agency_id,),
+        )
+        sent = self._rows(
+            "SELECT d.channel AS channel, COUNT(*) AS n, MAX(d.sent_at) AS last_at"
+            " FROM message_drafts d JOIN cases c ON c.case_id = d.case_id"
+            " WHERE c.agency_id = ? AND d.status = 'SENT' AND d.external_ref IS NOT NULL"
+            " GROUP BY d.channel",
+            (self.agency_id,),
+        )
+        now = self.clock.now()
+        waiting = sum(_as_int(row["n"]) for row in drafts if row["status"] == "PENDING_APPROVAL")
+        ready = sum(
+            _as_int(row["n"]) for row in drafts if row["status"] in UNSENT_DRAFT_STATUSES
+        )
+        return {
+            "window_days": CHANNEL_WINDOW_DAYS,
+            "empty_banner": self._empty_banner(),
+            "inbound_table": table(
+                ["Channel", f"Inbound ({CHANNEL_WINDOW_DAYS} days)", "Last inbound"],
+                [
+                    (
+                        CHANNEL_LABELS.get(channel, channel),
+                        _as_int(inbound[channel]["n"]) if channel in inbound else 0,
+                        str(inbound[channel]["last_at"]) if channel in inbound else "—",
+                    )
+                    for channel in CHANNEL_LABELS
+                ],
+                empty="inbound message",
+            ),
+            "drafts_table": table(
+                ["Channel", "Status", "Drafts", "Oldest"],
+                [
+                    (
+                        CHANNEL_LABELS.get(str(row["channel"]), row["channel"]),
+                        row["status"],
+                        _as_int(row["n"]),
+                        row["oldest_at"],
+                    )
+                    for row in drafts
+                ],
+                empty="message draft",
+            ),
+            "queue_table": table(
+                ["Draft", "Case", "Channel", "Template", "Grounding", "Approved", "Waiting (min)"],
+                [
+                    (
+                        row["draft_id"],
+                        row["case_id"],
+                        CHANNEL_LABELS.get(str(row["channel"]), row["channel"]),
+                        row["template"],
+                        row["grounding"],
+                        row["approved_at"],
+                        _age_minutes(row["approved_at"], now) if row["approved_at"] else "—",
+                    )
+                    for row in queue
+                ],
+                empty="approved draft waiting to be sent",
+            ),
+            "grounding_table": table(
+                ["Grounding", "Drafts"],
+                [(row["grounding"], _as_int(row["n"])) for row in grounding],
+                empty="message draft",
+            ),
+            "sent_table": table(
+                ["Channel", "Sent", "Last sent"],
+                [
+                    (
+                        CHANNEL_LABELS.get(str(row["channel"]), row["channel"]),
+                        _as_int(row["n"]),
+                        row["last_at"],
+                    )
+                    for row in sent
+                ],
+                empty="sent message",
+            ),
+            "queue_note": Markup(
+                f"Waiting for a human approval: <strong>{waiting}</strong> · "
+                f"approved and not sent yet: <strong>{ready}</strong>. "
+                "No channel worker exists yet, so nothing leaves on its own: sending "
+                "goes through <code>channels.ChannelAdapter</code>, for an approved "
+                "draft, by a person."
+            ),
+        }
+
+    def view_shadow_eval(self, principal: Principal) -> dict[str, Any]:
+        """The shadow-mode measurement (ADR-0038): extractor proposals vs human decisions.
+
+        This page is a reader, never a second evaluator: it renders
+        :func:`shadow_eval.collect` and nothing else. When the bars cannot be resolved
+        for the agency the module refuses, and the refusal is what the page shows — a
+        rate without its bar is not a result, and printing the platform baseline in
+        its place would be inventing an answer.
+        """
+        code = ""
+        measurements: list[Any] = []
+        bars: Mapping[str, Any] = {}
+        ungrounded: Any = "not measured"
+        try:
+            report = shadow_eval_module.collect(
+                self.conn,
+                agency_id=self.agency_id,
+                window_days=SHADOW_WINDOW_DAYS,
+                clock=self.clock,
+            )
+        except DomainError as exc:
+            code = str(getattr(exc, "code", "SHADOW_EVAL_ERROR"))
+        else:
+            measurements = sorted(report.extractors.values(), key=lambda item: item.extractor)
+            bars = dict(report.bars)
+            ungrounded = report.ungrounded_reached_guest
+        measured = not code
+        min_cases = _as_int(bars.get("min_cases"))
+        if not measured:
+            status_note = Markup(
+                '<p class="empty" data-shadow="unavailable" data-code="'
+                + escape_value(code)
+                + '">The bars are unreadable for this agency (<code>'
+                + escape_value(code)
+                + "</code>), so this page shows no rate at all: a measurement without "
+                "its bar is not a result. Publish the shadow bars for this tenant, "
+                "then reload.</p>"
+            )
+        elif ungrounded:
+            status_note = Markup(
+                '<p class="empty banner" data-empty="1" data-shadow="violation">'
+                f"{_as_int(ungrounded)} draft(s) reached a guest without being GROUNDED. "
+                "The schema is supposed to make that impossible; it is measured here "
+                "rather than assumed.</p>"
+            )
+        else:
+            status_note = Markup(
+                f'<p class="ok" data-shadow="measured" data-extractors="{len(measurements)}">'
+                f"Measured over the last <strong>{SHADOW_WINDOW_DAYS}</strong> days: "
+                f"<strong>{len(measurements)}</strong> shadow extractor(s) in the window, "
+                "and no draft reached a guest without grounding. The module graduates "
+                "nothing and writes nothing.</p>"
+            )
+        return {
+            "window_days": SHADOW_WINDOW_DAYS,
+            "empty_banner": self._empty_banner(),
+            "status_note": status_note,
+            "bars_table": table(
+                ["Bar", "Effective for this agency", "Platform baseline"],
+                [
+                    (
+                        "Minimum agreement rate",
+                        _rate_percent(bars.get("agreement_rate")) if measured else "not published",
+                        f"{shadow_eval_module.BASELINE_AGREEMENT_PCT}%",
+                    ),
+                    (
+                        "Minimum decided fields",
+                        _as_int(bars.get("min_cases")) if measured else "not published",
+                        shadow_eval_module.BASELINE_MIN_CASES,
+                    ),
+                ],
+                empty="policy bar",
+            ),
+            "extractor_table": table(
+                [
+                    "Extractor",
+                    "Cases",
+                    "Decided",
+                    "Agreed",
+                    "Disagreed",
+                    "Pending",
+                    "Unsupported",
+                    "Agreement",
+                    "Verdict",
+                ],
+                [
+                    (
+                        item.extractor,
+                        item.cases,
+                        item.decided,
+                        item.agreed,
+                        item.disagreed,
+                        item.pending,
+                        item.unsupported,
+                        _rate_percent(item.agreement_rate),
+                        _shadow_verdict(item, min_cases),
+                    )
+                    for item in measurements
+                ],
+                empty="shadow extractor measurement",
+            ),
+            "invariant_list": definition_list(
+                [
+                    ("Window (days)", SHADOW_WINDOW_DAYS),
+                    ("Ungrounded drafts that reached a guest (must stay 0)", ungrounded),
+                    ("Bars readable for this agency", "yes" if measured else "no"),
+                    ("Extractors in the window", len(measurements)),
+                ]
+            ),
+        }
+
     # ------------------------------------------------------------------ #
     # Routing
     # ------------------------------------------------------------------ #
@@ -1944,7 +2276,8 @@ class Dashboard:
             # The case id is the *last* segment, so /cases/<id>/anything still
             # names the case; an id that is not a reference token is a 404.
             return "case_detail", segments[-1]
-        for page in ("inventory", "finance", "operations", "approvals", "properties", "audit"):
+        for page in ("inventory", "finance", "operations", "approvals", "properties", "channels",
+                     "shadow_eval", "audit"):
             if head == page and len(segments) == 1:
                 return page, None
         raise NotFound("rute tidak dikenal", path="/" + "/".join(segments))

@@ -225,7 +225,7 @@ yang mengendap jadi masalah besar.</div>
   <li><b>Kata sandi &amp; kode sekali pakai (MFA)</b> — login staf memakai TOTP.</li>
   <li><b>Tidak pernah menyimpan nomor kartu</b> — pembayaran lewat halaman resmi penyedia; ada
   pemindai yang <i>menggagalkan</i> gerbang kalau ada kolom data kartu muncul di sistem.</li>
-  <li><b>Ledger tidak boleh diacak</b> — ada pemeriksa otomatis: <code>shuffle=True</code> di mana
+  <li><b>Ledger tidak boleh diacak</b> — ada pemeriksa otomatis: <code>shuffle</code> disetel hidup di mana
   pun akan menggagalkan gerbang (data seri waktu tidak boleh diacak).</li>
 </ul>
 
@@ -237,7 +237,7 @@ yang mengendap jadi masalah besar.</div>
   dipantau.</li>
   <li><b>Scheduler (denyut nadi)</b> — menagih semua tenggat (hold kedaluwarsa, SLA, approval,
   penagihan) dan <b>idempoten</b>: dijalankan dua kali tidak menggandakan apa pun.</li>
-  <li><b>Dashboard internal</b> — 10 halaman untuk staf, read-only, tiap halaman butuh token.</li>
+  <li><b>Dashboard internal</b> — 10 halaman utama + halaman rincian kasus (11 halaman, 13 berkas template) untuk staf, read-only, tiap halaman butuh token.</li>
   <li><b>CLI operator</b> — impor villa massal, atur peran, terbitkan kebijakan, periksa migrasi,
   terbitkan anker.</li>
 </ul>
@@ -379,8 +379,8 @@ semuanya jujur dan bisa diulang:</p>
     <tr><td>Setiap modul punya penjelasan singkat di kepala berkas</td><td>Lulus — 51/51</td></tr>
     <tr><td>Tidak ada catatan “TODO/FIXME/XXX” yang menggantung di mesin</td><td>Lulus — 0</td></tr>
     <tr><td>Tidak ada penangkap error yang menelan kesalahan tanpa jejak</td><td>Lulus — 0</td></tr>
-    <tr><td>Tidak ada pengacakan data seri waktu (<code>shuffle=True</code>)</td><td>Lulus — 0 di seluruh project</td></tr>
-    <tr><td>Setiap halaman dashboard punya berkas tampilan</td><td>Lulus — 10 halaman, 11 berkas</td></tr>
+    <tr><td>Tidak ada pengacakan data seri waktu ((<code>shuffle</code> disetel hidup)</td><td>Lulus — 0 di seluruh project</td></tr>
+    <tr><td>Setiap halaman dashboard punya berkas tampilan</td><td>Lulus — 12 halaman terdaftar, 13 berkas</td></tr>
     <tr><td>Setiap pembacaan tabel milik satu agensi <b>disaring</b> ke agensi itu</td><td>Lulus — semua baca menyertakan penyaring tenant (48 tabel ber-tenant)</td></tr>
     <tr><td>Agregat uang tidak mencampur mata uang</td><td>Lulus (setelah perbaikan hari ini, lihat §7.5)</td></tr>
     <tr><td>Tidak ada tes yang memakai jam dinding (bisa gagal sendiri saat tengah malam)</td><td>Lulus — 0</td></tr>
@@ -401,7 +401,7 @@ perintah, tetapi kenyataannya sudah berubah. Saya menjalankan semuanya di databa
   <tbody>
     <tr><td>Siapkan database contoh</td><td><code>rc=0</code></td><td>Berhasil: <b>72 tabel, 142 baris</b> terisi.</td></tr>
     <tr><td>Siapkan ulang database contoh</td><td><code>rc=1</code></td><td><b>Benar</b> — menolak menimpa: “database sudah berisi data demo”. Ini pengaman, bukan error.</td></tr>
-    <tr><td>Snapshot halaman dashboard</td><td><code>rc=0</code></td><td>11 halaman ditulis ke berkas.</td></tr>
+    <tr><td>Snapshot halaman dashboard</td><td><code>rc=0</code></td><td>13 berkas halaman ditulis (termasuk 3 rincian kasus).</td></tr>
     <tr><td>Scheduler: lihat rencana</td><td><code>rc=0</code></td><td>Hanya menampilkan rencana, tidak menulis.</td></tr>
     <tr><td>Scheduler: jalankan, lalu jalankan lagi</td><td><code>rc=0</code> dua kali</td><td>Jalan kedua tidak mengubah apa pun → benar-benar idempoten.</td></tr>
     <tr><td>Kesehatan sistem</td><td><code>rc=1</code></td><td><b>Benar</b> — ada 4 peringatan (SLA, hold kedaluwarsa, pembayaran belum cocok) di data contoh; kode keluar 1 memang artinya “ada yang perlu dilihat”, bukan perintahnya rusak.</td></tr>
@@ -446,7 +446,7 @@ sistem berhati-hati: ia menolak daripada menebak.</div>
       <td>3</td>
       <td>Dokumen menyebut “12 berkas HTML dashboard”, kenyataannya <b>11</b>.</td>
       <td>Angka dokumen yang tidak cocok membuat semua angka lain dicurigai.</td>
-      <td>Diperbaiki jadi “11 berkas (9 halaman + base + error)”.</td>
+      <td>Diperbaiki jadi “13 berkas (12 halaman terdaftar + base)”.</td>
     </tr>
     <tr>
       <td>4</td>

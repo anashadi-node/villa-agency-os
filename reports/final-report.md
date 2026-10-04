@@ -27,7 +27,7 @@ diaudit, dan sudah berjalan utuh dari webhook tamu sampai booking `CLOSED` di da
 | Jalur tamu utuh di database kosong | `python3 scripts/go_live_smoke.py --db /tmp/go-live.db --report /tmp/go-live.json` | **`GO-LIVE SMOKE: PASS` — 16/16 langkah, keluar 0** |
 | **Onboarding tenant (white-label)** | `scripts/import_villas.py --template/--file/--apply`, `scripts/manage_roles.py list/seed/appoint/rename/add/disable`, `scripts/publish_policy_value.py set/show` | **semua `rc=0`** di `/tmp/tenant-verify`: 1 villa+unit diimpor (2 baris audit), 8 peran di-seed, tangga uang (finance_manager, gm, owner) terisi, kebijakan dokumen wajib diterbitkan; `preflight` berhenti menyebut "money ladder has no holder" |
 | Gerbang go-live per tenant | `python3 scripts/preflight.py --db ... --anchor-dir ...` | `NO-GO` dengan daftar yang bisa dibaca: anker belum diterbitkan, data demo ada, kesiapan tenant belum diisi — **fail-closed, seperti desainnya** |
-| Perintah operasional terdokumentasi | `docs/DEPLOYMENT.md`, `docs/TENANT_SETUP.md`, `docs/OPERATIONS_RUNBOOK.md` | dijalankan satu per satu di database baru, semua sesuai dokumentasi (seed, scheduler dry+real, observability, dashboard 11 halaman) |
+| Perintah operasional terdokumentasi | `docs/DEPLOYMENT.md`, `docs/TENANT_SETUP.md`, `docs/OPERATIONS_RUNBOOK.md` | dijalankan satu per satu di database baru, semua sesuai dokumentasi (seed, scheduler dry+real, observability, dashboard 13 berkas halaman) |
 
 ## 3. Bukti jalur tamu end-to-end (keluaran nyata, satu kali jalan)
 
@@ -157,7 +157,7 @@ Temuan & perbaikan pada 2026-10-04:
    bagian `make check`: temuannya keputusan manusia, bukan penghalang rilis).
 3. **Dokumentasi:** dua skrip yang tidak pernah disebut (audit struktur, `build_deliverables.py`)
    kini ada di README; klaim "12 berkas HTML dashboard" dikoreksi menjadi 11
-   (9 halaman + base + error); `demo/README.md` disesuaikan dengan aplikasi demo baru.
+   (12 halaman terdaftar + base); `demo/README.md` disesuaikan dengan aplikasi demo baru.
 4. **Tidak ditemukan:** bug di jalur uang/tanggal/status/izin, kebocoran rahasia, perintah
    dokumentasi yang busuk, maupun pembacaan data lintas agensi.
 

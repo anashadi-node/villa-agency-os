@@ -1,0 +1,20 @@
+<section data-page="shadow_eval" data-window-days="{{ window_days }}">
+  <h2>AI quality — shadow mode</h2>
+  <p class="muted">
+    What the shadow extractors proposed, next to what a person decided, over the last
+    {{ window_days }} days. An AI never writes to a guest record, and this page settles
+    nothing: it renders one measurement, the bars that measurement is checked against,
+    and the single invariant that has to stay at zero.
+  </p>
+  {{ empty_banner }}
+  {{ status_note }}
+
+  <h3>Bars in force</h3>
+  {{ bars_table }}
+
+  <h3>Per extractor</h3>
+  {{ extractor_table }}
+
+  <h3>Invariants</h3>
+  {{ invariant_list }}
+</section>

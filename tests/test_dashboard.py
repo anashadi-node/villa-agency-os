@@ -39,6 +39,8 @@ ROUTES = {
     "operations": "/operations",
     "approvals": "/approvals",
     "properties": "/properties",
+    "channels": "/channels",
+    "shadow_eval": "/shadow_eval",
     "audit": "/audit",
 }
 
@@ -52,6 +54,8 @@ ENTITLED = {
     "operations": {"reservation", "operations", "owner"},
     "approvals": set(D.ROLES),
     "properties": set(D.ROLES),
+    "channels": {"reservation", "operations", "owner"},
+    "shadow_eval": {"operations", "owner", "auditor"},
     "audit": {"owner", "auditor", "gm"},
 }
 PAGE_ROLE_MATRIX = [(page, role) for page in ROUTES for role in D.ROLES]
@@ -577,6 +581,7 @@ def test_empty_db_pages_render_an_explicit_empty_marker(app):
     for page, role in (("cases", "reservation"), ("inventory", "operations"),
                        ("finance", "finance"), ("operations", "operations"),
                        ("approvals", "owner"), ("properties", "auditor"),
+                       ("channels", "operations"), ("shadow_eval", "owner"),
                        ("audit", "auditor")):
         body = render(app, page, role)
         assert 'data-empty="1"' in body, page
@@ -1635,3 +1640,238 @@ def test_finance_summary_states_each_currency_separately(seeded_app, conn, clock
     assert idr.group(1).replace(",", "").strip() == "5500000"
     assert usd.group(1).replace(",", "").strip() == "2500000"
 
+# --------------------------------------------------------------------------- #
+# 8. Channels — what arrived, and what is waiting to leave
+# --------------------------------------------------------------------------- #
+def _inbound_count(page: str, channel: str) -> int:
+    """The inbound count for one channel, read back from the rendered table."""
+    match = re.search(
+        rf"<tr><td>{re.escape(channel)}</td><td>(\d+)</td><td>[^<]*</td></tr>", page
+    )
+    assert match, f"baris kanal {channel} tidak ditemukan"
+    return int(match.group(1))
+
+
+def _seed_inbound(conn, *, message_id, case_id, channel, received_at):
+    """A message row written the way intake writes it — the test's own act."""
+    conn.execute(
+        "INSERT INTO case_messages (case_message_id, case_id, direction, channel, sender_ref,"
+        " received_at, content_class, body_sha256, created_at)"
+        " VALUES (?, ?, 'INBOUND', ?, 'guest_test', ?, 'P1', ?, ?)",
+        (message_id, case_id, channel, received_at, "0" * 63 + "7", received_at),
+    )
+
+
+def _seed_draft(conn, *, draft_id, case_id, channel, status, created_at, sent=False):
+    """One draft, approved by a person — the queue this page exists to show."""
+    conn.execute(
+        "INSERT INTO message_drafts (draft_id, case_id, channel, template, locale,"
+        " recipient_ref, body_text, body_sha256, grounding, gate_decision, status,"
+        " created_by, created_at, approved_by, approved_at, sent_by, sent_at, external_ref)"
+        " VALUES (?, ?, ?, 'quote_v1', 'id-ID', 'guest_test', 'Halo', ?, 'GROUNDED', 'ALLOW',"
+        " ?, 'agent-reservation-1', ?, 'owner-sakti-1', ?, ?, ?, ?)",
+        (
+            draft_id,
+            case_id,
+            channel,
+            "0" * 63 + "8",
+            status,
+            created_at,
+            created_at,
+            "agent-reservation-1" if sent else None,
+            created_at if sent else None,
+            "mail-1" if sent else None,
+        ),
+    )
+
+
+def test_channels_page_counts_inbound_per_channel(seeded_app):
+    iso = to_iso(seeded_app.clock.now())
+    before = _inbound_count(render(seeded_app, "channels", "operations"), "WhatsApp Business")
+    _seed_inbound(seeded_app.conn, message_id="msg_dash_1", case_id=SEED_CASE,
+                  channel="whatsapp_business", received_at=iso)
+    page = render(seeded_app, "channels", "operations")
+    assert _inbound_count(page, "WhatsApp Business") == before + 1
+
+
+def test_channels_page_counts_a_channel_that_has_never_seen_traffic(seeded_app):
+    """A channel with no traffic keeps its row at zero: absent is not the same as zero."""
+    page = render(seeded_app, "channels", "operations")
+    assert _inbound_count(page, "Phone") == 0
+    assert "<tr><td>Phone</td><td>0</td><td>—</td></tr>" in page
+
+
+def test_channels_page_never_counts_another_agencys_traffic(seeded_app):
+    iso = to_iso(seeded_app.clock.now())
+    conn = seeded_app.conn
+    conn.execute(
+        "INSERT INTO agencies (agency_id, name, status, created_at, updated_at)"
+        " VALUES ('agency_other', 'Other Agency', 'ACTIVE', ?, ?)",
+        (iso, iso),
+    )
+    conn.execute(
+        "INSERT INTO cases (case_id, agency_id, channel, guest_ref, status, priority,"
+        " sla_policy, first_response_due_at, quote_due_at, idempotency_key, created_at,"
+        " updated_at) SELECT 'case_other_1', 'agency_other', channel, guest_ref, status,"
+        " priority, sla_policy, first_response_due_at, quote_due_at, 'idem-other-0001',"
+        " created_at, updated_at FROM cases WHERE case_id = ?",
+        (SEED_CASE,),
+    )
+    before = _inbound_count(render(seeded_app, "channels", "operations"), "WhatsApp Business")
+    _seed_inbound(conn, message_id="msg_other_1", case_id="case_other_1",
+                  channel="whatsapp_business", received_at=iso)
+    page = render(seeded_app, "channels", "operations")
+    assert _inbound_count(page, "WhatsApp Business") == before
+    assert "case_other_1" not in page
+
+
+def test_channels_page_shows_an_approved_draft_nobody_has_sent(seeded_app):
+    approved_at = to_iso(seeded_app.clock.now() - timedelta(minutes=90))
+    _seed_draft(seeded_app.conn, draft_id="draft_queue_1", case_id=SEED_CASE,
+                channel="whatsapp_business", status="APPROVED", created_at=approved_at)
+    page = render(seeded_app, "channels", "operations")
+    assert "draft_queue_1" in page
+    assert "approved and not sent yet: <strong>1</strong>" in page
+    assert re.search(
+        r"<tr><td>draft_queue_1</td><td>[\w-]+</td><td>WhatsApp Business</td>"
+        r"<td>quote_v1</td><td>GROUNDED</td><td>[^<]*</td><td>90</td></tr>",
+        page,
+    ), "baris antrean tidak memuat umur 90 menit"
+    assert "<tr><td>GROUNDED</td><td>1</td></tr>" in page
+
+
+def test_channels_page_keeps_a_sent_draft_out_of_the_queue(seeded_app):
+    """A sent draft is history, not work: it shows under receipts, never in the queue."""
+    iso = to_iso(seeded_app.clock.now())
+    _seed_draft(seeded_app.conn, draft_id="draft_sent_1", case_id=SEED_CASE,
+                channel="email", status="SENT", created_at=iso, sent=True)
+    page = render(seeded_app, "channels", "operations")
+    assert "draft_sent_1" not in page
+    assert "approved and not sent yet: <strong>0</strong>" in page
+    sent_section = page.split("Sent, with a delivery reference")[1]
+    assert "<tr><td>Email</td><td>1</td>" in sent_section
+
+
+def test_channels_page_does_not_name_a_guest(seeded_app):
+    """The page counts channels and drafts; it never renders guest text or contact."""
+    page = render(seeded_app, "channels", "operations")
+    assert RAW_EMAIL not in page
+    assert RAW_PHONE not in page
+
+
+# --------------------------------------------------------------------------- #
+# 9. AI quality — the shadow measurement, next to the bar it is measured against
+# --------------------------------------------------------------------------- #
+def _publish_shadow_bars(conn, now_iso):
+    """The owner's bars, effective before the window this test measures.
+
+    The frozen clock is 2026-09-21 while the seeded baseline revision only takes
+    effect on 2026-10-02, so a page under test would read "no bar" for a reason that
+    has nothing to do with the page. ``policy_revisions`` is append-only, so this adds
+    a version instead of editing one — exactly what an owner would have done.
+    """
+    for key, revision_id, value in (
+        ("governance.shadow.min_agreement_rate", "polrev_test_agreement", "95"),
+        ("governance.shadow.min_cases", "polrev_test_cases", "100"),
+    ):
+        conn.execute(
+            "INSERT INTO policy_revisions (policy_revision_id, agency_id, policy_key,"
+            " version, value, effective_from, effective_to, source_doc_ref, approved_by,"
+            " fingerprint, created_at) VALUES (?, 'agency_default', ?, 2, ?, '2026-01-01',"
+            " '9999-12-31', 'test decision', 'owner_anas', ?, ?)",
+            (revision_id, key, value, "0" * 63 + "6", now_iso),
+        )
+
+
+def _seed_shadow(seeded_app, *, statuses=(("ACCEPTED", 14), ("ACCEPTED", 7), ("REJECTED", 3))):
+    """One shadow proposal with reviewed fields, as the extractor path would write it."""
+    conn = seeded_app.conn
+    iso = to_iso(seeded_app.clock.now())
+    _publish_shadow_bars(conn, iso)
+    message_id = conn.execute(
+        "SELECT case_message_id FROM case_messages WHERE case_id = ?"
+        " ORDER BY received_at LIMIT 1",
+        (SEED_CASE,),
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO intake_proposals (proposal_id, case_id, source_message_id, extractor,"
+        " method, produced_at, status, payload, fingerprint, created_at)"
+        " VALUES ('prop_dash_1', ?, ?, 'agent3/RES-W01', 'llm_shadow', ?, 'ACCEPTED', '{}', ?, ?)",
+        (SEED_CASE, message_id, iso, "0" * 63 + "5", iso),
+    )
+    for index, (status, span) in enumerate(statuses, start=1):
+        conn.execute(
+            "INSERT INTO intake_fields (intake_field_id, proposal_id, case_id, field_name,"
+            " field_value, value_type, confidence, source_message_id, source_span_start,"
+            " source_span_end, status, value_sha256, created_at, reviewed_by, reviewed_at,"
+            " rejection_reason)"
+            " VALUES (?, 'prop_dash_1', ?, ?, '2026-11-10', 'date', 90, ?, ?, 14, ?, ?, ?, ?, ?, ?)",
+            (
+                f"field_dash_{index}",
+                SEED_CASE,
+                f"field_{index}",
+                message_id,
+                span,
+                status,
+                "0" * 63 + "3",
+                iso,
+                None if status == "PROPOSED" else "staff_reviewer",
+                None if status == "PROPOSED" else iso,
+                "tidak yakin" if status == "REJECTED" else None,
+            ),
+        )
+    return message_id
+
+
+def test_shadow_eval_page_shows_the_rate_next_to_its_bar(seeded_app):
+    _seed_shadow(seeded_app)
+    page = render(seeded_app, "shadow_eval", "owner")
+    assert "agent3/RES-W01" in page
+    assert "66.67%" in page  # 2 of 3 reviewed fields agreed with the extractor
+    assert "not enough evidence (1/100 cases)" in page
+    assert "<tr><td>Minimum agreement rate</td><td>95%</td><td>95%</td></tr>" in page
+    assert 'data-shadow="measured"' in page
+    assert "Ungrounded drafts that reached a guest (must stay 0)" in page
+
+
+def test_shadow_eval_page_reports_the_zero_invariant_honestly(seeded_app):
+    """The invariant is counted, not assumed: a clean estate reads 0, not 'unknown'."""
+    page = render(seeded_app, "shadow_eval", "owner")
+    assert "<dd>0</dd>" in page
+
+
+def _other_agency_app(seeded_app):
+    """A second agency with no published shadow bars: the refusal path, for real."""
+    conn = seeded_app.conn
+    iso = to_iso(seeded_app.clock.now())
+    conn.execute(
+        "INSERT INTO agencies (agency_id, name, status, created_at, updated_at)"
+        " VALUES ('agency_other', 'Other Agency', 'ACTIVE', ?, ?)",
+        (iso, iso),
+    )
+    return make_app(conn, seeded_app.clock, agency_id="agency_other")
+
+
+def test_shadow_eval_page_refuses_to_print_a_rate_without_a_bar(seeded_app):
+    """A measurement without its bar is not a result — the page shows the refusal.
+
+    ``agency_other`` has published no shadow bars, the module refuses, and the refusal
+    is what the page renders. The platform baseline stays visible, labelled as a
+    baseline: it is context, never a stand-in for the tenant's own bar.
+    """
+    other = _other_agency_app(seeded_app)
+    body = other.dispatch(
+        D._Request(method="GET", path="/shadow_eval", query={}, form={},
+                   principal=other.tokens["tok-owner"])
+    ).body
+    assert 'data-shadow="unavailable"' in body
+    assert "not published" in body
+    assert "no rate at all" in body
+    assert "<td>95%</td>" in body
+    assert "<td>100</td>" in body
+
+
+def test_shadow_eval_page_is_open_to_the_auditor_and_closed_to_reservation(seeded_app):
+    assert seeded_app.page_allowed("shadow_eval", "auditor")
+    assert not seeded_app.page_allowed("shadow_eval", "reservation")
+    assert seeded_app.page_allowed("channels", "reservation")

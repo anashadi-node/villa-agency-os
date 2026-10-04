@@ -1,0 +1,26 @@
+<section data-page="channels" data-window-days="{{ window_days }}">
+  <h2>Channels &amp; messages</h2>
+  <p class="muted">
+    Inbound counts cover the last {{ window_days }} days. This page sends nothing: sending
+    lives in <code>channels.ChannelAdapter</code>, and only for a draft a person approved.
+    An approved draft that no worker has collected yet is exactly what the queue below
+    exists for — it is invisible everywhere else.
+  </p>
+  {{ empty_banner }}
+
+  <h3>Inbound per channel</h3>
+  {{ inbound_table }}
+
+  <h3>Drafts per channel and status</h3>
+  {{ drafts_table }}
+
+  <h3>Queue: approved, not sent yet</h3>
+  <p class="muted">{{ queue_note }}</p>
+  {{ queue_table }}
+
+  <h3>Grounding of every draft</h3>
+  {{ grounding_table }}
+
+  <h3>Sent, with a delivery reference</h3>
+  {{ sent_table }}
+</section>

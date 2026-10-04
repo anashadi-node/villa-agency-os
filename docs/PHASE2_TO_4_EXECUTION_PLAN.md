@@ -84,6 +84,6 @@ terbuka (fase yang bergantung padanya tetap *paper*), atau backup belum diverifi
 | Phase 0–1 (kernel, ADR-0002) | **Selesai** — 607 test hijau, `make check` PASS |
 | Phase 2 | **Selesai** (2026-10-03 — modul + gerbang §9/§30 lengkap, ADR-0050–0056) |
 | Phase 3 | **Selesai** (2026-10-03 — deposit & settlement berpunya via CLI `closure_facts.py`, ADR-0055/0056) |
-| Phase 4 | **Modul lengkap 2026-10-03; bukti go-live lengkap 2026-10-04** — `channels.py` (ADR-0059), `shadow_eval.py` (ADR-0058), KPI (ADR-0057), dashboard/anchors/observability/preflight; bukti jalur tamu 16/16 (`go_live_smoke.py`) dan `reports/final-report.md` v2.1 sudah ada. Tersisa yang bukan modul: halaman dashboard untuk `channels.py`/`shadow_eval.py`, pemasangan produksi, dan suite PostgreSQL hidup |
+| Phase 4 | **Modul lengkap 2026-10-03; bukti go-live lengkap 2026-10-04** — `channels.py` (ADR-0059), `shadow_eval.py` (ADR-0058), KPI (ADR-0057), dashboard/anchors/observability/preflight; bukti jalur tamu 16/16 (`go_live_smoke.py`) dan `reports/final-report.md` v2.1 sudah ada. Tersisa yang bukan modul: halaman KPI dashboard, pemasangan produksi, dan suite PostgreSQL hidup (halaman untuk `channels.py`/`shadow_eval.py` selesai 2026-10-04) |
 
 Dokumen ini diperbarui setiap fase ditutup, bersama `reports/final-report.md`.
