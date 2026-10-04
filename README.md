@@ -75,9 +75,10 @@ villa-agency-os/
 │   ├── observability.py      # metrik + health berjenjang + Prometheus
 │   ├── dashboard.py          # dashboard internal (stdlib http.server, read-only)
 │   └── anchors.py            # publikasi & verifikasi anker rantai audit
-├── templates/                # 12 berkas HTML dashboard (di-escape terpusat)
+├── templates/                # 11 berkas HTML dashboard (9 halaman + base + error), di-escape terpusat
 ├── tests/                    # pytest — bukti empiris; angka terkini dari `make check`
-└── scripts/                  # preflight, anchor, twin generator, secret & unsafe scan
+├── demo/                     # aplikasi demo untuk rapat (tanpa internet, tanpa akun, data contoh)
+└── scripts/                  # preflight, anchor, twin generator, scan, `audit_structure.py`, `build_deliverables.py`
 ```
 
 ## Menjalankan
@@ -91,6 +92,11 @@ python3 scripts/go_live_smoke.py --db /tmp/go-live.db --report /tmp/go-live.json
 
 # Gerbang pre-deploy lengkap (syntax + test + secret scan + unsafe scan + parity skema)
 make check
+
+# Audit struktur menyeluruh (read-only, tanpa database): jejak modul→tes, perintah dokumentasi
+# yang sudah tidak ada, filter tenant di setiap baca, agregat uang lintas mata uang, aset
+# pihak ketiga. Bukan bagian `make check` — temuannya keputusan manusia, bukan penghalang rilis.
+make audit-structure
 
 # Lint (opsional, butuh: pip install pyflakes)
 make lint

@@ -1603,3 +1603,35 @@ def test_every_documented_dashboard_server_command_passes_a_token():
                 offenders.append(f"{name}: {line.strip()[:100]}")
     assert offenders == [], "a documented dashboard server command without --token"
 
+
+def test_finance_summary_states_each_currency_separately(seeded_app, conn, clock):
+    """Pin the defect: one SUM across currencies is a figure nobody can read back.
+
+    Both seeded invoices are IDR, so the summary must carry one IDR row equal to their sum. A USD
+    invoice must add its own row and leave the IDR row untouched; if the two currencies are ever
+    merged into one figure again, the assertions on each row fail.
+    """
+    now = clock.now()
+    page = render(seeded_app, "finance", "finance")
+    idr = re.search(r"Outstanding invoices IDR \(minor\)</dt>\s*<dd[^>]*>([^<]+)</dd>", page)
+    assert idr, "the finance summary does not name the currency it summed"
+    assert idr.group(1).replace(",", "").strip() == "5500000"
+    assert "Outstanding invoices USD" not in page
+
+    conn.execute(
+        "INSERT INTO invoices (invoice_id, invoice_number, booking_id, policy_fingerprint,"
+        " currency, subtotal_minor, tax_minor, service_minor, total_minor, amount_paid_minor,"
+        " status, payment_status, issued_at, due_at, created_at)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        ("invoice-usd-1", "INV-2026-0003", "booking-1", "b" * 64, "USD", 2_400_000, 0, 100_000,
+         2_500_000, 0, "ISSUED", "UNPAID", to_iso(now - timedelta(days=1)),
+         to_iso(now + timedelta(days=2)), to_iso(now - timedelta(days=1))),
+    )
+
+    page = render(seeded_app, "finance", "finance")
+    idr = re.search(r"Outstanding invoices IDR \(minor\)</dt>\s*<dd[^>]*>([^<]+)</dd>", page)
+    usd = re.search(r"Outstanding invoices USD \(minor\)</dt>\s*<dd[^>]*>([^<]+)</dd>", page)
+    assert idr and usd, "both currencies must be listed"
+    assert idr.group(1).replace(",", "").strip() == "5500000"
+    assert usd.group(1).replace(",", "").strip() == "2500000"
+

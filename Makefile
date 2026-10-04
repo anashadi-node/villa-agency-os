@@ -91,3 +91,9 @@ policy-status:
 migrate-check:
 	$(PYTHON) scripts/apply_migrations.py --dry-run
 
+# Read-only structural audit: the checks `check` cannot see (test traceability, documented
+# commands that no longer exist, tenant filters, currency-blind money sums, offline assets).
+# Deliberately NOT part of `check`: a finding here is a decision for a human, not a deploy stop.
+audit-structure:
+	$(PYTHON) scripts/audit_structure.py
+

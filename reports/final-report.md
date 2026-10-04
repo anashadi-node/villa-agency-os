@@ -1,6 +1,6 @@
 # Villa Agency OS — Laporan Akhir & Paket Bukti Komersial
 
-Versi: 2.0 · Tanggal: 2026-10-03 · Database acuan: dibuat dari nol saat laporan ini dibuat
+Versi: 2.1 · Tanggal: 2026-10-04 · Database acuan: dibuat dari nol saat laporan ini dibuat
 Sumber tunggal: repo `~/villa-agency-os`. **Setiap angka di bawah berasal dari keluaran
 perintah yang tertera di sebelahnya** — tidak ada klaim tanpa perintah.
 
@@ -20,8 +20,8 @@ diaudit, dan sudah berjalan utuh dari webhook tamu sampai booking `CLOSED` di da
 
 | Bukti | Perintah | Hasil terverifikasi 2026-10-03 |
 |---|---|---|
-| Suite tes + semua gerbangnya | `make check` | **3471 lulus, 4 skip, 3950 subtest, 0 gagal**; secret-scan 0 temuan (278 berkas); unsafe-scan 0 temuan; twin skema cocok; `PRE-DEPLOY GATE: PASS` |
-| Suite yang sama di interpreter kedua | `python3 -m pytest tests/ -q` | 3463 lulus, 4 skip (bebas-interpreter: 3.12.3/SQLite 3.45.1 dan 3.11.16/SQLite 3.53.1) |
+| Suite tes + semua gerbangnya | `make check` | **3472 lulus, 4 skip, 3950 subtest, 0 gagal**; secret-scan 0 temuan (279 berkas); unsafe-scan 0 temuan (279 berkas); twin skema cocok; `PRE-DEPLOY GATE: PASS` |
+| Suite yang sama di interpreter kedua | `~/.hermes/hermes-agent/venv/bin/python -m pytest tests/` | keluar **0**, tanpa kegagalan (bebas-interpreter: Python 3.12.3/SQLite 3.45.1 dan Python 3.11.16/SQLite 3.53.1 — dijalankan ulang 2026-10-04) |
 | Skema PostgreSQL diterapkan ke server **kosong** | `VILLA_PG_DSN=... python3 -m pytest tests/test_schema.py` | 75 lulus (4 di antaranya tes PostgreSQL hidup: DDL, model, trigger, dan `EXCLUDE` anti-tumpang-tindih) |
 | Seluruh suite di atas PostgreSQL hidup | `VILLA_PG_DSN=... python3 -m pytest tests/ -q` | 3467 tes terkumpul, keluar **0**, tanpa kegagalan |
 | Jalur tamu utuh di database kosong | `python3 scripts/go_live_smoke.py --db /tmp/go-live.db --report /tmp/go-live.json` | **`GO-LIVE SMOKE: PASS` — 16/16 langkah, keluar 0** |
@@ -106,7 +106,7 @@ Dikunci `tests/test_tenant_onboarding_path.py` (8 tes) — termasuk tes yang **m
 itu, supaya dokumen tidak bisa diam-diam kembali mengajarkan perintah yang tidak bisa jalan.
 
 **4.5 Paket komersial & dokumen menyimpang dari kenyataan.**
-`SALES_PACKAGE.md` menyebut 22 modul / 34 tabel / 2.282 test (aktual 51 / 72 / 3.471);
+`SALES_PACKAGE.md` menyebut 22 modul / 34 tabel / 2.282 test (aktual 51 / 72 / 3.472);
 `DATA_MODEL.md` menyebut 13 tabel (aktual 72); `README.md` masih menyatakan "Phase 1 berjalan";
 dua docstring menunjuk berkas tes yang tidak ada; satu keputusan bisnis menunjuk nama ADR yang
 salah. Semua diperbaiki dan angkanya kini cocok dengan keluaran perintah.
@@ -135,12 +135,42 @@ Ini bukan daftar "nanti", ini daftar **yang tidak boleh diklaim sudah selesai**:
    database lokal dan satu container PostgreSQL uji. Pemasangan produksi (PostgreSQL +
    anker + monitoring) dijalankan lewat `docs/DEPLOYMENT.md` dan belum dieksekusi.
 
-## 6. Cara memverifikasi ulang (10 menit)
+## 6. Audit lanjutan 2026-10-04 (setelah laporan ini disusun)
+
+Empat lapis pemeriksaan dijalankan ulang pada 2026-10-04. Hasilnya:
+
+| Lapis | Perintah | Hasil |
+|---|---|---|
+| Gerbang penuh | `make check` | **3472 lulus, 4 skip, 0 gagal**; secret-scan 0 temuan (279 berkas); unsafe-scan 0 temuan (279 berkas); twin skema cocok; `PRE-DEPLOY GATE: PASS` |
+| Suite interpreter kedua | `venv/bin/python -m pytest tests/` | keluar **0**, tanpa kegagalan (3.11.16 / SQLite 3.53.1) |
+| Audit struktur (baru) | `make audit-structure` | **0 FAIL, 0 WARN, 14 INFO** — 14 pemeriksaan: jejak modul→tes, perintah dokumentasi yang masih menunjuk berkas nyata (16 target make), docstring modul, penanda TODO, `except` telanjang, `shuffle=True`, halaman⇄template, **filter tenant di setiap baca**, **agregat uang lintas mata uang**, jam dinding di tes, literal angka SQL, aset pihak ketiga, daftar bahasa |
+| Perintah dokumentasi di database baru (22 perintah) | `docs/DEPLOYMENT.md`, `README.md`, `docs/TENANT_SETUP.md` | semua sesuai dokumen; seluruh `rc≠0` adalah penolakan yang dirancang (seed ulang menolak menimpa, preflight menolak DB demo jadi produksi: 5 gagal → 2 setelah anker + cadangan ada) |
+
+Temuan & perbaikan pada 2026-10-04:
+
+1. **Agregat uang lintas mata uang di dashboard (cacat nyata).** Halaman keuangan menjumlahkan
+   `SUM(total_minor) FROM invoices` tanpa memisahkan mata uang — benar hanya selama semua tagihan
+   sejenis Rupiah. Diperbaiki menjadi satu baris per mata uang
+   (`GROUP BY currency`), dengan tes baru `test_finance_summary_states_each_currency_separately`
+   yang gagal bila dua mata uang digabung lagi.
+2. **Alat audit baru** `scripts/audit_structure.py` + target `make audit-structure` (sengaja bukan
+   bagian `make check`: temuannya keputusan manusia, bukan penghalang rilis).
+3. **Dokumentasi:** dua skrip yang tidak pernah disebut (audit struktur, `build_deliverables.py`)
+   kini ada di README; klaim "12 berkas HTML dashboard" dikoreksi menjadi 11
+   (9 halaman + base + error); `demo/README.md` disesuaikan dengan aplikasi demo baru.
+4. **Tidak ditemukan:** bug di jalur uang/tanggal/status/izin, kebocoran rahasia, perintah
+   dokumentasi yang busuk, maupun pembacaan data lintas agensi.
+
+Batas yang tetap terbuka pada audit ini (jujur): suite **PostgreSQL hidup** tidak dijalankan ulang
+(butuh server PostgreSQL; hasil 2026-10-03 tetap yang terakhir: 75 lulus untuk skema, seluruh suite
+keluar 0), dan pemasangan produksi belum dieksekusi.
+
+## 7. Cara memverifikasi ulang (10 menit)
 
 ```bash
 cd ~/villa-agency-os
 python3 scripts/go_live_smoke.py --db /tmp/go-live.db --report /tmp/go-live.json   # 16/16, keluar 0
-make check                                                                          # 3471 lulus + semua scan
+make check                                                                          # 3472 lulus + semua scan
 VILLA_PG_DSN=<postgres-kosong> python3 -m pytest tests/test_schema.py               # skema PG benar-benar berlaku
 VILLA_PG_DSN=<postgres-kosong> python3 -m pytest tests/ -q                          # seluruh suite di PostgreSQL
 

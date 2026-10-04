@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Villa Agency OS — Laporan Status Project (4 Oktober 2026)</title>
+<style>
+:root{
+  --sand:#FBF7F0; --sand-2:#F4EDE1; --ink:#23201C; --muted:#6F6862; --line:#E7DFD2;
+  --teak:#1F4A3C; --teak-2:#2C6A55; --terra:#C4622D; --gold:#C69A45;
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--sand);color:var(--ink);font:15.5px/1.62 var(--sans)}
+.wrap{max-width:980px;margin:0 auto;padding:34px 26px 90px}
+h1,h2,h3,h4{font-family:var(--serif);font-weight:600;line-height:1.22;margin:0}
+h1{font-size:34px}
+h2{font-size:25px;margin:44px 0 6px;padding-top:18px;border-top:2px solid var(--ink)}
+h3{font-size:19px;margin:26px 0 6px}
+h4{font-size:16px;margin:18px 0 4px}
+p{margin:8px 0}
+a{color:var(--teak-2)}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;
+  background:#fff;border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+.lead{font-size:17px;color:#3D3833}
+.sub{color:var(--muted)}
+.meta{font-size:13.5px;color:var(--muted);margin-top:10px}
+.badges{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0 0}
+.badge{font:600 12px var(--sans);letter-spacing:.04em;text-transform:uppercase;padding:6px 11px;
+  border-radius:999px;background:#fff;border:1px solid var(--line);color:var(--muted)}
+.badge.ok{background:#E4EFE8;border-color:#C6DECF;color:#1F4A3C}
+.badge.warn{background:#FBF0D8;border-color:#EBD9A8;color:#7A5E10}
+.badge.todo{background:#FBE6E2;border-color:#EFCDC6;color:#8F3722}
+
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:16px 0;
+  box-shadow:0 1px 2px rgba(35,32,28,.04)}
+.card.tight{padding:14px 16px}
+.grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+.stat{background:#fff;border:1px solid var(--line);border-radius:13px;padding:14px 16px}
+.stat .k{font-size:11.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.stat .v{font-family:var(--serif);font-size:26px;margin:4px 0 2px}
+.stat .w{font-size:12.5px;color:var(--muted)}
+
+.note{border-radius:12px;padding:12px 15px;font-size:14px;margin:14px 0}
+.note.info{background:var(--sand-2);color:#4C453E}
+.note.good{background:#E4EFE8;color:#1F4A3C}
+.note.warn{background:#FBF0D8;color:#6E5510}
+.note.bad{background:#FBE6E2;color:#8F3722}
+.note b{font-family:var(--serif)}
+
+table{width:100%;border-collapse:collapse;font-size:14px;background:#fff;
+  border:1px solid var(--line);border-radius:12px;overflow:hidden;margin:12px 0}
+th{font:600 11.5px var(--sans);text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
+  text-align:left;padding:10px 12px;background:var(--sand-2);border-bottom:1px solid var(--line)}
+td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:0}
+td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px}
+
+.toc{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 22px}
+.toc ol{margin:6px 0 0;padding-left:22px}
+.toc li{margin:5px 0}
+.toc a{text-decoration:none}
+.toc a:hover{text-decoration:underline}
+
+ul,ol{margin:8px 0;padding-left:24px}
+li{margin:5px 0}
+.tick{list-style:none;padding-left:0}
+.tick li{padding-left:26px;position:relative}
+.tick li::before{content:"✔";position:absolute;left:0;color:var(--teak-2);font-weight:700}
+.cross{list-style:none;padding-left:0}
+.cross li{padding-left:26px;position:relative}
+.cross li::before{content:"✖";position:absolute;left:0;color:var(--terra);font-weight:700}
+.hour{list-style:none;padding-left:0}
+.hour li{padding-left:26px;position:relative}
+.hour li::before{content:"◐";position:absolute;left:0;color:var(--gold);font-weight:700}
+
+.analogy{border-left:3px solid var(--terra);background:#fff;border-radius:10px;padding:11px 15px;
+  margin:12px 0;font-size:14px}
+.analogy b{font-family:var(--serif)}
+.sig{margin-top:46px;padding-top:16px;border-top:1px dashed var(--line);font-size:13px;color:var(--muted)}
+@media print{
+  body{background:#fff}
+  .wrap{max-width:none;padding:0}
+  h2{page-break-after:avoid}
+  table,.card,.analogy{page-break-inside:avoid}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Villa Agency OS — Laporan Status Project</h1>
+<p class="lead">Kabar lengkap: apa yang sudah selesai, apa yang masih dikerjakan, apa yang belum
+dikerjakan, hasil pemeriksaan menyeluruh hari ini, dan apa yang berubah pada tampilan web-nya.</p>
+<p class="meta">Tanggal: <b>4 Oktober 2026</b> · Lokasi project: <code>~/villa-agency-os</code> ·
+Semua angka di dokumen ini berasal dari perintah yang bisa dijalankan ulang, bukan dari ingatan.</p>
+
+<div class="badges">
+  <span class="badge ok">3.472 tes lulus</span>
+  <span class="badge ok">0 gagal</span>
+  <span class="badge ok">0 temuan pemindai rahasia</span>
+  <span class="badge warn">1 cacat nyata ditemukan &amp; diperbaiki hari ini</span>
+  <span class="badge todo">belum dipakai tamu &amp; uang nyata</span>
+</div>
+
+<div class="toc">
+<h3 style="margin-top:0">Daftar Isi</h3>
+<ol>
+  <li><a href="#cara">Cara membaca dokumen ini</a></li>
+  <li><a href="#apa">Apa itu Villa Agency OS (dijelaskan dengan analogi)</a></li>
+  <li><a href="#posisi">Di mana posisinya hari ini — papan besar</a></li>
+  <li><a href="#selesai">SUDAH SELESAI (beserta buktinya)</a></li>
+  <li><a href="#proses">MASIH DIKERJAKAN / SETENGAH JALAN</a></li>
+  <li><a href="#belum">BELUM DIKERJAKAN</a></li>
+  <li><a href="#audit">HASIL PEMERIKSAAN MENYELURUH — 4 Oktober 2026</a></li>
+  <li><a href="#desain">PERUBAHAN DESAIN WEB (dan alasan awamnya)</a></li>
+  <li><a href="#batas">Yang TIDAK bisa saya janjikan (kejujuran)</a></li>
+  <li><a href="#kamus">Kamus istilah — bahasa sederhana</a></li>
+  <li><a href="#cek">Cara Anda memeriksa sendiri (10 menit)</a></li>
+</ol>
+</div>
+
+<h2 id="cara">1. Cara membaca dokumen ini</h2>
+<p>Semua pekerjaan di project ini saya bagi ke dalam <b>tiga ember besar</b>. Setiap poin di dalamnya
+ditemani bukti berupa perintah dan angkanya:</p>
+<table>
+  <thead><tr><th>Ember</th><th>Artinya</th><th>Perlakukan</th></tr></thead>
+  <tbody>
+    <tr><td><span class="badge ok">SELESAI</span></td><td>Sudah ada di komputer, sudah diuji, sudah bisa dijalankan.</td><td>Boleh dipamerkan/dijual sebagai fitur.</td></tr>
+    <tr><td><span class="badge warn">SETENGAH</span></td><td>Sebagian sudah ada (mesinnya jalan), sebagian belum (layar/pemakainya belum).</td><td>Jangan diklaim selesai; jangan dijanjikan tanggal tanpa diputuskan dulu.</td></tr>
+    <tr><td><span class="badge todo">BELUM</span></td><td>Belum dibuat sama sekali.</td><td>Ini daftar pekerjaan berikutnya.</td></tr>
+  </tbody>
+</table>
+<div class="note info"><b>Satu aturan penting:</b> kalau di satu bagian ada tulisan “bukti”, artinya
+angka itu benar-benar keluar dari perintah yang tertulis di sebelahnya. Kalau tidak ada buktinya,
+saya tulis apa adanya “belum diukur”.</div>
+
+<h2 id="apa">2. Apa itu Villa Agency OS (dijelaskan dengan analogi)</h2>
+<p>Bayangkan sebuah <b>agensi yang mengelola villa milik orang lain</b>. Setiap hari agensi itu
+menghadapi pertanyaan yang sama:</p>
+<ul>
+  <li>Tamu bertanya: “Ada villa untuk 3 malam tanggal 14–17 Oktober?”</li>
+  <li>Staf harus cepat menjawab tanpa salah menahan tanggal yang sudah dipesan orang lain.</li>
+  <li>Uang masuk harus dicocokkan dengan pesanan — dan tidak boleh ada uang yang tidak jelas asalnya.</li>
+  <li>Pemilik villa mau tahu: berapa malam villaku terisi, dan berapa uangnya.</li>
+</ul>
+<div class="analogy"><b>Analogi sederhananya:</b> sistem ini adalah <b>satu buku besar + satu
+kalender booking + satu kasir + satu buku pesan</b> yang disatukan, dengan satu aturan yang tidak
+bisa dilanggar: <b>setiap tulisan tercatat dan tidak bisa dihapus diam-diam</b>. Kalau ada yang
+mencoba menghapus catatan lama, jejaknya tetap ada — seperti buku kas yang halaman-halamannya
+disambung dengan benang bernomor.</div>
+<p>Tiga hal yang sistem ini jaga mati-matian:</p>
+<ol>
+  <li><b>Tanggal tidak boleh dobel.</b> Satu tanggal hanya boleh dipegang satu pesanan.</li>
+  <li><b>Angka harga keluar dari daftar tarif</b>, bukan dari ingatan staf saat sedang buru-buru.</li>
+  <li><b>Tidak ada klaim ke tamu yang tidak punya bukti</b> — termasuk kalimat promosi yang
+  menjanjikan harga yang tidak pernah disetujui siapa pun.</li>
+</ol>
+
+<h2 id="posisi">3. Di mana posisinya hari ini</h2>
+<div class="grid">
+  <div class="stat"><div class="k">Mesin inti (uang, tanggal, status)</div><div class="v">Lengkap</div><div class="w">Sudah jalan utuh dari pesan tamu sampai booking ditutup.</div></div>
+  <div class="stat"><div class="k">Bukti uji hari ini</div><div class="v">3.472 lulus</div><div class="w">0 gagal · 3.950 pemeriksaan rinci · 4 dilewati karena butuh server khusus.</div></div>
+  <div class="stat"><div class="k">Pemeriksaan struktur menyeluruh</div><div class="v">0 masalah</div><div class="w">14 jenis pemeriksaan: 0 gagal, 0 peringatan.</div></div>
+  <div class="stat"><div class="k">Dipakai tamu &amp; uang nyata?</div><div class="v">Belum</div><div class="w">Menunggu isi setelan pemilik villa + pemasangan di server produksi.</div></div>
+</div>
+<div class="note warn"><b>Kesimpulan satu paragraf:</b> mesinnya sudah selesai dan terbukti kuat.
+Yang belum: (1) <b>isi</b> setelan milik agensi Anda sendiri (nomor WhatsApp, daftar villa, tarif,
+pemegang peran), (2) beberapa <b>pelengkap</b> seperti pengirim pesan otomatis dan dua layar
+tambahan, (3) <b>pemasangan di server produksi</b> yang belum pernah dicoba. Jadi ini bukan
+“sistem setengah jadi yang banyak errornya”, melainkan “mesin rapi yang belum dinyalakan untuk
+tamu sungguhan”.</div>
+
+<h2 id="selesai">4. SUDAH SELESAI (beserta buktinya)</h2>
+
+<h3>4.1 Inti yang menentukan nilai jual</h3>
+<ul class="tick">
+  <li><b>Kasus percakapan tamu</b> — setiap pertanyaan tamu menjadi satu “kartu kasus” bernomor yang
+  bisa dilacak sampai selesai.</li>
+  <li><b>Penawaran (quote) &amp; hitungan harga</b> — total 3 malam dihitung mesin, bukan diketik
+  tangan: <code>quote_b85c63f08fe6f57e</code> = <b>Rp 5.775.000</b>.</li>
+  <li><b>Penahanan tanggal (hold)</b> — penahanan <b>kedua</b> pada jendela tanggal yang sama
+  <b>ditolak platform sendiri</b>: <code>hold_94ced2b7db70a837</code>. Ini inti anti-dobel-booking.</li>
+  <li><b>Booking bernomor</b> — <code>book_0f524d4e9406c3c3</code>, riwayat status
+  <code>HOLD_ACTIVE → CONFIRMED → PRE_ARRIVAL → IN_STAY → COMPLETED</code>.</li>
+  <li><b>Invoice bernomor urut</b> — <code>INV-202610-00001</code> (nomor dari urutan mesin, bukan
+  diketik manual).</li>
+  <li><b>Pembayaran &amp; buku kecil uang</b> — <code>payment_788d6e21cc630246</code>; 4 baris
+  pembukuan diverifikasi seimbang.</li>
+  <li><b>Bagi hasil ke pemilik villa</b> — Rp 4.042.500 (70%) otomatis tercatat sebagai kewajiban
+  agensi ke pemilik, baru berubah “sudah dibayar” kalau ada bukti transfer keluar.</li>
+  <li><b>Deposit jaminan</b> — Rp 2.000.000 ditahan lalu dikembalikan, tercatat lengkap dengan
+  tanggal dan alasan.</li>
+  <li><b>Dokumen wajib</b> — konfirmasi &amp; kuitansi tercatat otomatis sesuai kebijakan.</li>
+</ul>
+<p class="sub">Bukti: <code>python3 scripts/go_live_smoke.py --db /tmp/go-live.db --report /tmp/go-live.json</code>
+→ <b>GO-LIVE SMOKE: PASS — 16/16 langkah, keluar 0</b> (dijalankan ulang hari ini, lihat §7).</p>
+
+<h3>4.2 Gerbang penutupan booking (7 pemeriksaan sebelum booking boleh ditutup)</h3>
+<p>Booking tidak bisa “ditutup” kalau salah satu dari 7 hal ini belum beres: tamu sudah keluar,
+tidak ada keluhan terbuka, uang cocok, tagihan pemilik villa beres, deposit sudah diselesaikan,
+tidak ada insiden terbuka, dan dokumen wajib lengkap. Ketujuhnya lulus di uji jalur tamu.</p>
+<div class="analogy"><b>Analogi:</b> seperti kasir yang tidak mau menutup laci sebelum semua struk,
+uang, dan titipan pelanggan dicocokkan — bukan karena curiga, tapi supaya tidak ada masalah kecil
+yang mengendap jadi masalah besar.</div>
+
+<h3>4.3 Layanan reservasi AI (dengan pagar pengaman)</h3>
+<ul class="tick">
+  <li>11 pekerja otomatis untuk alur reservasi (menunggu jawaban tamu, menutup booking, dsb.).</li>
+  <li>Pintu izin untuk AI: AI hanya boleh dipakai kalau izinnya diterbitkan manusia, dan ada
+  <b>sakelar darurat</b> untuk mematikannya.</li>
+  <li>Bila AI melambat melewati batas waktu, hasilnya <b>ditolak</b> (fail-closed), bukan
+  “dilanjutkan semoga benar”.</li>
+</ul>
+
+<h3>4.4 Keamanan, jejak audit, dan “tidak bisa dihapus diam-diam”</h3>
+<ul class="tick">
+  <li><b>Rantai audit</b> — catatan saling terkait sehingga penghapusan/penyisipan terdeteksi.</li>
+  <li><b>Anker audit</b> — sidik jari rantai yang dikirim ke sistem <i>lain</i> milik pihak berbeda
+  (<code>make anchor-publish</code> / <code>make anchor-verify</code>).</li>
+  <li><b>Peran &amp; izin</b> — 8 peran (reservasi, operasi, keuangan, pemilik, auditor, GM, dst.);
+  auditor hanya boleh melihat.</li>
+  <li><b>Kata sandi &amp; kode sekali pakai (MFA)</b> — login staf memakai TOTP.</li>
+  <li><b>Tidak pernah menyimpan nomor kartu</b> — pembayaran lewat halaman resmi penyedia; ada
+  pemindai yang <i>menggagalkan</i> gerbang kalau ada kolom data kartu muncul di sistem.</li>
+  <li><b>Ledger tidak boleh diacak</b> — ada pemeriksa otomatis: <code>shuffle=True</code> di mana
+  pun akan menggagalkan gerbang (data seri waktu tidak boleh diacak).</li>
+</ul>
+
+<h3>4.5 Kesiapan operasional (yang dibutuhkan kalau besok dipakai)</h3>
+<ul class="tick">
+  <li><b>Preflight</b> — gerbang terakhir sebelum go-live: memeriksa repo, data, dan kesiapan
+  tenant; menolak jalan kalau belum siap (dan menyebut apa yang kurang).</li>
+  <li><b>Observability</b> — kesehatan sistem berjenjang (OK / WARNING / CRITICAL) + metrik siap
+  dipantau.</li>
+  <li><b>Scheduler (denyut nadi)</b> — menagih semua tenggat (hold kedaluwarsa, SLA, approval,
+  penagihan) dan <b>idempoten</b>: dijalankan dua kali tidak menggandakan apa pun.</li>
+  <li><b>Dashboard internal</b> — 10 halaman untuk staf, read-only, tiap halaman butuh token.</li>
+  <li><b>CLI operator</b> — impor villa massal, atur peran, terbitkan kebijakan, periksa migrasi,
+  terbitkan anker.</li>
+</ul>
+
+<h3>4.6 Onboarding agensi baru (white-label)</h3>
+<p>Sudah terbukti bisa: impor daftar villa, isi peran, terbitkan kebijakan — semuanya keluar
+<code>rc=0</code> di database baru (<code>/tmp/tenant-verify</code>). Artinya <b>mekanismenya jalan</b>;
+yang belum adalah <b>isi datanya</b> untuk agensi Anda (itu keputusan pemilik agensi, bukan bug).</p>
+
+<h3>4.7 Skema database ganda &amp; paket komersial</h3>
+<ul class="tick">
+  <li>72 tabel, tersedia dalam dua versi (SQLite untuk ringan, PostgreSQL untuk produksi) dan
+  <b>dijaga tetap kembar</b> — kalau berbeda, gerbang gagal.</li>
+  <li>59 dokumen keputusan arsitektur (ADR), <b>semuanya sudah diputuskan</b> (0 yang menggantung).</li>
+  <li>Laporan akhir &amp; paket bukti komersial: <code>reports/final-report.md</code> (setiap angka
+  ditemani perintahnya).</li>
+</ul>
+
+<h3>4.8 Tampilan demo untuk rapat — <span class="badge ok">diperbaiki hari ini</span></h3>
+<p>Aplikasi demo presentasi (<code>demo/customer-demo-app.html</code>) ditulis ulang total dengan
+bahasa desain villa/hospitality: 7 layar, 3 sudut pandang (tamu / staf / pemilik), kalender
+ketersediaan tanggal, dan tiga ilustrasi villa yang digambar di dalam berkas itu sendiri
+(sehingga demo tetap jalan tanpa internet). Penjelasan lengkap di §8.</p>
+
+<h2 id="proses">5. MASIH DIKERJAKAN / SETENGAH JALAN</h2>
+<p>Ini daftar “sudah ada mesinnya, pemakainya belum lengkap”. Jangan diklaim selesai.</p>
+<table>
+  <thead><tr><th>Hal</th><th>Yang sudah ada</th><th>Yang belum ada</th><th>Efek kalau dibiarkan</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Pengiriman pesan otomatis (email/WhatsApp/webhook)</td>
+      <td>Antrean pesan ditulis satu transaksi bersama status bisnisnya (tidak ada “status berubah tapi pesan hilang”)</td>
+      <td>Pekerja latar (layanan yang berjalan terus) yang benar-benar mengirim</td>
+      <td>Pesan tersimpan rapi tapi belum keluar sendiri; staf masih mengirim manual</td>
+    </tr>
+    <tr>
+      <td>Dua layar dashboard tambahan (kanal &amp; simulasi AI)</td>
+      <td>Modulnya sudah ada dan sudah diuji</td>
+      <td>Halamannya di dashboard</td>
+      <td>Fitur tidak bisa dilihat/dipakai staf dari layar</td>
+    </tr>
+    <tr>
+      <td>Anker rantai audit di lingkungan nyata</td>
+      <td>Perintah terbitkan &amp; verifikasi siap (<code>make anchor-publish</code>)</td>
+      <td>Belum ada yang diterbitkan di server mana pun</td>
+      <td>Penghapusan catatan paling akhir belum bisa dibuktikan</td>
+    </tr>
+    <tr>
+      <td>Pelapisan bahasa (istilah teknis → bahasa Indonesia manusia)</td>
+      <td>Sudah dijaga “pagar penurun”: teks lama boleh berkurang, tidak boleh bertambah</td>
+      <td>Masih 116 teks lama di 11 berkas mesin</td>
+      <td>Tidak berbahaya; hanya soal kerapian untuk pengguna akhir</td>
+    </tr>
+    <tr>
+      <td>Penyunting/pengimpor villa per agensi</td>
+      <td>CLI sudah ada &amp; terbukti</td>
+      <td>Layar untuk mengedit villa/peran tanpa baris perintah</td>
+      <td>Staf non-teknis belum bisa mengurus sendiri</td>
+    </tr>
+    <tr>
+      <td>Bukti di lingkungan produksi nyata</td>
+      <td>Semua bukti dari database lokal + satu server PostgreSQL uji</td>
+      <td>Pemasangan produksi (PostgreSQL + anker + pemantauan) belum dijalankan</td>
+      <td>Risiko pemasangan belum terbukti — ini yang paling perlu dikejar berikutnya</td>
+    </tr>
+    <tr>
+      <td>Isi setelan agensi Anda</td>
+      <td>Mekanisme siap: 10 kunci setelan (5 wajib sebelum go-live)</td>
+      <td>Nilainya harus diputuskan &amp; diisi (provider pembayaran, nomor WhatsApp, daftar villa, tarif pajak, rate card, pemegang peran)</td>
+      <td>Platform sengaja menolak jalan sampai terisi — perilaku benar</td>
+    </tr>
+    <tr>
+      <td>2 keputusan bisnis (non-penghalang)</td>
+      <td>15 dari 17 keputusan sudah diputuskan; semua yang <b>menghalangi</b> sudah beres</td>
+      <td>D15 (bukti tipe A) &amp; D16 (jumlah unit &amp; tarif yang dipublikasikan)</td>
+      <td>Tidak menghalangi go-live, tapi perlu dijawab sebelum skala besar</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="belum">6. BELUM DIKERJAKAN</h2>
+<ul class="cross">
+  <li><b>Rel pembayaran lain</b> — kartu, transfer bank manual, PayPal, dan stablecoin sudah
+  diputuskan desainnya (ADR-0012/0013) tapi belum dibangun. Hari ini jalur yang hidup: halaman
+  pembayaran penyedia + transfer bank dengan pencocokan bukti.</li>
+  <li><b>Modul pencegahan kebocoran data (DLP)</b> — saat ini baru ada pemindai setelan berbahaya.</li>
+  <li><b>5 dari 6 petugas AI</b> (Control Tower, Commercial, Operations, Finance Admin,
+  Revenue/BI) — baru 1 yang dibangun &amp; dipagari izin (<i>Reservation Service</i>).</li>
+  <li><b>Kategori pengujian yang belum ada</b>: uji beban bersamaan (banyak tamu sekaligus),
+  uji keamanan (penetrasi), uji ketahanan (server mati saat transaksi), uji serah terima ke
+  manusia, dan uji “apakah AI benar-benar tidak mengarang”.</li>
+  <li><b>Pemasangan produksi</b> — panduan sudah ada (<code>docs/DEPLOYMENT.md</code>), eksekusinya belum.</li>
+</ul>
+<div class="note info"><b>Catatan cara berpikir:</b> daftar “BELUM” di atas bukan barang yang
+terlewat. Ini sengaja ditahan sampai mesin intinya terbukti. Menambah fitur di atas mesin yang belum
+terbukti justru memperbesar risiko.</div>
+
+<h2 id="audit">7. HASIL PEMERIKSAAN MENYELURUH — 4 Oktober 2026</h2>
+<p>Hari ini saya melakukan empat lapis pemeriksaan, bukan satu. Tujuannya: menemukan hal yang tidak
+terlihat dari “test lulus saja”.</p>
+
+<h3>7.1 Lapis 1 — gerbang penuh bawaan project</h3>
+<table>
+  <thead><tr><th>Gerbang</th><th>Hasil hari ini</th><th>Artinya bagi orang awam</th></tr></thead>
+  <tbody>
+    <tr><td>Mesin pembaca kode (interpreter) &amp; sintaks</td><td>Python 3.12.3 / SQLite 3.45.1 — OK</td><td>Kode bisa dibaca komputer tanpa kesalahan penulisan dasar.</td></tr>
+    <tr><td>Pemeriksa kebersihan kode (lint)</td><td>0 temuan</td><td>Tidak ada sisa-sisa kode menganggur yang bikin bingung.</td></tr>
+    <tr><td>Suite tes</td><td><b>3.472 lulus · 4 dilewati · 0 gagal</b> (3.950 pemeriksaan rinci)</td><td>Semua janji sistem yang diuji, terbukti.</td></tr>
+    <tr><td>Pemindai rahasia</td><td><b>0 temuan</b> dari 279 berkas</td><td>Tidak ada kunci/kata sandi yang salah tersimpan di file.</td></tr>
+    <tr><td>Pemindai setelan berbahaya</td><td><b>0 temuan</b> dari 279 berkas</td><td>Tidak ada “sakelar uang nyata” yang kebetulan menyala, tidak ada penyimpanan data kartu, tidak ada data seri waktu yang diacak.</td></tr>
+    <tr><td>Kembar skema SQLite ⇄ PostgreSQL</td><td>Cocok</td><td>Versi ringan dan versi produksi punya bentuk tabel yang sama — tidak akan meledak saat dipindah.</td></tr>
+    <tr><td>Kesimpulan</td><td class="mono">PRE-DEPLOY GATE: PASS</td><td>Boleh dilanjutkan ke tahap berikutnya.</td></tr>
+  </tbody>
+</table>
+
+<h3>7.2 Lapis 2 — suite yang sama di komputer/penerjemah kedua</h3>
+<p>Kode dijalankan dengan dua versi Python &amp; dua versi mesin database berbeda, karena di server
+produksi versinya bisa lain:</p>
+<table>
+  <thead><tr><th>Interpreter</th><th>Mesin database</th><th>Hasil</th></tr></thead>
+  <tbody>
+    <tr><td>/usr/bin/python3 3.12.3</td><td>SQLite 3.45.1</td><td>3.472 lulus · 4 dilewati · 0 gagal</td></tr>
+    <tr><td>python venv 3.11.16</td><td>SQLite 3.53.1</td><td>3.472 lulus · 4 dilewati · 0 gagal</td></tr>
+  </tbody>
+</table>
+<div class="note good">Hasil kedua interpreter <b>identik</b>. Artinya sistem tidak “berhasil hanya
+di komputer saya”.</div>
+
+<h3>7.3 Lapis 3 — alat audit struktur baru (yang tidak dilihat gerbang biasa)</h3>
+<p>Gerbang biasa membuktikan “sistem bisa dijalankan”. Ia tidak membuktikan “sistem rapi dan tidak
+mengklaim hal yang tidak benar”. Jadi saya menulis alat pemeriksa baru:
+<code>scripts/audit_structure.py</code> (perintah: <code>make audit-structure</code>). 14 pemeriksaan,
+semuanya jujur dan bisa diulang:</p>
+<table>
+  <thead><tr><th>Pemeriksaan</th><th>Hasil hari ini</th></tr></thead>
+  <tbody>
+    <tr><td>Setiap modul mesin bisa dilacak ke tes yang mengimpornya</td><td>Lulus — 51 modul, 88 berkas tes</td></tr>
+    <tr><td>Setiap perintah di dokumen menunjuk berkas/target yang benar-benar ada</td><td>Lulus — 16 target make; 0 perintah busuk</td></tr>
+    <tr><td>Setiap modul punya penjelasan singkat di kepala berkas</td><td>Lulus — 51/51</td></tr>
+    <tr><td>Tidak ada catatan “TODO/FIXME/XXX” yang menggantung di mesin</td><td>Lulus — 0</td></tr>
+    <tr><td>Tidak ada penangkap error yang menelan kesalahan tanpa jejak</td><td>Lulus — 0</td></tr>
+    <tr><td>Tidak ada pengacakan data seri waktu (<code>shuffle=True</code>)</td><td>Lulus — 0 di seluruh project</td></tr>
+    <tr><td>Setiap halaman dashboard punya berkas tampilan</td><td>Lulus — 10 halaman, 11 berkas</td></tr>
+    <tr><td>Setiap pembacaan tabel milik satu agensi <b>disaring</b> ke agensi itu</td><td>Lulus — semua baca menyertakan penyaring tenant (48 tabel ber-tenant)</td></tr>
+    <tr><td>Agregat uang tidak mencampur mata uang</td><td>Lulus (setelah perbaikan hari ini, lihat §7.5)</td></tr>
+    <tr><td>Tidak ada tes yang memakai jam dinding (bisa gagal sendiri saat tengah malam)</td><td>Lulus — 0</td></tr>
+    <tr><td>Tidak ada angka bergaris bawah di SQL (hanya jalan di SQLite baru)</td><td>Lulus — 0</td></tr>
+    <tr><td>Tampilan tidak memanggil gambar/skrip dari internet</td><td>Lulus — 0 tautan luar (demo tetap jalan tanpa internet)</td></tr>
+    <tr><td>Setiap skrip disebut di dokumentasi</td><td>Lulus (setelah perbaikan hari ini)</td></tr>
+    <tr><td>Pelapisan bahasa tercatat &amp; hanya boleh menyusut</td><td>116 teks Indonesia di 11 berkas mesin (dijaga pagar)</td></tr>
+  </tbody>
+</table>
+<p><b>Ringkasan alat ini: 0 gagal, 0 peringatan, 14 informasi.</b></p>
+
+<h3>7.4 Lapis 4 — menjalankan 22 perintah dokumentasi di database yang dibuat dari nol</h3>
+<p>Ini bagian yang paling sering menemukan masalah nyata di project mana pun: dokumen mengajarkan
+perintah, tetapi kenyataannya sudah berubah. Saya menjalankan semuanya di database baru
+(<code>/tmp/villa-audit-20261004_1834/</code>):</p>
+<table>
+  <thead><tr><th>Perintah</th><th>Hasil</th><th>Penjelasan jujur</th></tr></thead>
+  <tbody>
+    <tr><td>Siapkan database contoh</td><td><code>rc=0</code></td><td>Berhasil: <b>72 tabel, 142 baris</b> terisi.</td></tr>
+    <tr><td>Siapkan ulang database contoh</td><td><code>rc=1</code></td><td><b>Benar</b> — menolak menimpa: “database sudah berisi data demo”. Ini pengaman, bukan error.</td></tr>
+    <tr><td>Snapshot halaman dashboard</td><td><code>rc=0</code></td><td>11 halaman ditulis ke berkas.</td></tr>
+    <tr><td>Scheduler: lihat rencana</td><td><code>rc=0</code></td><td>Hanya menampilkan rencana, tidak menulis.</td></tr>
+    <tr><td>Scheduler: jalankan, lalu jalankan lagi</td><td><code>rc=0</code> dua kali</td><td>Jalan kedua tidak mengubah apa pun → benar-benar idempoten.</td></tr>
+    <tr><td>Kesehatan sistem</td><td><code>rc=1</code></td><td><b>Benar</b> — ada 4 peringatan (SLA, hold kedaluwarsa, pembayaran belum cocok) di data contoh; kode keluar 1 memang artinya “ada yang perlu dilihat”, bukan perintahnya rusak.</td></tr>
+    <tr><td>Gerbang terakhir sebelum go-live</td><td><code>rc=1</code> — NO-GO</td><td><b>Benar dan penting:</b> menolak database contoh dipakai jadi produksi, dengan 5 alasan yang bisa dibaca (belum ada anker, data demo, kesiapan tenant belum diisi, belum ada cadangan). Setelah anker diterbitkan + cadangan dibuat, kegagalannya <b>turun jadi 2</b> — sisanya memang keputusan pemilik.</td></tr>
+    <tr><td>Terbitkan &amp; periksa anker audit</td><td><code>rc=0</code> keduanya</td><td>Diterbitkan lalu diverifikasi cocok.</td></tr>
+    <tr><td>Status izin AI, status kebijakan, periksa migrasi</td><td><code>rc=0</code> semuanya</td><td>Sesuai dokumentasi.</td></tr>
+    <tr><td>Uji jalur tamu utuh 16 langkah</td><td><code>rc=0</code></td><td><b>GO-LIVE SMOKE: PASS — 16/16</b>.</td></tr>
+    <tr><td>Impor villa (bantuan), KPI reservasi, dokumen serah terima</td><td><code>rc=0</code></td><td>Sesuai dokumentasi.</td></tr>
+    <tr><td>Kanal email dengan folder yang <b>tidak</b> ada</td><td><code>rc=2</code></td><td><b>Benar</b> — menolak path masuk yang tidak ada; dokumen sudah meminta <code>mkdir -p inbox</code> lebih dulu.</td></tr>
+    <tr><td>Tiga perintah yang saya jalankan dengan argumen saya sendiri (salah tebak)</td><td><code>rc=2</code></td><td>Bukan cacat sistem: perintah itu punya daftar argumen sendiri, dan menolak argumen yang tidak dikenal — perilaku yang benar. Setelah saya pakai argumen yang benar (dari Makefile/dokumen), hasilnya <code>rc=0</code>.</td></tr>
+  </tbody>
+</table>
+<div class="note good"><b>Kesimpulan lapis 4:</b> tidak ada satu pun perintah dokumentasi yang “busuk”.
+Semua kegagalan yang muncul adalah <b>penolakan yang memang dirancang</b> — dan itu justru bukti
+sistem berhati-hati: ia menolak daripada menebak.</div>
+
+<h3>7.5 Yang ditemukan dan diperbaiki hari ini</h3>
+<table>
+  <thead><tr><th>#</th><th>Temuan</th><th>Risiko kalau dibiarkan</th><th>Perbaikan</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>1</td>
+      <td><b>Cacat nyata — cacat asli.</b> Halaman keuangan dashboard menjumlahkan semua tagihan
+      menjadi satu angka <b>tanpa memisahkan mata uang</b>. Kalau nanti ada villa yang menagih dalam
+      dolar (sangat mungkin di Bali), angka itu menjadi campuran rupiah + dolar yang tidak berarti
+      apa pun.</td>
+      <td>Angka keuangan salah dibaca → keputusan bisnis salah. Sudah ada filternya per agensi,
+      tetapi tidak per mata uang.</td>
+      <td>Sekarang <b>satu baris per mata uang</b> (mis. “Tagihan belum lunas IDR” dan “... USD”
+      terpisah, tidak pernah digabung) — plus tes baru yang akan gagal kalau ada yang menggabungkan
+      lagi.</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td>Dokumentasi tidak pernah menyebut dua skrip penting (alat audit baru dan pembangkit
+      dokumen serah terima).</td>
+      <td>Orang berikutnya tidak tahu dua alat itu ada.</td>
+      <td>Ditambahkan ke README + target baru <code>make audit-structure</code>, dengan penjelasan
+      kenapa ia bukan bagian gerbang otomatis.</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td>Dokumen menyebut “12 berkas HTML dashboard”, kenyataannya <b>11</b>.</td>
+      <td>Angka dokumen yang tidak cocok membuat semua angka lain dicurigai.</td>
+      <td>Diperbaiki jadi “11 berkas (9 halaman + base + error)”.</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td>Dokumentasi demo masih menggambarkan layar desain lama.</td>
+      <td>Presentasi jadi kacau: orang mencari menu yang sudah tidak ada.</td>
+      <td>Disesuaikan dengan 7 layar baru + ditambah bagian “kenapa desainnya seperti ini”.</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td>Alat audit baru saya sendiri awalnya memberi 1 “gagal” palsu (menuduh skrip pemindai
+      sendiri sebagai pelanggar) dan 4 peringatan palsu.</td>
+      <td>Alat audit yang menuduh palsu lebih buruk daripada tidak ada alat.</td>
+      <td>Diperbaiki 5 kali sampai bersih: pemeriksaan penanda hanya membaca komentar (bukan
+      dokumen), pengacakan dibaca dari struktur kode, daftar halaman dibaca dari daftar halaman
+      milik sistem sendiri, agregat uang yang terikat satu transaksi tidak lagi dilaporkan.</td>
+    </tr>
+  </tbody>
+</table>
+<div class="note bad"><b>Yang TIDAK ditemukan (ini kabar bagusnya):</b> tidak ada satu pun bug di
+jalur uang, tanggal, status, atau izin; tidak ada kebocoran rahasia; tidak ada perintah dokumentasi
+yang busuk; tidak ada pembacaan data lintas agensi.</div>
+
+<h2 id="desain">8. PERUBAHAN DESAIN WEB (dan alasan awamnya)</h2>
+<h3>8.1 Keluhan Anda dan apa jawabannya</h3>
+<p>Anda bilang desain yang saya pilih kurang bagus, kurang terasa “agensi villa”, kurang menarik, dan
+Anda sendiri bingung sedang melihat apa. Itu keluhan yang tepat, dan penyebabnya jelas:
+<b>versi lama memakai bahasa desain dashboard perusahaan perangkat lunak</b> — latar biru gelap,
+kartu berisi angka, grafik statistik. Bagi programmer itu wajar; bagi pemilik villa dan tamu, itu
+tidak terasa seperti bisnis villa sama sekali.</p>
+<div class="analogy"><b>Analogi:</b> seperti menjual kamar villa dengan brosur berbentuk
+laporan pajak. Isinya benar, tetapi orangnya tidak jadi tertarik.</div>
+
+<h3>8.2 Yang saya ubah</h3>
+<table>
+  <thead><tr><th>Aspek</th><th>Sebelum</th><th>Sesudah</th></tr></thead>
+  <tbody>
+    <tr><td>Rasa/identitas</td><td>Dashboard SaaS biru gelap, angka &amp; grafik</td><td>Krem pasir, hijau teak, terakota, emas — hangat seperti brosur villa</td></tr>
+    <tr><td>Huruf</td><td>Semua huruf sistem yang kaku</td><td>Judul bershuruf serif (hangat &amp; berkelas), isi tetap mudah dibaca</td></tr>
+    <tr><td>Isi layar</td><td>“Command Center”, “KPI”, istilah teknis</td><td>Bahasa villa: kamar, kapasitas tamu, kolam, jarak ke pantai, tarif/malam, deposit, jam check-in</td></tr>
+    <tr><td>Halaman paling berguna</td><td>Tidak ada kalender tanggal</td><td><b>Kalender ketersediaan</b>: warna untuk kosong / ditahan / terisi / perawatan; klik satu tanggal → tahu villa mana yang masih kosong</td></tr>
+    <tr><td>Sudut pandang</td><td>Satu tampilan untuk semua orang</td><td>Pilih <b>Tamu</b> / <b>Staf agensi</b> / <b>Pemilik villa</b> — menu menyesuaikan</td></tr>
+    <tr><td>Gambar</td><td>Kotak warna tanpa makna</td><td>Tiga ilustrasi villa (villa kolam Canggu, villa sawah Ubud, joglo Yogyakarta) digambar di dalam berkas sendiri — tanpa internet, tanpa urusan lisensi</td></tr>
+    <tr><td>Kebingungan saat presentasi</td><td>Tidak ada keterangan layar</td><td>Setiap layar diberi satu baris “<b>layar ini untuk siapa</b> dan gunanya apa”</td></tr>
+    <tr><td>Halaman pemilik villa</td><td>Hanya daftar angka</td><td>Okupansi per villa (malam &amp; persen), uang masuk, uang untuk pemilik, tamu berikutnya — plus daftar jujur “yang belum ada”</td></tr>
+    <tr><td>Saat meeting</td><td>Tidak ada panduan</td><td>Tombol <b>“Jalankan demo 90 detik”</b> berisi urutan bercerita 5 langkah, dan tombol <b>Cetak/PDF</b> untuk lampiran proposal</td></tr>
+  </tbody>
+</table>
+
+<h3>8.3 Cara membukanya (30 detik)</h3>
+<ol>
+  <li>Buka berkas <code>demo/customer-demo-app.html</code> dengan klik dua kali (browser apa pun).</li>
+  <li>Kanan atas: pilih <b>Tamu</b> untuk tampilan penjualan, lalu <b>Staf agensi</b> untuk tampilan kerja.</li>
+  <li>Kiri: klik <b>Ketersediaan &amp; harga</b>, lalu klik tanggal <b>15</b> — muncul jawaban
+  “1 dari 3 villa masih kosong”.</li>
+  <li>Klik <b>Jalankan demo 90 detik</b> untuk urutan bercerita saat meeting.</li>
+</ol>
+<div class="note info">Demo ini <b>tidak</b> terhubung ke sistem sungguhan dan tidak menghubungi
+internet. Angka besarannya (Rp 5.775.000 untuk 3 malam, INV-202610-00001, dsb.) sengaja diambil dari
+uji jalur tamu 16 langkah yang benar-benar dijalankan, supaya presentasi tidak memakai angka karangan.</div>
+
+<h2 id="batas">9. Yang TIDAK bisa saya janjikan (kejujuran)</h2>
+<p>Anda meminta sistem “tanpa kesalahan, tanpa kekurangan, tanpa error, tanpa bug”. Saya harus jujur
+soal apa yang bisa dan tidak bisa dijanjikan, karena ini menentukan keputusan Anda nanti:</p>
+<table>
+  <thead><tr><th>Permintaan</th><th>Status jujur</th></tr></thead>
+  <tbody>
+    <tr><td>Tanpa error / tanpa bug</td><td><b>Tidak bisa dijanjikan oleh siapa pun</b>, termasuk
+    untuk perangkat lunak yang sudah dipakai Google atau bank. Yang <b>bisa</b> dijanjikan dan sudah
+    dibuktikan: 3.472 tes lulus dengan 0 gagal, 0 temuan pemindai, 0 masalah struktur, dan setiap
+    cacat yang ditemukan langsung diperbaiki + dikunci dengan tes baru supaya tidak kembali.</td></tr>
+    <tr><td>Sangat terstruktur &amp; rapi</td><td><b>Sudah</b> — dan kini ada alat yang
+    membuktikannya setiap saat (<code>make audit-structure</code>), bukan sekadar janji.</td></tr>
+    <tr><td>Tanpa kekurangan</td><td><b>Belum</b> — dan saya sebutkan satu per satu di §5 dan §6.
+    Yang penting: <b>tidak ada satu pun kekurangan yang tersembunyi</b>; semuanya tertulis beserta
+    akibatnya.</td></tr>
+    <tr><td>Siap dipakai tamu &amp; uang nyata</td><td><b>Belum</b> — dua syarat: isi setelan
+    agensi Anda, dan jalankan pemasangan produksi (panduannya sudah ada, eksekusinya belum).</td></tr>
+  </tbody>
+</table>
+<div class="note warn"><b>Rekomendasi saya (urutan kerja berikutnya):</b> (1) pasang di server
+produksi memakai panduan yang sudah ada, dengan database kosong; (2) isi setelan agensi Anda berisi
+data villa asli; (3) terbitkan anker audit harian; (4) baru tambah fitur (pengirim pesan otomatis,
+dua layar dashboard, lalu petugas AI berikutnya). Urutan ini sengaja: menambah fitur sebelum
+pemasangan terbukti hanya menambah risiko tanpa menambah penghasilan.</div>
+
+<h2 id="kamus">10. Kamus istilah — bahasa sederhana</h2>
+<table>
+  <thead><tr><th>Istilah</th><th>Arti sederhana</th></tr></thead>
+  <tbody>
+    <tr><td>Tenant / agensi</td><td>Perusahaan penyewa sistem ini. Satu sistem bisa melayani banyak agensi, dan data tiap agensi terpisah.</td></tr>
+    <tr><td>Hold (penahanan tanggal)</td><td>Menahan tanggal sementara untuk satu tamu, sebelum jadi pesanan pasti. Berbatas waktu supaya tidak mengunci tanggal selamanya.</td></tr>
+    <tr><td>Rate card</td><td>Daftar tarif resmi per villa per malam.</td></tr>
+    <tr><td>Invoice / kuitansi</td><td>Tagihan resmi bernomor urut dari sistem.</td></tr>
+    <tr><td>Deposit jaminan</td><td>Uang titipan tamu yang dikembalikan setelah villa diperiksa.</td></tr>
+    <tr><td>Settlement pemilik villa</td><td>Bagian uang yang menjadi hak pemilik villa (di sistem contoh: 70%).</td></tr>
+    <tr><td>Rantai audit (audit chain)</td><td>Catatan yang saling terkait sehingga penghapusan atau penyisipan data bisa dideteksi.</td></tr>
+    <tr><td>Anker audit</td><td>Sidik jari rantai audit yang dikirim ke sistem lain milik pihak berbeda, supaya hilangnya catatan paling akhir pun terbukti.</td></tr>
+    <tr><td>Gerbang (gate)</td><td>Pemeriksaan otomatis yang harus lulus sebelum sesuatu boleh dilanjutkan. Kalau gagal, sistem berhenti — bukan menerka.</td></tr>
+    <tr><td>Preflight</td><td>Pemeriksaan terakhir sebelum sistem dipakai tamu/uang nyata.</td></tr>
+    <tr><td>Idempoten</td><td>Aman dijalankan berkali-kali: hasilnya sama, tidak menggandakan apa pun.</td></tr>
+    <tr><td>Migrasi</td><td>Perubahan bentuk database dari versi lama ke versi baru.</td></tr>
+    <tr><td>Ratchet (pagar bahasa)</td><td>Pagar yang hanya boleh menurun: teks teknis lama boleh berkurang, tidak boleh bertambah.</td></tr>
+    <tr><td>Fail-closed</td><td>Kalau ragu atau gagal, sistem memilih <b>menolak</b> — bukan memilih “jalan terus”.</td></tr>
+  </tbody>
+</table>
+
+<h2 id="cek">11. Cara Anda memeriksa sendiri (10 menit)</h2>
+<div class="card">
+<p class="sub">Semua perintah di bawah aman: tidak menyentuh data asli, semua berkasnya sementara.</p>
+<p class="mono" style="white-space:pre-wrap">cd ~/villa-agency-os
+
+# 1. Gerbang lengkap (harus berakhir: PRE-DEPLOY GATE: PASS)
+make check
+
+# 2. Pemeriksaan struktur menyeluruh (harus berakhir: 0 FAIL, 0 WARN)
+make audit-structure
+
+# 3. Uji jalur tamu utuh di database kosong (harus: 16/16 langkah, keluar 0)
+python3 scripts/go_live_smoke.py --db /tmp/go-live.db --report /tmp/go-live.json
+
+# 4. Lihat sendiri demo presentasi
+xdg-open demo/customer-demo-app.html</p>
+</div>
+<div class="note info">Kalau ada satu saja dari empat perintah itu tidak sesuai tulisan di atas,
+laporan ini tidak berlaku lagi dan saya perlu diberi tahu. Buktinya adalah perintahnya, bukan
+dokumen ini.</div>
+
+<div class="sig">
+<b>Ringkasan satu kalimat:</b> mesin inti Villa Agency OS sudah selesai dan terbukti lulus 3.472
+tes tanpa kegagalan dengan pemeriksaan struktur yang bersih; satu cacat keuangan nyata ditemukan dan
+diperbaiki hari ini; tampilan demo untuk rapat dirombak agar benar-benar terasa seperti bisnis villa;
+dan yang tersisa bukan bug, melainkan isi setelan agensi Anda serta pemasangan di server produksi.<br><br>
+Dibuat: 4 Oktober 2026 · Berkas: <code>LAPORAN-VILLA-AGENCY-OS-2026-10-04.html</code> ·
+Project: <code>~/villa-agency-os</code> (commit terakhir: <code>327d64a</code> + perubahan hari ini)
+</div>
+
+</div>
+</body>
+</html>

@@ -1531,6 +1531,16 @@ class Dashboard:
             )
         ]
         kpis = self.kpi_values()
+        # Satu baris per mata uang. Menjumlahkan lintas mata uang menghasilkan satu angka yang
+        # tidak berarti apa pun (rupiah + dolar), dan tidak ada cara membaca ulang angka itu.
+        outstanding = [
+            (f"Outstanding invoices {row['currency']} (minor)", int(row["total"] or 0))
+            for row in self._rows(
+                "SELECT currency, COALESCE(SUM(total_minor), 0) AS total FROM invoices"
+                " WHERE agency_id = ? AND status = 'ISSUED' GROUP BY currency ORDER BY currency",
+                (self.agency_id,),
+            )
+        ]
         return {
             "finance_summary": definition_list(
                 [
@@ -1540,11 +1550,7 @@ class Dashboard:
                         "SELECT COUNT(*) FROM reconciliation_cases"
                         " WHERE agency_id = ? AND status = 'OPEN'",
                         (self.agency_id,))),
-                    ("Total tagihan (minor)", self._count(
-                        "SELECT COALESCE(SUM(total_minor), 0) FROM invoices"
-                        " WHERE agency_id = ? AND status = 'ISSUED'",
-                        (self.agency_id,))),
-                ]
+                ] + outstanding
             ),
             "invoice_table": table(
                 [

@@ -37,7 +37,7 @@ Yang membedakan dari "chatbot villa" atau spreadsheet:
 | Modul sistem | 51 modul Python (`src/`), tanpa dependency eksternal | hanya pustaka standar Python |
 | Skema database | 72 tabel + twin PostgreSQL kanonik (`001_initial.pg.sql`) + 14 migrasi | parity dijaga otomatis (`make schema-parity`); diterapkan ke PostgreSQL kosong di test (`VILLA_PG_DSN`) |
 | Dashboard internal | 11 halaman + 11 template HTML, stdlib `http.server` | tes XSS, RBAC per peran, dan lingkup per-tenant |
-| Antrean operasional | case, intake, matching, approval, pesan, invoice, pembayaran, dokumen, tugas, insiden, kanal, reservation service | 3.471 test + 3.950 subtests, 0 gagal (`make check`) |
+| Antrean operasional | case, intake, matching, approval, pesan, invoice, pembayaran, dokumen, tugas, insiden, kanal, reservation service | 3.472 test + 3.950 subtests, 0 gagal (`make check`) |
 | Bukti jalur tamu end-to-end | `scripts/go_live_smoke.py` — 16 langkah di database kosong: webhook bertanda tangan → kasus → quote → hold → booking → invoice → pembayaran → dokumen → menginap → settlement → gate §30 → `CLOSED` | dikunci `tests/test_go_live_smoke.py`; kedua penolakan wajib (webhook palsu, hold kedua) diuji di dalamnya |
 | Heartbeat 24/7 | `scheduler.py`: menagih hold, SLA, approval, tenggat notifikasi, penagihan | 40 test idempotensi |
 | Gerbang go-live | `scripts/preflight.py` + daftar keputusan bisnis | menolak jalan bila keputusan BLOCKING belum diambil |
