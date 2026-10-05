@@ -130,6 +130,12 @@ python3 src/marketing_site.py --db data/villa.db --port 8090
 python3 src/marketing_site.py --db data/villa.db --dump /tmp/marketing-site
 ```
 
+Mode `--dump` menulis 8 halaman statis (termasuk `inquiry.html`) dengan
+seluruh link ditulis relatif, sehingga hasilnya bisa dibuka langsung dari
+`file://` (navigasi antarhalaman tetap hidup). Form pada dump statis
+tetap membawa `form_token` per-render namun hanya valid dijalankan di
+server live — fail-closed.
+
 Halaman: `/`, `/villas`, `/villas/{property_id}`, `/destinations/bali`,
 `/destinations/yogyakarta`, `/inquiry`. Batasan yang mengikat modul ini:
 
