@@ -125,10 +125,12 @@ Ini bukan daftar "nanti", ini daftar **yang tidak boleh diklaim sudah selesai**:
    berkala (`make anchor-publish`) supaya penghapusan baris terakhir pun terdeteksi.
 3. **Pekerja latar (systemd/scheduler) untuk outbox belum dipasang**: event sudah ditulis satu
    transaksi dengan state bisnisnya, tetapi pengiriman nyata (email/WA/webhook) belum berjalan.
-4. **Website Marketing publik belum dibangun sebagai permukaan terpisah** — dashboard internal
-   sudah punya halaman `channels.py` dan `shadow_eval.py` (commit 0a7ece4), tetapi public website
-   untuk calon tamu harus menjadi aplikasi/area berbeda: katalog villa, destinasi Bali/Yogyakarta,
-   villa detail, inquiry, dan concierge. Rujukan: `docs/PRODUCT_SURFACE_SEPARATION_2026-10-05.md`.
+4. **Website Marketing publik: skeleton production-ready selesai (2026-10-05)** —
+   `src/marketing_site.py` + `templates/marketing/` (8 template) + `tests/test_marketing_site.py`
+   (35 test, hijau): home, villa collection, destination Bali/Yogyakarta, villa detail,
+   inquiry intake via `CrmService.open_inquiry` (channel `website`, SLA `web_v1`, PII di tabel
+   `guests`, idempotency + honeypot + rate limit + same-origin). Server loopback + mode dump
+   statis. Sisa pekerjaan: hosting produksi, foto/copy per villa, availability hint, owner page.
 5. **Pelapisan bahasa (ADR-0011) belum tuntas**: teks Indonesia lama masih ada di `dashboard.py`
    (158), `connectors.py` (90), `incidents.py` (74), `cases.py` (42). Dijaga ratchet — boleh
    menyusut, tidak boleh bertambah.

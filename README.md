@@ -5,6 +5,10 @@
 > permukaan publik terpisah**: katalog, destinasi, villa detail, inquiry, dan concierge.
 > Jangan mencampur UX publik tamu dengan dashboard internal. Rujukan desain/pemisahan:
 > `docs/PRODUCT_SURFACE_SEPARATION_2026-10-05.md`.
+>
+> **Skeleton public site sudah ada (2026-10-05):** `python3 src/marketing_site.py --db data/villa.db --port 8090`
+> melayani home/collection/destinations/villa-detail/inquiry (read model publik + intake ke kernel
+> case). Detail: seksi "Public marketing website" di bawah.
 
 **Sistem operasi reservation & agency untuk Villa Management (Bali + Yogyakarta)** —
 fondasi deterministik sebelum lapisan AI diaktifkan.
@@ -113,6 +117,30 @@ make schema-parity
 # Regenerasi twin PostgreSQL dari sumber SQLite (jangan edit file .pg.sql manual)
 make pg-twin
 ```
+
+## Public marketing website (permukaan tamu)
+
+Server read-only + satu form inquiry, terpisah total dari dashboard internal:
+
+```bash
+# Server publik (loopback; tambahkan --allow-remote hanya jika memang disengaja)
+python3 src/marketing_site.py --db data/villa.db --port 8090
+
+# Dump statis semua halaman publik (home, villas, destinasi, detail villa) ke folder
+python3 src/marketing_site.py --db data/villa.db --dump /tmp/marketing-site
+```
+
+Halaman: `/`, `/villas`, `/villas/{property_id}`, `/destinations/bali`,
+`/destinations/yogyakarta`, `/inquiry`. Batasan yang mengikat modul ini:
+
+- Hanya property berstatus **SELLABLE** yang tampil; unit hanya yang **ACTIVE**.
+- Form inquiry menulis **case kernel** via `CrmService.open_inquiry` (channel `website`,
+  SLA `web_v1`) — bukan tabel baru, bukan bypass. Email tamu disimpan di tabel `guests`;
+  isi pesan tersimpan tersamarkan (content class `P2`) dengan digest raw.
+- Anti-abuse: honeypot, rate limit per-IP, cek same-origin pada POST, batas ukuran form.
+- Halaman sukses inquiry ber-`noindex`; halaman katalog mengikuti SEO normal.
+- Uji: `tests/test_marketing_site.py` (read model, XSS escape, write path, replay,
+  rate limit, crawl read-only, dump statis).
 
 ## Menjalankan sistem (operasional)
 

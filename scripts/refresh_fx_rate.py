@@ -157,11 +157,17 @@ def quote_from_payload(payload: Any, *, pair: str, url: str) -> Quote:
     rate = _exact_rate(exact, pair=pair, url=url)
     quoted_at = quote_time(payload, url=url)
     provider = str(payload.get("provider") or url)
+    # The kernel caps source_doc_ref at 200 chars (policy_engine.require_text). A long
+    # provider URL (or a file:// probe URL in tests) would make the kernel refuse the
+    # publish — so the URL is recorded truncated and the *full* provenance (URL, rate,
+    # quote time) is preserved by the per-field anchors. Keep this in sync with the
+    # kernel cap: the suffixes below are ~80 chars, leaving ~120 for the URL.
+    source_url = url[:120]
     return Quote(
         pair=pair,
         rate=rate,
         quoted_at=quoted_at,
-        source_ref=f"{url}#{pair}={decimal_to_str(rate)}#quoted_at={quoted_at.isoformat()}",
+        source_ref=f"{source_url}#{pair}={decimal_to_str(rate)}#quoted_at={quoted_at.isoformat()}",
         provider=provider,
     )
 

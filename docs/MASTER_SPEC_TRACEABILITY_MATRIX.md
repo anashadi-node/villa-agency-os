@@ -92,7 +92,7 @@ Existing project is a strong deterministic reservation/finance/audit kernel, but
 | `src/dashboard.py` | Internal UI | KEEP for internal/demo; REPLACE auth for production | Static roles + bearer token; read-only GET | Preserve UI discipline; put behind production auth/API. |
 | `templates/*.html` | Internal web IA | KEEP / REFACTOR | 11 dashboard templates | Reuse for design language; migrate to production frontend later. |
 | `demo/*` | Sales/demo artifacts | KEEP as demo; REMOVE from production authority | Mock app/video | Keep for sales only. Must not be live source of truth. |
-| Public website | Required consumer interface | MISSING | No production public booking website found | Build after API/invariants. |
+| Public website | Required consumer interface | **SKELETON BUILT (2026-10-05)** | `src/marketing_site.py` + `templates/marketing/` + 35 tests: home, collection, destinations, villa detail, inquiry intake → kernel case | Production hosting, photos/copy per villa, availability hints. |
 | Android/iOS native app | Optional later | MISSING / DEFER | No native app found | Start with responsive website/PWA; native after traction. |
 
 ## Master requirement coverage

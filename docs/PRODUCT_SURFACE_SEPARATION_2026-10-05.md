@@ -141,12 +141,17 @@ Dashboard yang sudah ada tetap penting, tetapi posisinya adalah **internal opera
 ## 7. Roadmap implementasi tanpa mengacaukan kernel
 
 1. **Hari ini — pisahkan dokumen dan IA.** Dokumen ini menjadi rujukan: marketing ≠ dashboard.
-2. **Marketing prototype.** Buat landing/katalog demo Bali+Jogja yang indah, read-only, tanpa menyentuh booking kernel.
-3. **Public API read model.** Export villa cards publik dari data yang sudah lolos sellability gate.
-4. **Inquiry intake.** Form website menulis `case` via adapter resmi, bukan langsung booking.
-5. **Villa detail + availability request.** Availability ditampilkan sebagai request/hint sampai kernel membuktikan freshness.
-6. **Owner/services page.** Jalur pemilik villa dipisahkan dari jalur tamu.
+2. **Marketing prototype.** Buat landing/katalog demo Bali+Jogja yang indah, read-only, tanpa menyentuh booking kernel. *(SELESAI — `demo/villa-marketing-bali-yogyakarta-2026-10-05.html`.)*
+3. **Public API read model.** Export villa cards publik dari data yang sudah lolos sellability gate. *(SELESAI — `src/marketing_site.py` `PublicReadModel`, hanya `SELLABLE`, semua baca ber-scope `agency_id`.)*
+4. **Inquiry intake.** Form website menulis `case` via adapter resmi, bukan langsung booking. *(SELESAI — `InquiryIntake` → `CrmService.open_inquiry` → `CaseService`, channel `website`, SLA `web_v1`, PII di tabel `guests`, idempotency + honeypot + rate limit + same-origin.)*
+5. **Villa detail + availability request.** Availability ditampilkan sebagai request/hint sampai kernel membuktikan freshness. *(SEBAGIAN — halaman detail + unit table aktif ada; availability hint menunggu kernel freshness.)*
+6. **Owner/services page.** Jalur pemilik villa dipisahkan dari jalur tamu. *(BELUM.)*
 7. **Dashboard tetap internal.** Lanjut KPI dashboard/outbox/PG/production tanpa mencampur UI publik.
+
+**Status skeleton production-ready (2026-10-05):** langkah 1–4 selesai. Modul `src/marketing_site.py` +
+`templates/marketing/*.html` (8 template) + `tests/test_marketing_site.py` (35 test) melayani
+home, collection, destination Bali, destination Yogyakarta, villa detail, dan inquiry intake —
+server loopback + mode `--dump` statis. Sisanya (langkah 5–7) masuk iterasi berikutnya.
 
 ---
 

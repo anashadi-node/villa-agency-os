@@ -1,0 +1,18 @@
+<h1>Plan my stay</h1>
+<p class="lede">Tell us about your trip — dates, group size, and what matters to you. {{sla_text}}</p>
+{{asking_note}}
+<form method="post" action="/inquiry">
+  <input type="hidden" name="form_token" value="{{form_token}}">
+  <input type="hidden" name="property_ref" value="{{property_ref}}">
+  <label for="name">Your name</label>
+  <input type="text" id="name" name="name" maxlength="100" required>
+  <label for="email">Email</label>
+  <input type="email" id="email" name="email" maxlength="320" required>
+  <label for="message">Your trip</label>
+  <textarea id="message" name="message" maxlength="5000" required></textarea>
+  <div class="hp" aria-hidden="true">
+    <label for="company">Company (leave empty)</label>
+    <input type="text" id="company" name="company" tabindex="-1" autocomplete="off">
+  </div>
+  <button type="submit">Send inquiry</button>
+</form>
