@@ -41,6 +41,7 @@ ROUTES = {
     "properties": "/properties",
     "channels": "/channels",
     "shadow_eval": "/shadow_eval",
+    "outbox": "/outbox",
     "audit": "/audit",
 }
 
@@ -56,6 +57,7 @@ ENTITLED = {
     "properties": set(D.ROLES),
     "channels": {"reservation", "operations", "owner"},
     "shadow_eval": {"operations", "owner", "auditor"},
+    "outbox": {"operations", "owner", "auditor"},
     "audit": {"owner", "auditor", "gm"},
 }
 PAGE_ROLE_MATRIX = [(page, role) for page in ROUTES for role in D.ROLES]

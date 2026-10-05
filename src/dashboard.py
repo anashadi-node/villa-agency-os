@@ -153,6 +153,7 @@ PAGE_ROLES: Mapping[str, tuple[str, ...]] = MappingProxyType(
         "properties": ALL_ROLES,
         "channels": ("reservation", "operations", "owner"),
         "shadow_eval": ("operations", "owner", "auditor"),
+        "outbox": ("operations", "owner", "auditor"),
         "audit": ("owner", "auditor", "gm"),
         "error": ALL_ROLES,
     }
@@ -231,6 +232,11 @@ CALENDAR_DAYS = 7
 CHANNEL_WINDOW_DAYS = 30
 SHADOW_WINDOW_DAYS = 90
 
+#: How far back ``/outbox`` lists recent events, and which undelivered states
+#: the queue note counts as "still waiting".
+OUTBOX_WINDOW_DAYS = 7
+OUTBOX_LIVE_STATES = ("PENDING", "FAILED")
+
 #: Hard cap on an operational queue: a queue is read at a glance, and an
 #: unbounded table is how one bad row turns a page into a wall.
 QUEUE_LIMIT = 50
@@ -277,6 +283,7 @@ NAV: tuple[tuple[str, str], ...] = (
     ("properties", "/properties"),
     ("channels", "/channels"),
     ("shadow_eval", "/shadow_eval"),
+    ("outbox", "/outbox"),
     ("audit", "/audit"),
 )
 PAGE_TITLES: Mapping[str, str] = MappingProxyType(
@@ -291,6 +298,7 @@ PAGE_TITLES: Mapping[str, str] = MappingProxyType(
         "properties": "Properti & Unit",
         "channels": "Channels",
         "shadow_eval": "AI Quality (Shadow)",
+        "outbox": "Outbox & Integrations",
         "audit": "Rantai Audit",
         "error": "Galat",
     }
@@ -395,9 +403,76 @@ def _shadow_verdict(measurement: Any, min_cases: int) -> str:
     return "meets the bar" if measurement.meets_bar else "below the bar"
 
 
+def _is_pg_conn(conn: Any) -> bool:
+    """Whether this connection speaks the PostgreSQL wire protocol."""
+    module = type(conn).__module__.split(".", 1)[0]
+    return module in ("psycopg", "psycopg2")
+
+
+def _driver_rows(conn: Any, sql: str, params: Sequence[Any]) -> list[Any]:
+    """Run a read query through whichever driver the connection carries.
+
+    SQLite takes ``?`` and ``conn.execute`` directly. PostgreSQL (psycopg 2/3)
+    takes ``%s`` and needs a cursor, and its default rows are bare tuples — but
+    the views read columns **by name** (``row["case_id"]``, 179 sites). The
+    cursor's ``description`` gives the names, so rows are wrapped once here,
+    in the only place driver differences are allowed to exist.
+    """
+    if not _is_pg_conn(conn):
+        return list(conn.execute(sql, tuple(params)))
+    translated = _positional_to_psql(sql)
+    with conn.cursor() as cur:
+        cur.execute(translated, tuple(params))
+        names = [str(d[0]) for d in cur.description or ()]
+        return [_PgRow(names, pg_row) for pg_row in cur.fetchall()]
+
+
+class _PgRow(Mapping[str, Any]):
+    """A mapping view over one cursor row: ``row["col"]`` and ``row[i]`` both work."""
+
+    __slots__ = ("_names", "_values")
+
+    def __init__(self, names: Sequence[str], values: Sequence[Any]) -> None:
+        object.__setattr__(self, "_names", tuple(names))
+        object.__setattr__(self, "_values", tuple(values))
+
+    def __getitem__(self, key: Any) -> Any:
+        if isinstance(key, str):
+            try:
+                return self._values[self._names.index(key)]
+            except ValueError:
+                raise KeyError(key) from None
+        return self._values[int(key)]
+
+    def __iter__(self):
+        return iter(self._names)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+
+def _positional_to_psql(sql: str) -> str:
+    """Rewrite ``?`` placeholders to psycopg ``%s``, never inside quotes.
+
+    A naive replace would corrupt literal question marks inside string
+    literals; walk the SQL character by character, tracking quote state.
+    """
+    out = []
+    in_single = in_double = False
+    for char in sql:
+        if char == "'" and not in_double:
+            in_single = not in_single
+        elif char == '"' and not in_single:
+            in_double = not in_double
+        if char == "?" and not in_single and not in_double:
+            out.append("%s")
+        else:
+            out.append(char)
+    return "".join(out)
+
+
 def _age_minutes(value: Any, now: Any) -> Optional[int]:
     """How long something has been waiting, in whole minutes.
-
     A timestamp stored without a zone cannot be measured against an aware clock;
     the caller shows ``—`` instead of guessing, because a wrong age on a queue page
     is how a stuck item stays invisible.
@@ -880,9 +955,11 @@ class Dashboard:
         job of the service that owns writes (``cases.CaseService`` and friends),
         never of this module.
         """
-        found = self.conn.execute(
-            "SELECT 1 FROM agencies WHERE agency_id = ? LIMIT 1", (self.agency_id,)
-        ).fetchone()
+        found = _driver_rows(
+            self.conn,
+            "SELECT 1 FROM agencies WHERE agency_id = ? LIMIT 1",
+            (self.agency_id,),
+        )[0:1]
         if found is None:
             raise InvalidInput(
                 "agency_id belum terdaftar di tabel agencies",
@@ -937,7 +1014,7 @@ class Dashboard:
 
     # -- rows and counters ------------------------------------------------- #
     def _rows(self, sql: str, params: Sequence[Any] = ()) -> list[Any]:
-        return list(self.conn.execute(sql, tuple(params)))
+        return _driver_rows(self.conn, sql, tuple(params))
 
     def _count(self, sql: str, params: Sequence[Any] = ()) -> int:
         rows = self._rows(sql, params)
@@ -2263,6 +2340,131 @@ class Dashboard:
             ),
         }
 
+    def view_outbox(self, principal: Principal) -> dict[str, Any]:
+        """The integration outbox and inbox, read-only.
+
+        The outbox is the contract: a kernel service writes an event in the same
+        transaction as its state change, a worker publishes it, and this page
+        shows the queue nobody else renders — pending letters, dead letters with
+        their last error, and inbox items nobody processed yet. An event stuck
+        here with no worker is integration debt made visible, which is the only
+        honest way to run integrations before a worker exists.
+        """
+        now = self.clock.now()
+        cutoff = to_iso(now - timedelta(days=OUTBOX_WINDOW_DAYS))
+        status_rows = self._rows(
+            "SELECT status, COUNT(*) AS n, MAX(created_at) AS newest_at"
+            " FROM outbox_events WHERE agency_id = ? GROUP BY status ORDER BY status",
+            (self.agency_id,),
+        )
+        by_status = {str(row["status"]): row for row in status_rows}
+        pending = self._rows(
+            "SELECT outbox_event_id, event_type, aggregate_type, aggregate_id,"
+            " attempts, max_attempts, next_attempt_at, created_at"
+            " FROM outbox_events WHERE agency_id = ? AND status = 'PENDING'"
+            " ORDER BY created_at LIMIT 20",
+            (self.agency_id,),
+        )
+        dead = self._rows(
+            "SELECT outbox_event_id, event_type, attempts, max_attempts,"
+            " last_error, created_at"
+            " FROM outbox_events WHERE agency_id = ? AND status = 'DEAD_LETTER'"
+            " ORDER BY created_at LIMIT 20",
+            (self.agency_id,),
+        )
+        inbox_rows = self._rows(
+            "SELECT source, COUNT(*) AS n, MAX(received_at) AS last_at, "
+            "SUM(CASE WHEN processed_at IS NULL THEN 1 ELSE 0 END) AS unprocessed"
+            " FROM integration_inbox WHERE agency_id = ? GROUP BY source ORDER BY source",
+            (self.agency_id,),
+        )
+        recent = self._rows(
+            "SELECT outbox_event_id, event_type, status, published_at, created_at"
+            " FROM outbox_events WHERE agency_id = ? AND created_at >= ?"
+            " ORDER BY created_at DESC LIMIT 20",
+            (self.agency_id, cutoff),
+        )
+        waiting = sum(
+            _as_int(by_status[state]["n"]) for state in OUTBOX_LIVE_STATES if state in by_status
+        )
+        unprocessed = sum(_as_int(row["unprocessed"]) for row in inbox_rows)
+        return {
+            "window_days": OUTBOX_WINDOW_DAYS,
+            "empty_banner": self._empty_banner(),
+            "status_table": table(
+                ["Status", "Events", "Newest"],
+                [
+                    (row["status"], _as_int(row["n"]), row["newest_at"] or "—")
+                    for row in status_rows
+                ],
+                empty="outbox event",
+            ),
+            "pending_table": table(
+                ["Event", "Type", "Aggregate", "Attempts", "Next attempt", "Created"],
+                [
+                    (
+                        row["outbox_event_id"],
+                        row["event_type"],
+                        f"{row['aggregate_type']}:{row['aggregate_id']}",
+                        f"{_as_int(row['attempts'])}/{_as_int(row['max_attempts'])}",
+                        row["next_attempt_at"],
+                        row["created_at"],
+                    )
+                    for row in pending
+                ],
+                empty="pending outbox event",
+            ),
+            "dead_table": table(
+                ["Event", "Type", "Attempts", "Last error", "Created"],
+                [
+                    (
+                        row["outbox_event_id"],
+                        row["event_type"],
+                        f"{_as_int(row['attempts'])}/{_as_int(row['max_attempts'])}",
+                        row["last_error"] or "—",
+                        row["created_at"],
+                    )
+                    for row in dead
+                ],
+                empty="dead-lettered event",
+            ),
+            "inbox_table": table(
+                ["Source", "Received", "Unprocessed", "Last received"],
+                [
+                    (
+                        row["source"],
+                        _as_int(row["n"]),
+                        _as_int(row["unprocessed"]),
+                        row["last_at"] or "—",
+                    )
+                    for row in inbox_rows
+                ],
+                empty="integration inbox source",
+            ),
+            "recent_table": table(
+                ["Event", "Type", "Status", "Published", "Created"],
+                [
+                    (
+                        row["outbox_event_id"],
+                        row["event_type"],
+                        row["status"],
+                        row["published_at"] or "—",
+                        row["created_at"],
+                    )
+                    for row in recent
+                ],
+                empty="outbox event in the window",
+            ),
+            "queue_note": Markup(
+                f"Not yet delivered (PENDING + FAILED): <strong>{waiting}</strong> · "
+                f"inbox items nobody processed: <strong>{unprocessed}</strong>. "
+                "This page sends nothing: a worker publishes due events through "
+                "<code>OutboxService.publish_due</code>, and a person re-queues a "
+                "dead letter with a reason. No worker is wired yet, so letters "
+                "wait here in the open."
+            ),
+        }
+
     # ------------------------------------------------------------------ #
     # Routing
     # ------------------------------------------------------------------ #
@@ -2277,7 +2479,7 @@ class Dashboard:
             # names the case; an id that is not a reference token is a 404.
             return "case_detail", segments[-1]
         for page in ("inventory", "finance", "operations", "approvals", "properties", "channels",
-                     "shadow_eval", "audit"):
+                     "shadow_eval", "outbox", "audit"):
             if head == page and len(segments) == 1:
                 return page, None
         raise NotFound("rute tidak dikenal", path="/" + "/".join(segments))
@@ -2687,6 +2889,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         description="Dashboard internal Villa Agency OS (baca-saja + antrean approval).",
     )
     parser.add_argument("--db", default=DEFAULT_DB, help="berkas SQLite (default: %(default)s)")
+    parser.add_argument(
+        "--pg-dsn",
+        default=None,
+        metavar="DSN",
+        help=(
+            "connect to PostgreSQL instead of SQLite (production dialect; credentials "
+            "stay in this DSN, never committed). Applies the schema if missing."
+        ),
+    )
     parser.add_argument("--host", default=DEFAULT_HOST, help="alamat bind (default: %(default)s)")
     parser.add_argument("--port", type=int, default=8080, help="port (default: %(default)s)")
     parser.add_argument(
@@ -2726,8 +2937,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     """CLI: ``python3 src/dashboard.py --db data/villa.db --port 8080 --role owner``."""
     parser = build_arg_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
+    if args.pg_dsn and args.db != DEFAULT_DB:
+        print(
+            "dashboard: --pg-dsn and --db are mutually exclusive; choose one data source",
+            file=sys.stderr,
+        )
+        return 2
     try:
-        conn = _open_db(args.db)
+        if args.pg_dsn:
+            from schema_loader import connect_pg
+
+            conn = connect_pg(args.pg_dsn, apply=True)
+        else:
+            conn = _open_db(args.db)
     except (DomainError, OSError) as exc:
         print(f"dashboard: menolak start: {redact_pii(exc)}", file=sys.stderr)
         return 2

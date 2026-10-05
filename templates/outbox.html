@@ -1,0 +1,29 @@
+<section data-page="outbox" data-window-days="{{ window_days }}">
+  <h2>Outbox &amp; integrations</h2>
+  <p class="muted">
+    The integration outbox over the last {{ window_days }} days. A kernel service writes an
+    event in the same transaction as the state change it describes; a worker later publishes
+    it. This page sends nothing and retries nothing: publishing lives in
+    <code>OutboxService.publish_due</code>, run by a worker, and a dead letter comes back only
+    when a person re-queues it with a reason. The queue below is the part of the system that
+    would otherwise stay invisible.
+  </p>
+  {{ empty_banner }}
+
+  <h3>Queue summary</h3>
+  <p class="muted">{{ queue_note }}</p>
+  {{ status_table }}
+
+  <h3>Pending — waiting for a worker</h3>
+  {{ pending_table }}
+
+  <h3>Dead letters — need a human decision</h3>
+  {{ dead_table }}
+
+  <h3>Inbox per source</h3>
+  <p class="muted">Items received from outside; a source with unprocessed items has work waiting.</p>
+  {{ inbox_table }}
+
+  <h3>Recent events (window)</h3>
+  {{ recent_table }}
+</section>
