@@ -573,11 +573,15 @@ class TestServedSite:
     def test_dump_writes_pages_without_secrets(self, clock, tmp_path):
         _conn, site = _make_site(clock)
         written = site.dump(tmp_path / "site")
-        # index + villas + 2 destinations + 2 sellable villa pages
-        assert len(written) == 6
+        # index + villas + inquiry + 2 destinations + 2 sellable villa pages
+        assert len(written) == 7
         assert (tmp_path / "site" / "index.html").exists()
+        assert (tmp_path / "site" / "inquiry.html").exists()
         assert (tmp_path / "site" / "destinations" / "bali.html").exists()
         assert (tmp_path / "site" / "villas" / "prop-1.html").exists()
+        (tmp_path / "site" / "index.html").read_text().index('href="inquiry.html"')
+        for html in (p.read_text() for p in tmp_path.rglob("*.html")):
+            assert ('href="/' not in html), "dump must contain no site-absolute links"
         blob = "\n".join(p.read_text() for p in tmp_path.rglob("*.html"))
         assert "Hidden Backoffice Villa" not in blob
         assert "API_KEY" not in blob and "SECRET" not in blob

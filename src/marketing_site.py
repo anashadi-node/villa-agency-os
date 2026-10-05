@@ -38,6 +38,7 @@ import re
 import secrets
 import sys
 from collections import deque
+from types import MappingProxyType
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any, Mapping, Optional
@@ -381,11 +382,48 @@ class MarketingSite:
             self.conn, agency_id=self.agency_id, clock=self.clock, ids=self.ids
         )
 
-    # -- pages -------------------------------------------------------------- #
-    def _page(self, name: str, context: Mapping[str, Any]) -> str:
-        return render_page(name, context, templates_dir=self.templates_dir)
+    # Live-URL → static-filename map for --dump link rewriting (villas/{id} is
+    # wildcard; matched separately in _page). Everything else is a fixed file.
+    DUMP_FILE_MAP: Mapping[str, str] = MappingProxyType(
+        {
+            "/": "index.html",
+            "/villas": "villas.html",
+            "/destinations/bali": "destinations/bali.html",
+            "/destinations/yogyakarta": "destinations/yogyakarta.html",
+            "/inquiry": "inquiry.html",
+        }
+    )
+    def _page(self, name: str, context: Mapping[str, Any], base: str = "") -> str:
+        html = render_page(name, context, templates_dir=self.templates_dir)
+        if base:
+            # Static-dump mode: rewrite site-absolute hrefs so static files open
+            # correctly from file://. Every live URL maps to its dump filename
+            # (directory URLs point to that dir's index.html); the target is then
+            # expressed as a relative path from this page's dump subdirectory.
+            import posixpath
 
-    def home_html(self) -> str:
+            def _rel(match: "re.Match[str]") -> str:
+                target = match.group(1)
+                path, _sep, query = target.partition("?")
+                path = "/" + path
+                if path != "/" and path.endswith("/"):
+                    path = path.rstrip("/")
+                file = self.DUMP_FILE_MAP.get(path)
+                if file is None and path.startswith("/villas/"):
+                    file = path.lstrip("/") + ".html"
+                if file is None:
+                    return match.group(0)
+                if file.endswith("/"):
+                    file += "index.html"
+                rel = posixpath.relpath(file, base or ".")
+                if query:
+                    rel += "?" + query
+                return 'href="' + rel + '"'
+
+            html = re.sub(r'href="/([^"#]*)"', _rel, html)
+        return html
+
+    def home_html(self, base: str = "") -> str:
         villas = self.read_model.sellable_villas()
         featured = villas[:FEATURED_VILLA_LIMIT]
         cards = "".join(str(_card_html(v)) for v in featured) or (
@@ -398,9 +436,10 @@ class MarketingSite:
                 "villa_cards": Markup(cards),
                 "head_extra": Markup(""),
             },
+            base=base,
         )
 
-    def villas_html(self) -> str:
+    def villas_html(self, base: str = "") -> str:
         villas = self.read_model.sellable_villas()
         cards = "".join(str(_card_html(v)) for v in villas) or (
             "<p class='empty'>No villas are published yet.</p>"
@@ -413,9 +452,10 @@ class MarketingSite:
                 "villa_count": len(villas),
                 "head_extra": Markup(""),
             },
+            base=base,
         )
 
-    def destination_html(self, province: str) -> Optional[str]:
+    def destination_html(self, province: str, base: str = "") -> Optional[str]:
         names = {"bali": "Bali", "yogyakarta": "Yogyakarta"}
         label = names.get(province)
         if label is None:
@@ -432,9 +472,10 @@ class MarketingSite:
                 "villa_cards": Markup(cards),
                 "head_extra": Markup(""),
             },
+            base=base,
         )
 
-    def villa_html(self, property_id: str) -> Optional[str]:
+    def villa_html(self, property_id: str, base: str = "") -> Optional[str]:
         try:
             villa = self.read_model.villa(property_id)
         except DomainError:
@@ -452,9 +493,10 @@ class MarketingSite:
                 "property_ref": escape_value(property_id),
                 "head_extra": Markup(""),
             },
+            base=base,
         )
 
-    def inquiry_form_html(self, property_ref: str = "") -> str:
+    def inquiry_form_html(self, property_ref: str = "", base: str = "") -> str:
         token = secrets.token_hex(16)
         asking = ""
         if property_ref:
@@ -476,6 +518,7 @@ class MarketingSite:
                 "sla_text": escape_value(_sla_text()),
                 "head_extra": Markup(""),
             },
+            base=base,
         )
 
     def inquiry_success_html(self, result: Mapping[str, str]) -> str:
@@ -502,15 +545,23 @@ class MarketingSite:
 
     # -- static dump -------------------------------------------------------- #
     def dump(self, directory: Any) -> list[Path]:
-        """Write every public GET page as static HTML (no secrets, no PII)."""
+        """Write every public GET page as static HTML (no secrets, no PII).
+
+        ``base`` marks subdirectory pages so links are rewritten relative
+        (``../``) and the dump opens correctly from ``file://``.
+        """
         out = Path(directory)
         out.mkdir(parents=True, exist_ok=True)
-        written = [out / "index.html"]
-        (out / "index.html").write_text(self.home_html(), encoding="utf-8")
-        (out / "villas.html").write_text(self.villas_html(), encoding="utf-8")
+        written = [out / "inquiry.html"]
+        (out / "inquiry.html").write_text(
+            self.inquiry_form_html(base="."), encoding="utf-8"
+        )
+        (out / "index.html").write_text(self.home_html(base="."), encoding="utf-8")
+        (out / "villas.html").write_text(self.villas_html(base="."), encoding="utf-8")
+        written.append(out / "index.html")
         written.append(out / "villas.html")
         for slug, _province in (("bali", "Bali"), ("yogyakarta", "DI Yogyakarta")):
-            page = self.destination_html(slug)
+            page = self.destination_html(slug, base="destinations/")
             if page is not None:
                 target = out / "destinations" / f"{slug}.html"
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -519,7 +570,10 @@ class MarketingSite:
         for villa in self.read_model.sellable_villas():
             target = out / "villas" / f"{villa['property_id']}.html"
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(self.villa_html(str(villa["property_id"])) or "", encoding="utf-8")
+            target.write_text(
+                self.villa_html(str(villa["property_id"]), base="villas/") or "",
+                encoding="utf-8",
+            )
             written.append(target)
         return written
 
