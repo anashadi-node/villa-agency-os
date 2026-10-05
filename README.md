@@ -1,5 +1,11 @@
 # Villa Agency OS
 
+> **Batas produk wajib:** repo ini adalah kernel operasi + **dashboard internal** untuk
+> manajemen/karyawan villa agency. **Website Marketing Villa untuk calon tamu adalah
+> permukaan publik terpisah**: katalog, destinasi, villa detail, inquiry, dan concierge.
+> Jangan mencampur UX publik tamu dengan dashboard internal. Rujukan desain/pemisahan:
+> `docs/PRODUCT_SURFACE_SEPARATION_2026-10-05.md`.
+
 **Sistem operasi reservation & agency untuk Villa Management (Bali + Yogyakarta)** —
 fondasi deterministik sebelum lapisan AI diaktifkan.
 

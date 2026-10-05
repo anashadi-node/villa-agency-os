@@ -1,12 +1,17 @@
 # Demo Artefak — Villa Agency OS
 
-Artefak ini dibuat untuk presentasi ke calon konsumen/pembeli. Semua data di dalamnya adalah **mock/demo**, bukan data tamu atau properti nyata.
+Artefak ini dibuat untuk presentasi. Semua data di dalamnya adalah **mock/demo**, bukan data tamu atau properti nyata.
+
+**Pemisahan penting:** demo/dashboard internal bukan Website Marketing Villa. Website Marketing
+publik untuk calon tamu harus terpisah dan berisi katalog villa, destinasi Bali/Yogyakarta,
+halaman detail villa, inquiry, dan concierge. Rujukan: `docs/PRODUCT_SURFACE_SEPARATION_2026-10-05.md`.
 
 ## File
 
 | File | Fungsi |
 |---|---|
 | `customer-demo-app.html` | mock aplikasi interaktif untuk meeting/live demo |
+| `villa-marketing-bali-yogyakarta-2026-10-05.html` | prototype visual Website Marketing publik Bali + Yogyakarta (terpisah dari dashboard internal) |
 | `villa-agency-os-mock-video.mp4` | mock video 28 detik untuk pembuka pitch |
 | `villa-agency-os-mock-video-cover.png` | cover/thumbnail video |
 | `render_mock_video.py` | script reproducible untuk render ulang video |

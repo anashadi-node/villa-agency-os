@@ -125,8 +125,10 @@ Ini bukan daftar "nanti", ini daftar **yang tidak boleh diklaim sudah selesai**:
    berkala (`make anchor-publish`) supaya penghapusan baris terakhir pun terdeteksi.
 3. **Pekerja latar (systemd/scheduler) untuk outbox belum dipasang**: event sudah ditulis satu
    transaksi dengan state bisnisnya, tetapi pengiriman nyata (email/WA/webhook) belum berjalan.
-4. **Halaman dashboard Phase 4 untuk `channels.py` dan `shadow_eval.py` belum ada** — kedua modul
-   sudah teruji, tetapi belum punya pemanggil produksi.
+4. **Website Marketing publik belum dibangun sebagai permukaan terpisah** — dashboard internal
+   sudah punya halaman `channels.py` dan `shadow_eval.py` (commit 0a7ece4), tetapi public website
+   untuk calon tamu harus menjadi aplikasi/area berbeda: katalog villa, destinasi Bali/Yogyakarta,
+   villa detail, inquiry, dan concierge. Rujukan: `docs/PRODUCT_SURFACE_SEPARATION_2026-10-05.md`.
 5. **Pelapisan bahasa (ADR-0011) belum tuntas**: teks Indonesia lama masih ada di `dashboard.py`
    (158), `connectors.py` (90), `incidents.py` (74), `cases.py` (42). Dijaga ratchet — boleh
    menyusut, tidak boleh bertambah.
@@ -156,7 +158,7 @@ Temuan & perbaikan pada 2026-10-04:
 2. **Alat audit baru** `scripts/audit_structure.py` + target `make audit-structure` (sengaja bukan
    bagian `make check`: temuannya keputusan manusia, bukan penghalang rilis).
 3. **Dokumentasi:** dua skrip yang tidak pernah disebut (audit struktur, `build_deliverables.py`)
-   kini ada di README; klaim "12 berkas HTML dashboard" dikoreksi menjadi 11
+   kini ada di README; hitungan dashboard dinormalisasi menjadi 13 berkas HTML
    (12 halaman terdaftar + base); `demo/README.md` disesuaikan dengan aplikasi demo baru.
 4. **Tidak ditemukan:** bug di jalur uang/tanggal/status/izin, kebocoran rahasia, perintah
    dokumentasi yang busuk, maupun pembacaan data lintas agensi.
