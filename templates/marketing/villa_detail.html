@@ -1,8 +1,17 @@
+<div class="eyebrow">Villa profile</div>
 <h1>{{villa_name}}</h1>
 <p class="lede">{{villa_meta}}</p>
-<p><a class="cta" href="/inquiry?property={{property_ref}}">Ask about this villa</a></p>
+<div class="cta-row">
+  <a class="cta" href="/inquiry?property={{property_ref}}">💬 Ask about this villa</a>
+</div>
 <p class="note">{{availability_hint}}</p>
+
 <h2>Units &amp; capacity</h2>
 {{units_table}}
+
 <h2>How booking works</h2>
-<p>You send an inquiry — our team confirms live availability with the villa owner, then sends a full quote. No payment is taken before you approve the quote.</p>
+<div class="trio">
+  <div class="step"><div class="n">1</div><h4>Send an inquiry</h4><p>Tell us your dates and group size for this villa.</p></div>
+  <div class="step"><div class="n">2</div><h4>We confirm live</h4><p>Our team checks availability with the villa owner directly.</p></div>
+  <div class="step"><div class="n">3</div><h4>You get a full quote</h4><p>No payment is taken before you approve it.</p></div>
+</div>

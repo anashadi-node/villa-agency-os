@@ -7,64 +7,155 @@
 <meta name="description" content="Private villas in Bali and Yogyakarta with local concierge, verified availability, and direct booking confidence.">
 {{head_extra}}
 <style>
-:root{--sand:#f8efe0;--paper:#fffaf2;--ink:#20241f;--teak:#173f33;--leaf:#2d6a50;--gold:#c8943f;--clay:#a95d38;--line:#e5d9c3}
+:root{
+  --sand:#f6ecd8;--paper:#fffaf1;--ink:#20241f;--teak:#123a2d;--teak2:#1d5742;
+  --leaf:#2f7a5b;--gold:#cf9a44;--coral:#c9683f;--clay:#a95d38;--line:#e6d7b9;
+  --muted:#6e6554;--ocean:#0e2e3f;--foam:#eef6f1;
+}
 *{box-sizing:border-box}
-body{margin:0;font-family:Georgia,'Times New Roman',serif;color:var(--ink);background:var(--paper);line-height:1.6}
-header.site{background:var(--teak);color:var(--paper);padding:.9rem 1.4rem;display:flex;flex-wrap:wrap;gap:1rem;align-items:center;justify-content:space-between}
-header.site .brand{font-size:1.25rem;letter-spacing:.02em;color:#fff;text-decoration:none}
-header.site nav a{color:#e9dfc8;text-decoration:none;margin-right:1rem;font-size:.95rem}
-header.site nav a:hover{color:var(--gold)}
-main{max-width:960px;margin:0 auto;padding:1.5rem 1.4rem 3rem}
-h1{font-size:2rem;color:var(--teak);margin:.4rem 0 1rem;line-height:1.25}
-h2{color:var(--teak);margin-top:2rem}
+html{scroll-behavior:smooth}
+body{margin:0;font-family:Georgia,'Times New Roman',serif;color:var(--ink);background:var(--paper);line-height:1.65;-webkit-font-smoothing:antialiased}
 a{color:var(--leaf)}
-.lede{font-size:1.08rem;max-width:46rem}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:1.2rem;margin-top:1.2rem}
-.card{border:1px solid var(--line);border-radius:10px;padding:1rem 1.1rem;background:var(--sand)}
-.card h3{margin:.2rem 0 .4rem;font-size:1.12rem}
+
+/* ---------- header / nav ---------- */
+header.site{position:sticky;top:0;z-index:50;background:linear-gradient(120deg,var(--teak),#0d2c22 75%);color:var(--paper);padding:.95rem 1.6rem;display:flex;flex-wrap:wrap;gap:1rem;align-items:center;justify-content:space-between;box-shadow:0 2px 14px rgba(10,30,22,.18)}
+header.site .brand{font-size:1.32rem;letter-spacing:.015em;color:#fff;text-decoration:none;font-weight:700;display:flex;align-items:center;gap:.5rem}
+header.site .brand .mark{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--gold)}
+header.site nav{display:flex;flex-wrap:wrap;gap:.3rem;align-items:center;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header.site nav a{color:#e9dfc8;text-decoration:none;padding:.4rem .7rem;border-radius:999px;font-size:.92rem;transition:background .15s,color .15s}
+header.site nav a:hover{background:rgba(255,255,255,.12);color:#fff}
+header.site nav a.whatsapp{background:var(--gold);color:#1c1406;font-weight:700}
+header.site nav a.whatsapp:hover{background:#e0ad5a}
+
+main{max-width:1080px;margin:0 auto;padding:0 1.6rem 3.5rem}
+
+/* ---------- typography ---------- */
+h1{font-size:clamp(2rem,4vw,2.8rem);color:var(--teak);margin:1.6rem 0 1rem;line-height:1.18;letter-spacing:-.01em}
+h2{color:var(--teak);margin-top:2.6rem;font-size:1.5rem;letter-spacing:-.005em}
+h2.center{text-align:center}
+.eyebrow{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;text-transform:uppercase;letter-spacing:.14em;font-size:.78rem;color:var(--coral);font-weight:700;margin:1.6rem 0 .3rem}
+.lede{font-size:1.1rem;max-width:42rem;color:#39392f}
+
+/* ---------- hero band (full-bleed, CSS-only tropical gradient — no external image) ---------- */
+.hero-band{position:relative;margin:0 calc(50% - 50vw);padding:3.6rem 1.6rem 3.2rem;overflow:hidden;
+  background:
+    radial-gradient(circle at 14% 18%, rgba(207,154,68,.30), transparent 32%),
+    radial-gradient(circle at 86% 0%, rgba(201,104,63,.24), transparent 38%),
+    linear-gradient(165deg,#0d2c22 0%,#123a2d 46%,#0e2e3f 100%);
+  color:#fbf4e4}
+.hero-band::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:46px;
+  background:var(--paper);
+  clip-path:polygon(0% 100%,4% 40%,9% 70%,14% 30%,19% 65%,24% 20%,29% 60%,34% 15%,39% 55%,44% 10%,49% 50%,54% 8%,59% 48%,64% 12%,69% 52%,74% 18%,79% 58%,84% 22%,89% 62%,94% 28%,100% 55%,100% 100%)}
+.hero-inner{max-width:1080px;margin:0 auto;position:relative;z-index:1}
+.hero-band h1{color:#fff;max-width:36rem}
+.hero-band .lede{color:#efe4c9;max-width:34rem}
+.hero-band .eyebrow{color:#e7c27a}
+
+/* ---------- buttons ---------- */
+.cta{display:inline-block;background:var(--leaf);color:#fff;padding:.72rem 1.35rem;border-radius:9px;text-decoration:none;font-weight:700;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:.95rem;transition:transform .12s,background .15s;box-shadow:0 6px 16px rgba(20,60,45,.22)}
+.cta:hover{background:var(--teak2);transform:translateY(-1px)}
+.cta.gold{background:var(--gold);color:#241705;box-shadow:0 6px 16px rgba(170,120,30,.26)}
+.cta.gold:hover{background:#e0ad5a}
+.cta.ghost{background:transparent;color:#fff;border:1.5px solid rgba(255,255,255,.55);box-shadow:none}
+.cta.ghost:hover{background:rgba(255,255,255,.12)}
+.cta-row{display:flex;gap:.8rem;flex-wrap:wrap;margin:1.3rem 0}
+
+/* ---------- trust badges ---------- */
+.badges{display:flex;flex-wrap:wrap;gap:.7rem;margin:1.4rem 0 0;padding:0;list-style:none;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.badges li{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.22);color:#f3ead3;border-radius:999px;padding:.4rem 1rem;font-size:.84rem;display:flex;align-items:center;gap:.4rem}
+.badges li::before{content:"✓";color:var(--gold);font-weight:800}
+main .badges li{background:var(--sand);border-color:var(--line);color:#4a4327}
+
+/* ---------- villa cards ---------- */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:1.3rem;margin-top:1.3rem}
+.card{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#fff;transition:transform .15s,box-shadow .15s;padding:1.1rem 1.2rem}
+.card:has(.photo){padding:0}
+.card:hover{transform:translateY(-3px);box-shadow:0 14px 30px rgba(30,45,30,.12)}
+.card h3{margin-top:0}
+.card p{font-size:.93rem;color:#4a4a42;margin:.3rem 0 0}
+.card .photo{height:140px;background:linear-gradient(135deg,#dcc893,#b8955f 55%,#8f6a3d);position:relative}
+.card .photo::after{content:"Photo coming soon";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:rgba(255,255,255,.85);background:rgba(20,30,20,.14)}
+.card .body{padding:1rem 1.1rem 1.15rem}
+.card h3{margin:.1rem 0 .35rem;font-size:1.1rem}
 .card h3 a{color:var(--teak);text-decoration:none}
 .card h3 a:hover{color:var(--leaf)}
-.card-region{font-size:.8rem;text-transform:uppercase;letter-spacing:.08em;color:var(--clay)}
-.card-facts{font-size:.92rem;color:#4a4a42}
-.card-link{font-size:.92rem;text-decoration:none}
-.cta{display:inline-block;background:var(--leaf);color:#fff;padding:.65rem 1.2rem;border-radius:8px;text-decoration:none;font-weight:bold}
-.cta:hover{background:var(--teak)}
-.cta.gold{background:var(--gold)}
-.badges{display:flex;flex-wrap:wrap;gap:.8rem;margin:1.2rem 0 0;padding:0;list-style:none}
-.badges li{background:var(--sand);border:1px solid var(--line);border-radius:999px;padding:.35rem .9rem;font-size:.88rem}
-table{border-collapse:collapse;width:100%;margin-top:1rem}
-th,td{border:1px solid var(--line);padding:.5rem .7rem;text-align:left;font-size:.95rem}
-th{background:var(--sand);color:var(--teak)}
+.card-region{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:.76rem;text-transform:uppercase;letter-spacing:.09em;color:var(--clay);font-weight:700}
+.card-facts{font-size:.93rem;color:#4a4a42;margin-top:.2rem}
+.card-link{font-size:.92rem;text-decoration:none;font-weight:600}
+
+/* ---------- destination / feature tiles ---------- */
+.dest-links{display:flex;gap:1rem;flex-wrap:wrap;margin-top:1.1rem}
+.dest-links a{flex:1 1 220px;background:linear-gradient(160deg,var(--sand),#f1e2c0);border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.3rem;text-decoration:none;color:var(--teak);font-weight:600}
+.dest-links a:hover{border-color:var(--gold)}
+
+/* ---------- trio / "how it works" ---------- */
+.trio{display:grid;grid-template-columns:repeat(3,1fr);gap:1.1rem;margin-top:1.2rem}
+.trio .step{background:var(--foam);border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.2rem}
+.trio .step .n{font-family:Georgia,serif;font-size:1.6rem;color:var(--gold);font-weight:700}
+.trio .step h4{margin:.3rem 0 .3rem;color:var(--teak);font-size:1rem}
+.trio .step p{margin:0;font-size:.92rem;color:#4a4a42}
+
+/* ---------- tables ---------- */
+table{border-collapse:collapse;width:100%;margin-top:1rem;font-size:.95rem}
+th,td{border:1px solid var(--line);padding:.55rem .75rem;text-align:left}
+th{background:var(--sand);color:var(--teak);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:.85rem;text-transform:uppercase;letter-spacing:.04em}
+
+/* ---------- forms ---------- */
 form{max-width:34rem}
-label{display:block;margin:1rem 0 .3rem;font-weight:bold}
-input[type=text],input[type=email],textarea{width:100%;padding:.6rem;border:1px solid var(--line);border-radius:6px;font-family:inherit;font-size:1rem;background:#fff}
+label{display:block;margin:1rem 0 .3rem;font-weight:bold;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:.9rem;color:#3c3a2f}
+input[type=text],input[type=email],textarea{width:100%;padding:.68rem .8rem;border:1px solid var(--line);border-radius:8px;font-family:inherit;font-size:1rem;background:#fff}
+input[type=text]:focus,input[type=email]:focus,textarea:focus{outline:2px solid var(--leaf);outline-offset:1px}
 textarea{min-height:8rem}
-button{margin-top:1.2rem;background:var(--leaf);color:#fff;border:0;border-radius:8px;padding:.7rem 1.4rem;font-size:1rem;cursor:pointer;font-family:inherit}
-button:hover{background:var(--teak)}
+button{margin-top:1.3rem;background:var(--leaf);color:#fff;border:0;border-radius:9px;padding:.75rem 1.5rem;font-size:1rem;font-weight:700;cursor:pointer;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;box-shadow:0 6px 16px rgba(20,60,45,.22)}
+button:hover{background:var(--teak2)}
 .hp{position:absolute;left:-9999px;top:-9999px}
-.note{background:var(--sand);border-left:4px solid var(--gold);padding:.7rem 1rem;border-radius:0 8px 8px 0;font-size:.95rem}
-footer.site{border-top:1px solid var(--line);margin-top:2.5rem;padding:1.2rem 1.4rem;font-size:.85rem;color:#6b6455;max-width:960px;margin-left:auto;margin-right:auto}
+.note{background:var(--sand);border-left:4px solid var(--gold);padding:.75rem 1.05rem;border-radius:0 8px 8px 0;font-size:.95rem}
+
+/* ---------- misc ---------- */
 .empty{color:#6b6455}
-.dest-links{display:flex;gap:1rem;flex-wrap:wrap;margin-top:1rem}
-.dest-links a{background:var(--sand);border:1px solid var(--line);border-radius:8px;padding:.8rem 1.2rem;text-decoration:none;color:var(--teak)}
+.wave-divider{height:36px;margin:0 calc(50% - 50vw) -.2rem}
+.wave-divider svg{width:100%;height:100%;display:block}
+footer.site{background:var(--ocean);color:#cfe3d7;margin-top:3rem}
+footer.site .inner{max-width:1080px;margin:0 auto;padding:2.2rem 1.6rem 1.6rem;display:flex;flex-wrap:wrap;gap:2rem;justify-content:space-between}
+footer.site .inner p{max-width:30rem;font-size:.92rem;color:#b9cdc2}
+footer.site .col h5{color:#f3ead3;font-family:system-ui,sans-serif;font-size:.78rem;text-transform:uppercase;letter-spacing:.1em;margin:0 0 .6rem}
+footer.site .col a{display:block;color:#b9cdc2;text-decoration:none;font-size:.9rem;margin-bottom:.4rem;font-family:system-ui,sans-serif}
+footer.site .col a:hover{color:#fff}
+footer.site .legal{border-top:1px solid rgba(255,255,255,.12);text-align:center;padding:1rem 1.6rem;font-size:.8rem;color:#7f9a8d;font-family:system-ui,sans-serif}
+
+@media (max-width:760px){.trio{grid-template-columns:1fr}.hero-band{padding:2.6rem 1.1rem 3rem}}
 </style>
 </head>
 <body>
 <header class="site">
-  <a class="brand" href="/">Villa Agency</a>
+  <a class="brand" href="/"><span class="mark"></span>Villa Agency <span style="opacity:.6;font-weight:400">— Bali &amp; Yogyakarta</span></a>
   <nav>
     <a href="/villas">Villas</a>
     <a href="/destinations/bali">Bali</a>
     <a href="/destinations/yogyakarta">Yogyakarta</a>
     <a href="/owners">For villa owners</a>
-    <a href="/inquiry">Plan my stay</a>
+    <a href="/inquiry" class="whatsapp">💬 Plan my stay</a>
   </nav>
 </header>
 <main>
 {{body}}
 </main>
 <footer class="site">
-  <p>Villa Agency — private villas in Bali and Yogyakarta. Every inquiry is answered by our local team; availability is verified with the villa owner before any quote is confirmed.</p>
+  <div class="inner">
+    <p>Villa Agency — private villas in Bali and Yogyakarta. Every inquiry is answered by our local team; availability is verified with the villa owner before any quote is confirmed. No payment is ever taken before you approve a quote.</p>
+    <div class="col">
+      <h5>Explore</h5>
+      <a href="/villas">All villas</a>
+      <a href="/destinations/bali">Bali</a>
+      <a href="/destinations/yogyakarta">Yogyakarta</a>
+    </div>
+    <div class="col">
+      <h5>Agency</h5>
+      <a href="/owners">List your villa</a>
+      <a href="/inquiry">Plan my stay</a>
+    </div>
+  </div>
+  <p class="legal">© Villa Agency. Prices shown, when present, are indicative only — every stay is confirmed by a human quote, never auto-booked.</p>
 </footer>
 </body>
 </html>

@@ -274,6 +274,21 @@ DEFAULT_IDENTITIES: Mapping[str, str] = MappingProxyType(
     }
 )
 
+#: Dashboard role -> the human-readable org title from the ADR-0035 blueprint
+#: (``agency_roles.py``). Presentation only: it never changes ``principal.role``,
+#: ``PAGE_ROLES`` gating, or ``APPROVAL_ROLE_BY_ROLE`` — it only labels the header
+#: so a page reads like "who is looking at this", matching the real org chart.
+ROLE_DISPLAY_LABEL: Mapping[str, str] = MappingProxyType(
+    {
+        "reservation": "Reservation Agent (AI-assisted desk)",
+        "operations": "Operations / Reservation Manager",
+        "finance": "Finance & Accounting Manager",
+        "owner": "Owner",
+        "gm": "General Manager (GM/CEO)",
+        "auditor": "Auditor (read-only)",
+    }
+)
+
 #: Every dashboard page, in navigation order.
 NAV: tuple[tuple[str, str], ...] = (
     ("command_center", "/"),
@@ -309,6 +324,26 @@ PAGE_TITLES: Mapping[str, str] = MappingProxyType(
 )
 _DUMP_NAMES: Mapping[str, str] = MappingProxyType(
     {"command_center": "index", "case_detail": "case"}
+)
+
+#: Visual grouping for the nav — mirrors the agency's real org chart (ADR-0035
+#: blueprint in ``agency_roles.py``): Reservations/Guest, Operations, Finance,
+#: Approval & Compliance, Property & Partnership, Commercial & Marketing,
+#: Technology & Channels. Presentation only — it reorders how ``nav_links()``
+#: *displays* the same 12 ``NAV`` pages into department headers; it changes
+#: nothing about ``PAGE_ROLES`` gating, routes, or ``NAV`` itself (which other
+#: code, e.g. the request dispatcher, still iterates independently).
+#: ``tests/test_dashboard.py::test_nav_groups_cover_every_nav_page`` guards
+#: that this set never drifts from ``NAV``.
+NAV_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("", ("command_center",)),
+    ("Reservations & Guests", ("cases", "inventory")),
+    ("Operations", ("operations",)),
+    ("Finance", ("finance",)),
+    ("Approvals & Compliance", ("approvals", "audit")),
+    ("Property & Partnerships", ("properties",)),
+    ("Commercial & Marketing", ("marketing",)),
+    ("Technology & Channels", ("channels", "outbox", "shadow_eval")),
 )
 
 # --------------------------------------------------------------------------- #
@@ -724,20 +759,33 @@ def kpi_row(
 
 
 def nav_links(role: str) -> Markup:
-    """Only the pages this role may open; a hidden page is not advertised."""
-    parts = []
-    for page, route in NAV:
-        if role in PAGE_ROLES.get(page, ()):
-            parts.append(
-                f'<a href="{escape_value(route)}" data-nav="{escape_value(page)}">'
-                f"{_cell(PAGE_TITLES[page])}</a>"
+    """Only the pages this role may open; a hidden page is not advertised.
+
+    Pages are grouped into department sections (``NAV_GROUPS``) so the nav
+    reads like the agency's org chart instead of a flat page list — purely
+    presentational, same gating, same ``data-nav``/``data-nav-denied`` markers.
+    """
+    routes = dict(NAV)
+    groups = []
+    for label, pages in NAV_GROUPS:
+        links = []
+        for page in pages:
+            route = routes[page]
+            if role in PAGE_ROLES.get(page, ()):
+                links.append(
+                    f'<a href="{escape_value(route)}" data-nav="{escape_value(page)}">'
+                    f"{_cell(PAGE_TITLES[page])}</a>"
+                )
+                continue
+            links.append(
+                f'<span class="badge" data-nav-denied="{escape_value(page)}" '
+                f'title="peran ini tidak berhak">—</span>'
             )
-            continue
-        parts.append(
-            f'<span class="badge" data-nav-denied="{escape_value(page)}" '
-            f'title="peran ini tidak berhak">—</span>'
+        header = (
+            f'<span class="navgroup-label">{_cell(label)}</span>' if label else ""
         )
-    return Markup('<nav class="nav">' + "".join(parts) + "</nav>")
+        groups.append(f'<div class="navgroup">{header}{"".join(links)}</div>')
+    return Markup('<nav class="nav">' + "".join(groups) + "</nav>")
 
 
 # --------------------------------------------------------------------------- #
@@ -1226,6 +1274,7 @@ class Dashboard:
             "page": page,
             "actor": principal.identity,
             "actor_role": principal.role,
+            "actor_role_label": ROLE_DISPLAY_LABEL.get(principal.role, principal.role),
             "now": to_iso(self.clock.now()),
             "schema_version": self.schema_version(),
             "nav": nav_links(principal.role),

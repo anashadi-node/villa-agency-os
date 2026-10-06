@@ -1415,6 +1415,7 @@ def test_render_page_escapes_every_dynamic_value():
             "page": "properties",
             "actor": XSS,
             "actor_role": "owner",
+            "actor_role_label": XSS,
             "now": "2026-09-21T08:00:00+00:00",
             "schema_version": "1.0.0",
             "nav": D.Markup(""),
@@ -1891,3 +1892,32 @@ def test_shadow_eval_page_is_open_to_the_auditor_and_closed_to_reservation(seede
     assert seeded_app.page_allowed("shadow_eval", "auditor")
     assert not seeded_app.page_allowed("shadow_eval", "reservation")
     assert seeded_app.page_allowed("channels", "reservation")
+
+
+def test_nav_groups_cover_every_nav_page():
+    """NAV_GROUPS is a presentation-only regrouping of NAV (ADR-0035 org chart).
+
+    It must cover exactly the same page set, with no duplicate and no drift,
+    or the grouped nav would silently hide a real page / show a dead one.
+    """
+    nav_pages = [page for page, _route in D.NAV]
+    grouped_pages = [page for _label, pages in D.NAV_GROUPS for page in pages]
+    assert sorted(grouped_pages) == sorted(nav_pages)
+    assert len(grouped_pages) == len(set(grouped_pages)), "page listed in two groups"
+
+
+def test_nav_links_still_emit_data_nav_markers_per_role():
+    """Grouping is visual only: every role still gets the same allow/deny set."""
+    for role in D.ROLES:
+        html = str(D.nav_links(role))
+        for page, _route in D.NAV:
+            if role in D.PAGE_ROLES.get(page, ()):
+                assert f'data-nav="{page}"' in html
+            else:
+                assert f'data-nav-denied="{page}"' in html
+
+
+def test_role_display_label_covers_every_dashboard_role():
+    for role in D.ROLES:
+        assert role in D.ROLE_DISPLAY_LABEL
+        assert D.ROLE_DISPLAY_LABEL[role]
