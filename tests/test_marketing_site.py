@@ -213,6 +213,28 @@ class TestPublicReadModel:
         _conn, site = _make_site(clock)
         assert site.villa_html("prop-missing") is None
 
+    def test_availability_hint_is_safe_without_live_evidence(self, clock):
+        _conn, site = _make_site(clock)
+        hint = site.read_model.availability_hint("prop-1", to_iso(clock.now()))
+        assert "live availability is not published here" in hint
+        assert "checks with the villa owner" in hint
+
+    def test_availability_hint_uses_current_evidence_without_promising_instant_confirm(self, clock):
+        conn, site = _make_site(clock)
+        now = clock.now()
+        conn.execute(
+            "INSERT INTO availability_evidence (evidence_id, agency_id, unit_id,"
+            " evidence_level, source_type, source_ref, captured_at, valid_until,"
+            " result, restrictions, occupancy_ranges, can_quote, can_hold, can_confirm,"
+            " notes, created_at)"
+            " VALUES ('ev_mkt_1', 'agency_default', 'unit-1', 'B', 'manual_ops',"
+            " 'ops-note-1', ?, ?, 'AVAILABLE', NULL, '[]', 1, 1, 0, NULL, ?)",
+            (to_iso(now), to_iso(now + timedelta(hours=2)), to_iso(now)),
+        )
+        hint = site.read_model.availability_hint("prop-1", to_iso(now))
+        assert "likely available for a short hold" in hint
+        assert "instant" not in hint.lower()
+
     def test_invalid_slug_returns_none_not_crash(self, clock):
         _conn, site = _make_site(clock)
         assert site.villa_html("../etc/passwd") is None
@@ -252,6 +274,8 @@ class TestRenderedPages:
         html = site.villa_html("prop-1")
         assert "Main Villa" in html and "Garden Suite" in html
         assert "Pool Suite" not in html  # MAINTENANCE unit stays internal
+        assert "Availability hint:" in html
+        assert "checks with the villa owner" in html
 
     def test_inquiry_form_has_honeypot_and_token(self, clock):
         _conn, site = _make_site(clock)

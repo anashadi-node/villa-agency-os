@@ -47,7 +47,7 @@ from urllib.parse import parse_qsl, urlsplit
 from cases import CaseService, SLA_POLICIES
 from crm import CrmService, DuplicateGuest, CrmError
 from dashboard import Markup, escape_value, render_page, serve
-from primitives import DomainError, IdFactory, SystemClock, require_ref, resolve_agency_id
+from primitives import DomainError, IdFactory, SystemClock, require_ref, resolve_agency_id, to_iso
 from schema_loader import connect_sqlite
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -191,6 +191,35 @@ class PublicReadModel:
                 (self.agency_id, require_ref(property_id, "property_id")),
             )
         ]
+
+    def availability_hint(self, property_id: str, now_iso: str) -> str:
+        """Guest-safe availability hint: useful, but never an instant-confirm promise."""
+        row = self.conn.execute(
+            "SELECT ae.result, ae.evidence_level, ae.can_quote, ae.can_hold, ae.can_confirm,"
+            " ae.valid_until"
+            " FROM availability_evidence ae"
+            " JOIN units u ON u.agency_id = ae.agency_id AND u.unit_id = ae.unit_id"
+            " WHERE ae.agency_id = ? AND u.property_id = ? AND u.status = 'ACTIVE'"
+            " AND ae.valid_until > ?"
+            " ORDER BY ae.captured_at DESC, ae.evidence_id DESC LIMIT 1",
+            (self.agency_id, require_ref(property_id, "property_id"), now_iso),
+        ).fetchone()
+        if row is None:
+            return (
+                "Availability hint: live availability is not published here. "
+                "Our team checks with the villa owner before sending a quote."
+            )
+        if row["result"] == "AVAILABLE" and int(row["can_quote"]):
+            if int(row["can_confirm"]):
+                return "Availability hint: recently verified; our team still reconfirms before payment."
+            if int(row["can_hold"]):
+                return "Availability hint: likely available for a short hold after team verification."
+            return "Availability hint: likely quotable after team verification."
+        if row["result"] == "AVAILABLE_BUT_RESTRICTED":
+            return "Availability hint: dates may work, but special restrictions must be checked first."
+        if row["result"] == "NOT_AVAILABLE":
+            return "Availability hint: latest evidence says selected dates may be unavailable. Ask us for nearby dates."
+        return "Availability hint: availability is being checked before any quote is promised."
 
 
 class InquiryIntake:
@@ -484,6 +513,7 @@ class MarketingSite:
         if villa is None:
             return None
         units = self.read_model.active_units(property_id)
+        availability_hint = self.read_model.availability_hint(property_id, to_iso(self.clock.now()))
         return self._page(
             "villa_detail",
             {
@@ -492,6 +522,7 @@ class MarketingSite:
                 "villa_meta": escape_value(f"{villa['province']} · {villa['region']} · {villa['property_type'].replace('_', ' ')}"),
                 "units_table": _units_table(units),
                 "property_ref": escape_value(property_id),
+                "availability_hint": escape_value(availability_hint),
                 "head_extra": Markup(""),
             },
             base=base,
