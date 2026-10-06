@@ -270,6 +270,16 @@ class TestRenderedPages:
         html = site.inquiry_form_html("prop-missing")
         assert "You are asking about" not in html
 
+    def test_owner_page_is_public_read_only_copy(self, clock):
+        conn, site = _make_site(clock)
+        before = conn.execute("SELECT COUNT(*) AS n FROM cases").fetchone()["n"]
+        html = site.owners_html()
+        after = conn.execute("SELECT COUNT(*) AS n FROM cases").fetchone()["n"]
+        assert "Partner with a local villa team" in html
+        assert "Owner-approved quotes" in html
+        assert "/inquiry" in html
+        assert after == before
+
 
 # --------------------------------------------------------------------------- #
 # Intake (unit level)
@@ -489,6 +499,14 @@ class TestServedSite:
             status, _headers, _html = _get(base, "/villas/prop-3")
             assert status == 404
 
+    def test_owner_page_served_over_http(self, clock, tmp_path):
+        with _live_site(tmp_path, clock) as (_site, base):
+            status, headers, html = _get(base, "/owners")
+            assert status == 200
+            assert headers.get("X-Frame-Options") == "DENY"
+            assert "Partner with a local villa team" in html
+            assert "Hidden Backoffice Villa" not in html
+
     def test_xss_name_is_escaped_over_http(self, clock, tmp_path):
         with _live_site(tmp_path, clock) as (_site, base):
             _status, _headers, html = _get(base, "/villas")
@@ -565,7 +583,8 @@ class TestServedSite:
         for html in (
             site.home_html(), site.villas_html(), site.destination_html("bali"),
             site.destination_html("yogyakarta"), site.villa_html("prop-1"),
-            site.inquiry_form_html("prop-1"), site.error_html(404, "missing"),
+            site.owners_html(), site.inquiry_form_html("prop-1"),
+            site.error_html(404, "missing"),
         ):
             assert html
         assert counts() == before
@@ -573,12 +592,14 @@ class TestServedSite:
     def test_dump_writes_pages_without_secrets(self, clock, tmp_path):
         _conn, site = _make_site(clock)
         written = site.dump(tmp_path / "site")
-        # index + villas + inquiry + 2 destinations + 2 sellable villa pages
-        assert len(written) == 7
+        # index + villas + owners + inquiry + 2 destinations + 2 sellable villa pages
+        assert len(written) == 8
         assert (tmp_path / "site" / "index.html").exists()
+        assert (tmp_path / "site" / "owners.html").exists()
         assert (tmp_path / "site" / "inquiry.html").exists()
         assert (tmp_path / "site" / "destinations" / "bali.html").exists()
         assert (tmp_path / "site" / "villas" / "prop-1.html").exists()
+        (tmp_path / "site" / "index.html").read_text().index('href="owners.html"')
         (tmp_path / "site" / "index.html").read_text().index('href="inquiry.html"')
         for html in (p.read_text() for p in tmp_path.rglob("*.html")):
             assert ('href="/' not in html), "dump must contain no site-absolute links"

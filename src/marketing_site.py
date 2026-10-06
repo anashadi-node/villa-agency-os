@@ -390,6 +390,7 @@ class MarketingSite:
             "/villas": "villas.html",
             "/destinations/bali": "destinations/bali.html",
             "/destinations/yogyakarta": "destinations/yogyakarta.html",
+            "/owners": "owners.html",
             "/inquiry": "inquiry.html",
         }
     )
@@ -521,6 +522,16 @@ class MarketingSite:
             base=base,
         )
 
+    def owners_html(self, base: str = "") -> str:
+        return self._page(
+            "owners",
+            {
+                "page_title": "For Villa Owners — Villa Agency",
+                "head_extra": Markup(""),
+            },
+            base=base,
+        )
+
     def inquiry_success_html(self, result: Mapping[str, str]) -> str:
         return self._page(
             "inquiry_success",
@@ -552,10 +563,11 @@ class MarketingSite:
         """
         out = Path(directory)
         out.mkdir(parents=True, exist_ok=True)
-        written = [out / "inquiry.html"]
+        written = [out / "inquiry.html", out / "owners.html"]
         (out / "inquiry.html").write_text(
             self.inquiry_form_html(base="."), encoding="utf-8"
         )
+        (out / "owners.html").write_text(self.owners_html(base="."), encoding="utf-8")
         (out / "index.html").write_text(self.home_html(base="."), encoding="utf-8")
         (out / "villas.html").write_text(self.villas_html(base="."), encoding="utf-8")
         written.append(out / "index.html")
@@ -640,6 +652,8 @@ class _MarketingRequestHandler(BaseHTTPRequestHandler):
                 self._error(404, "Page not found.")
             else:
                 self._send_html(page)
+        elif path == "/owners":
+            self._send_html(site.owners_html())
         elif path == "/inquiry":
             query = parse_qsl(urlsplit(self.path).query, keep_blank_values=True)
             property_ref = dict(query).get("property", "").strip()
