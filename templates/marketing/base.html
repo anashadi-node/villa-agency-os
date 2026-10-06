@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{page_title}}</title>
 <meta name="description" content="Private villas in Bali and Yogyakarta with local concierge, verified availability, and direct booking confidence.">
-{{head_extra}}
 <style>
 :root{
   --sand:#f6ecd8;--paper:#fffaf1;--ink:#20241f;--teak:#123a2d;--teak2:#1d5742;
@@ -73,8 +72,12 @@ main .badges li{background:var(--sand);border-color:var(--line);color:#4a4327}
 .card:hover{transform:translateY(-3px);box-shadow:0 14px 30px rgba(30,45,30,.12)}
 .card h3{margin-top:0}
 .card p{font-size:.93rem;color:#4a4a42;margin:.3rem 0 0}
-.card .photo{height:140px;background:linear-gradient(135deg,#dcc893,#b8955f 55%,#8f6a3d);position:relative}
-.card .photo::after{content:"Photo coming soon";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:rgba(255,255,255,.85);background:rgba(20,30,20,.14)}
+.card .photo{height:140px;background:linear-gradient(135deg,#dcc893,#b8955f 55%,#8f6a3d);position:relative;background-size:cover;background-position:center}
+.card .photo.placeholder::after{content:"Photo coming soon";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:rgba(255,255,255,.85);background:rgba(20,30,20,.14)}
+.photo.detail{height:clamp(220px,42vw,420px);border-radius:14px;margin:1.3rem 0 .4rem;background:linear-gradient(135deg,#dcc893,#b8955f 55%,#8f6a3d);background-size:cover;background-position:center;position:relative;overflow:hidden}
+.photo.detail.placeholder::after{content:"Photo coming soon";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;font-size:.8rem;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.88);background:rgba(20,30,20,.14)}
+.photo-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.7rem;margin:.6rem 0 1.2rem}
+.photo-tile{height:150px;border-radius:10px;background-size:cover;background-position:center;background-color:#dcc893}
 .card .body{padding:1rem 1.1rem 1.15rem}
 .card h3{margin:.1rem 0 .35rem;font-size:1.1rem}
 .card h3 a{color:var(--teak);text-decoration:none}
@@ -125,6 +128,7 @@ footer.site .legal{border-top:1px solid rgba(255,255,255,.12);text-align:center;
 
 @media (max-width:760px){.trio{grid-template-columns:1fr}.hero-band{padding:2.6rem 1.1rem 3rem}}
 </style>
+{{head_extra}}
 </head>
 <body>
 <header class="site">

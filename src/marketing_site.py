@@ -24,7 +24,9 @@ Recorded decisions:
  * Anti-abuse: honeypot field, per-IP sliding-window rate limit, same-origin
    check on POST, bounded form size and message length, opaque-token validation
    for the property hint. All fail closed; no third-party services, no external
-   assets (single-file inline CSS/SVG only).
+   network assets (single-file response: inline CSS/SVG, and base64-embedded
+   JPEG villa photos read from ``assets/photos/`` at startup — zero new routes,
+   zero outbound requests from the rendered page; see ``docs/PHOTO_CREDITS_2026-10-06.md``).
  * Serving: deliberately single-threaded (the sqlite connection is bound to the
    creating thread, same reason as the internal dashboard) and loopback-bound
    unless ``--allow-remote`` is given explicitly.
@@ -38,6 +40,8 @@ CLI::
 from __future__ import annotations
 
 import argparse
+import base64
+import functools
 import re
 import secrets
 import sys
@@ -67,6 +71,66 @@ FEATURED_VILLA_LIMIT = 3
 MAX_NAME_CHARS = 100
 MAX_MESSAGE_CHARS = 5_000
 MAX_FORM_BYTES = 32 * 1024
+
+#: Villa photo placeholders — CC BY-SA / public-domain stock from Wikimedia
+#: Commons (credits + source links: ``docs/PHOTO_CREDITS_2026-10-06.md``), NOT
+#: real photos of the listed properties. Matched to a villa by a keyword found
+#: in its name; unmatched villas fall back to the CSS "Photo coming soon" card
+#: (see ``.card .photo.placeholder`` in ``templates/marketing/base.html``).
+PHOTOS_DIR = REPO_ROOT / "assets" / "photos"
+_VILLA_PHOTO_KEYWORDS: tuple[tuple[str, str], ...] = (
+    ("canggu", "canggu"),
+    ("jatiluwih", "jatiluwih"),
+    ("uluwatu", "uluwatu"),
+    ("joglo", "joglo"),
+    ("merapi", "joglo"),
+)
+HERO_PHOTO_FILE = "hero_bali_pool.jpg"
+
+#: Ambience strip on the villa detail page — illustrative resort shots, same
+#: CC BY-SA / CC0 sourcing as the villa cards (see the credits doc).
+_GALLERY_PHOTOS: tuple[str, ...] = (
+    "gallery/amb1_reserve_pool.jpg",
+    "gallery/amb2_private_pool_villa.jpg",
+    "gallery/amb3_pool_sunset.jpg",
+)
+
+
+@functools.lru_cache(maxsize=None)
+def _photo_data_uri(relative: str) -> Optional[str]:
+    """Base64 data: URI for a file under ``assets/photos/``, cached after first read."""
+    path = PHOTOS_DIR / relative
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    return "data:image/jpeg;base64," + base64.b64encode(raw).decode("ascii")
+
+
+def _villa_photo_uri(villa_name: str, size: str = "card") -> Optional[str]:
+    """Photo URI for a villa by name keyword; ``size`` picks the card or detail set."""
+    lowered = villa_name.lower()
+    for keyword, stem in _VILLA_PHOTO_KEYWORDS:
+        if keyword in lowered:
+            return _photo_data_uri(f"{size}/{stem}.jpg")
+    return None
+
+
+def _gallery_html() -> Markup:
+    """Illustrative ambience strip for the villa detail page (skips missing files)."""
+    tiles = []
+    for rel in _GALLERY_PHOTOS:
+        uri = _photo_data_uri(rel)
+        if uri:
+            tiles.append(f'<div class="photo-tile" style="background-image:url(\'{uri}\')" role="img" aria-label="Illustrative resort ambience"></div>')
+    if not tiles:
+        return Markup("")
+    return Markup(
+        '<h2>Ambience</h2>'
+        '<p class="note">Illustrative resort imagery — not this villa. '
+        'Ask our team for current photos of the property.</p>'
+        f'<div class="photo-strip">{"".join(tiles)}</div>'
+    )
 
 #: The honeypot field: humans never see it, so a filled value means a bot.
 HONEYPOT_FIELD = "company"
@@ -358,12 +422,20 @@ def _card_html(villa: Mapping[str, Any]) -> Markup:
         facts.append(f"{units} unit{'s' if units != 1 else ''}")
     fact_line = " · ".join(facts) if facts else "Details on request"
     href = escape_value(f"/villas/{villa['property_id']}")
+    photo_uri = _villa_photo_uri(str(villa["name"]))
+    if photo_uri:
+        photo_div = f'<div class="photo" style="background-image:url(\'{photo_uri}\')" role="img" aria-label="{escape_value(villa["name"])} — illustrative photo"></div>'
+    else:
+        photo_div = '<div class="photo placeholder"></div>'
     return Markup(
         f'<article class="card">'
+        f'{photo_div}'
+        f'<div class="body">'
         f'<div class="card-region">{escape_value(villa["province"])} · {escape_value(villa["region"])}</div>'
         f'<h3><a href="{href}">{escape_value(villa["name"])}</a></h3>'
         f'<p class="card-facts">{escape_value(villa["property_type"].replace("_", " "))} — {escape_value(fact_line)}</p>'
         f'<a class="card-link" href="{href}">View villa &rarr;</a>'
+        f'</div>'
         f'</article>'
     )
 
@@ -475,12 +547,22 @@ class MarketingSite:
         cards = "".join(str(_card_html(v)) for v in featured) or (
             "<p class='empty'>Our collection is being curated right now.</p>"
         )
+        hero_uri = _photo_data_uri(HERO_PHOTO_FILE)
+        hero_style = (
+            Markup(
+                "<style>.hero-band{background-image:"
+                "linear-gradient(165deg,rgba(13,44,34,.68) 0%,rgba(18,58,45,.62) 46%,rgba(14,46,63,.70) 100%),"
+                f"url('{hero_uri}');background-size:cover;background-position:center}}</style>"
+            )
+            if hero_uri
+            else Markup("")
+        )
         return self._page(
             "home",
             {
                 "page_title": "Villa Agency — Private Villas in Bali & Yogyakarta",
                 "villa_cards": Markup(cards),
-                "head_extra": Markup(""),
+                "head_extra": hero_style,
             },
             base=base,
         )
@@ -530,12 +612,22 @@ class MarketingSite:
             return None
         units = self.read_model.active_units(property_id)
         availability_hint = self.read_model.availability_hint(property_id, to_iso(self.clock.now()))
+        photo_uri = _villa_photo_uri(str(villa["name"]), size="detail")
+        if photo_uri:
+            villa_photo = Markup(
+                f'<div class="photo detail" style="background-image:url(\'{photo_uri}\')" '
+                f'role="img" aria-label="{escape_value(villa["name"])} — illustrative photo"></div>'
+            )
+        else:
+            villa_photo = Markup('<div class="photo detail placeholder"></div>')
         return self._page(
             "villa_detail",
             {
                 "page_title": f"{villa['name']} — Villa Agency",
                 "villa_name": escape_value(villa["name"]),
                 "villa_meta": escape_value(f"{villa['province']} · {villa['region']} · {villa['property_type'].replace('_', ' ')}"),
+                "villa_photo": villa_photo,
+                "villa_gallery": _gallery_html(),
                 "units_table": _units_table(units),
                 "property_ref": escape_value(property_id),
                 "availability_hint": escape_value(availability_hint),

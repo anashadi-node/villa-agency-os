@@ -630,3 +630,62 @@ class TestServedSite:
         blob = "\n".join(p.read_text() for p in tmp_path.rglob("*.html"))
         assert "Hidden Backoffice Villa" not in blob
         assert "API_KEY" not in blob and "SECRET" not in blob
+
+
+# --------------------------------------------------------------------------- #
+# Villa photo placeholders (assets/photos/ embedded as base64 data URIs)
+# --------------------------------------------------------------------------- #
+
+
+def _fake_villa(name: str, **overrides) -> dict:
+    villa = dict(
+        property_id="prop-x",
+        province="Bali",
+        region="Canggu",
+        name=name,
+        property_type="private_villa",
+        bedrooms_min=3,
+        bedrooms_max=4,
+        sleeps_max=8,
+        active_units=1,
+    )
+    villa.update(overrides)
+    return villa
+
+
+class TestVillaPhotos:
+    """Photos stay self-contained (data URIs) and degrade to a labelled placeholder."""
+
+    def test_matched_villa_card_embeds_photo_and_no_external_url(self):
+        card = str(M._card_html(_fake_villa("Villa Canggu Garden Retreat")))
+        assert "data:image/jpeg;base64," in card
+        assert "photo placeholder" not in card
+        assert "http://" not in card and "https://" not in card
+
+    def test_unmatched_villa_card_falls_back_to_placeholder(self):
+        card = str(M._card_html(_fake_villa("Some Unlisted Homestay")))
+        assert "photo placeholder" in card
+        assert "data:image/jpeg;base64," not in card
+
+    def test_keyword_match_is_case_insensitive_and_covers_merapi(self):
+        assert M._villa_photo_uri("Villa ULUWATU Cliffside", size="detail")
+        assert M._villa_photo_uri("Joglo Volcano Merapi Residence")
+        assert M._villa_photo_uri("Nothing Matches Here") is None
+
+    def test_missing_photo_file_returns_none(self):
+        assert M._photo_data_uri("card/does_not_exist.jpg") is None
+
+    def test_home_hero_embeds_background_photo(self, clock):
+        _conn, site = _make_site(clock)
+        html = site.home_html()
+        assert "hero-band{background-image:" in html
+        assert "data:image/jpeg;base64," in html
+
+    def test_villa_detail_has_labelled_ambience_strip(self, clock):
+        _conn, site = _make_site(clock)
+        html = site.villa_html("prop-1")
+        assert html is not None
+        assert "photo-strip" in html
+        assert "Illustrative resort imagery" in html
+        # The label must state the strip is NOT the property being sold.
+        assert "not this villa" in html
