@@ -1,0 +1,13 @@
+[Unit]
+Description=Villa Agency OS — Public Marketing Website (127.0.0.1:8090)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/anashadi/villa-agency-os
+ExecStart=/usr/bin/python3 /home/anashadi/villa-agency-os/src/marketing_site.py --db /home/anashadi/villa-agency-os/data/villa.db --port 8090
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
