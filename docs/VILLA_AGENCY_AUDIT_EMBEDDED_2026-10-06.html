@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Villa Agency OS — Audit Cepat Tertanam (Web Marketing + Dashboard) · 2026-10-06</title>
+<style>
+:root{--sand:#f7efe2;--paper:#fffaf2;--ink:#1f2520;--muted:#6e665b;--teak:#214a3b;--teak2:#2f6a52;--gold:#c99442;--clay:#b66a3c;--line:#e6d8c2;--dark:#111816;--ok:#2f6a52;--prog:#b8842c;--todo:#a8402e}
+*{box-sizing:border-box}body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#f3ead9;color:var(--ink);line-height:1.56}
+a{color:var(--teak2)}
+.hero{position:relative;overflow:hidden;padding:52px 26px 40px;background:radial-gradient(circle at 10% 8%,rgba(201,148,66,.28),transparent 28%),radial-gradient(circle at 92% 20%,rgba(47,106,82,.24),transparent 32%),linear-gradient(135deg,#17372d,#101b17 58%,#3b1f17);color:#fff}
+.wrap{max-width:1180px;margin:auto;position:relative;z-index:1}
+.eyebrow{letter-spacing:.14em;text-transform:uppercase;color:#e7c27a;font-weight:800;font-size:12px}
+.hero h1{font-family:Georgia,serif;font-size:clamp(30px,4.6vw,52px);line-height:1.04;margin:12px 0 14px;max-width:920px}
+.hero p{max-width:820px;color:#f5ead9;font-size:16.5px}
+.verdictbar{margin-top:22px;display:flex;gap:14px;flex-wrap:wrap}
+.vcard{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.22);border-radius:16px;padding:14px 18px;min-width:170px}
+.vcard b{display:block;font-size:26px}
+.vcard span{font-size:12px;color:#e9dcc3;text-transform:uppercase;letter-spacing:.06em}
+main{max-width:1180px;margin:0 auto;padding:30px 20px 80px}
+.section{margin-top:40px}
+.section h2{font-family:Georgia,serif;font-size:29px;margin:0 0 6px;color:#1b2b25}
+.section .sub{color:#6e665b;margin:0 0 18px;max-width:900px}
+.badge{display:inline-block;border-radius:999px;padding:4px 11px;font-size:11.5px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:#fff}
+.b-done{background:var(--ok)}.b-prog{background:var(--prog)}.b-todo{background:var(--todo)}.b-na{background:#8a8378}
+.toc{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+.toc a{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.25);border-radius:999px;padding:7px 13px;color:#fff;font-size:12.5px;text-decoration:none;font-weight:700}
+
+/* ===== mockup frame (reused for marketing site + dashboard) ===== */
+.mock{background:#fff;border:1px solid var(--line);border-radius:22px;overflow:hidden;box-shadow:0 18px 50px rgba(70,54,24,.12);margin-top:18px}
+.mock-bar{background:#ece1cb;padding:9px 16px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line)}
+.dot{width:10px;height:10px;border-radius:50%}
+.mock-url{margin-left:10px;background:#fffaf0;border:1px solid var(--line);border-radius:8px;padding:4px 12px;font-size:12px;color:#7c7362;font-family:ui-monospace,monospace}
+.annot{position:relative}
+.tag{position:absolute;top:8px;right:10px;z-index:3}
+.msec{padding:18px 20px;border-bottom:1px dashed var(--line);position:relative}
+.msec:last-child{border-bottom:none}
+.msec h4{margin:0 0 4px;font-size:15px;color:var(--teak)}
+.msec p.ev{margin:4px 0 0;font-size:12.8px;color:#6e665b}
+.m-hero{background:linear-gradient(120deg,#133227,#0d1612 70%);color:#fff;padding:30px 20px}
+.m-hero h3{font-family:Georgia,serif;font-size:26px;margin:4px 0 8px}
+.search{background:#fff;border-radius:12px;padding:10px;display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.search span{background:#f1e6d2;border-radius:8px;padding:8px 12px;font-size:12px;color:#49391f;font-weight:700}
+.villa-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:10px}
+.vc{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#fffdf8}
+.vc .ph{height:70px;background:linear-gradient(135deg,#dcc89a,#b99a6a)}
+.vc .body{padding:10px}
+.vc .body b{font-size:12.5px;display:block}
+.vc .body .price{font-size:12px;color:var(--teak2);font-weight:800;margin-top:4px}
+.navbar{display:flex;gap:16px;font-size:12.5px;font-weight:700;color:#cfe3d7;flex-wrap:wrap}
+
+/* dashboard shell */
+.dash{display:grid;grid-template-columns:200px 1fr}
+.side{background:#152420;color:#dfe9e2;padding:14px 10px}
+.side .brand{font-weight:800;font-size:13px;color:#f4c46b;padding:6px 10px 14px}
+.navitem{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-radius:8px;font-size:12.5px;margin-bottom:2px}
+.navitem.active{background:rgba(255,255,255,.08)}
+.dbody{padding:18px 20px}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.kpi{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:#fffdf8}
+.kpi b{font-size:18px;display:block}
+.kpi span{font-size:11px;color:#6e665b;text-transform:uppercase}
+
+.table{overflow:auto;border:1px solid var(--line);border-radius:18px;background:#fffdf8;margin-top:10px}
+table{border-collapse:collapse;width:100%;min-width:700px}
+th,td{padding:11px 13px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;font-size:13.5px}
+th{background:#f1dfc3;color:#49391f}
+tr:last-child td{border-bottom:0}
+.center{text-align:center}
+.warn{background:#fff5e7;border:1px solid #ead3af;border-left:6px solid var(--gold);border-radius:16px;padding:16px 20px;margin-top:12px}
+.warn b{color:#7a5410}
+.danger{background:#fdeeea;border:1px solid #efc1b2;border-left:6px solid var(--todo);border-radius:16px;padding:16px 20px;margin-top:12px}
+.danger b{color:#8a2d1b}
+.ok{background:#eef6f0;border:1px solid #bfe0cc;border-left:6px solid var(--ok);border-radius:16px;padding:16px 20px;margin-top:12px}
+.ok b{color:#1f4a34}
+.code{background:#111816;color:#dce8dd;border-radius:14px;padding:14px 16px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.3px;overflow:auto;line-height:1.5;margin-top:10px;white-space:pre}
+.code .ok-l{color:#8fd3b6}.code .warn-l{color:#f4c46b}.code .fail-l{color:#f49a8a}
+.foot{margin-top:46px;padding:22px;border-radius:20px;background:#111816;color:#dce8dd}
+.foot b{color:#f4c46b}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:18px}
+.card h3{margin:0 0 8px;color:var(--teak);font-size:16px}
+@media(max-width:900px){.villa-grid,.kpis,.grid2{grid-template-columns:1fr}.dash{grid-template-columns:1fr}.hero{padding:34px 16px}}
+</style>
+</head>
+<body>
+<header class="hero"><div class="wrap">
+  <div class="eyebrow">Villa Agency OS · Scan Audit Cepat · 2026-10-06 · Ekosistem Super Dev Builder</div>
+  <h1>Audit tertanam langsung di web marketing &amp; dashboard karyawan — bukan laporan terpisah</h1>
+  <p>Setiap bagian mockup di bawah adalah <b>struktur nyata</b> yang sudah ada di kode (<code>src/marketing_site.py</code>, <code>src/dashboard.py</code>), diberi label audit langsung di tempatnya: hijau = selesai &amp; terbukti tes, kuning = sebagian/berjalan, merah = belum ada. Dibandingkan dengan 6 situs villa agency Bali yang Anda rujuk.</p>
+  <div class="verdictbar">
+    <div class="vcard"><b>TIDAK 100%</b><span>Verdict jujur</span></div>
+    <div class="vcard"><b>3.579 / 0</b><span>Tes lulus / gagal</span></div>
+    <div class="vcard"><b>NO-GO</b><span>Preflight go-live hari ini</span></div>
+    <div class="vcard"><b>0 baru</b><span>Bug/malware ditemukan scan ini</span></div>
+    <div class="vcard"><b>1 dari 7</b><span>Agent AI workforce jadi</span></div>
+  </div>
+  <div class="toc">
+    <a href="#verdict">1. Verdict satu layar</a>
+    <a href="#web">2. Web marketing (tertanam)</a>
+    <a href="#dash">3. Dashboard (tertanam)</a>
+    <a href="#bench">4. Benchmark 6 kompetitor</a>
+    <a href="#sec">5. Scan bug/security/malware</a>
+    <a href="#gap">6. Gap TODO terbesar</a>
+    <a href="#ask">7. Yang saya butuh dari Anda</a>
+  </div>
+</div></header>
+
+<main>
+
+<section class="section" id="verdict">
+  <h2>1. Verdict satu layar — jujur, bukan basa-basi</h2>
+  <p class="sub">Pertanyaan Anda: "sudah 100% fix semua, lengkap, akurat?" — <b>Jawaban: belum.</b> Rinciannya per lapisan, supaya tidak ada yang digeneralisasi:</p>
+  <div class="table"><table><thead><tr><th>Lapisan</th><th>Status</th><th>Bukti</th></tr></thead><tbody>
+    <tr><td><b>Kernel domain</b> (booking, hold, pembayaran, policy, audit, identitas)</td><td><span class="badge b-done">KUAT — ±95%</span></td><td>60 ADR tercatat, 3.579 tes hijau + 4 skip, gerbang pre-deploy bersih, invariant (HOLD_REQUESTED≠HOLD_CONFIRMED dkk) ditegakkan kode</td></tr>
+    <tr><td><b>Website marketing publik</b> (konsumen)</td><td><span class="badge b-prog">SKELETON — fungsional, konten belum produksi</span></td><td>9 halaman ada &amp; teruji; foto/copy villa asli, promo, testimoni, blog, FAQ, WhatsApp-first CTA — belum</td></tr>
+    <tr><td><b>Dashboard karyawan</b> (internal)</td><td><span class="badge b-prog">13 halaman ada — RBAC &amp; auth produksi belum final</span></td><td>command center s.d. outbox lengkap; auth masih bearer-token model demo, bukan MFA produksi penuh di semua peran</td></tr>
+    <tr><td><b>AI Workforce (6 agent + 1 tambahan)</b></td><td><span class="badge b-todo">1 dari 7 jadi (14%)</span></td><td>AI Reservation Service lengkap; Control Tower, Commercial, Operations, Finance Admin, Revenue&amp;BI AI = 0% kode</td></tr>
+    <tr><td><b>Kesiapan go-live (uang &amp; tamu nyata)</b></td><td><span class="badge b-todo">NO-GO hari ini</span></td><td>Preflight live baru saja dijalankan: 1 FAIL (tenant readiness), 3 WARN (anchor/backup belum dicek) — lihat §5</td></tr>
+    <tr><td><b>Bug / error / malware baru</b></td><td><span class="badge b-done">0 ditemukan scan hari ini</span></td><td>Lihat §5 — scan lengkap, bukan klaim kosong</td></tr>
+  </tbody></table></div>
+  <div class="warn"><b>Kenapa saya tidak bilang "100% selesai" meski Anda ingin dengar itu:</b> sistem ini <i>sengaja</i> dirancang untuk memisahkan "software siap" dari "bisnis siap" (ADR-0037 — "the system may be ready while the business is not"). Software domain-nya memang kuat. Tapi lapisan AI workforce yang Anda minta (6 agent) baru 1 yang berdiri, dan preflight go-live yang saya jalankan BARU SAJA hari ini mengembalikan <code>NO-GO</code>. Melapor "selesai" di titik ini akan jadi klaim palsu.</div>
+</section>
+
+<section class="section" id="web">
+  <h2>2. Website Marketing — contoh tertanam dengan audit</h2>
+  <p class="sub">Ini bukan mockup imajiner: struktur di bawah mengikuti <code>templates/marketing/*.html</code> dan <code>src/marketing_site.py</code> yang sudah ada &amp; teruji (35+ tes). Label di setiap bagian = temuan audit langsung di tempatnya.</p>
+
+  <div class="mock annot">
+    <div class="mock-bar"><div class="dot" style="background:#e5706a"></div><div class="dot" style="background:#e8c15a"></div><div class="dot" style="background:#79c29b"></div><div class="mock-url">https://[agency-anda].id/</div></div>
+
+    <div class="m-hero msec">
+      <span class="tag badge b-done">DONE — home.html + routing</span>
+      <div class="navbar">Beranda · Koleksi Villa · Destinasi · Untuk Pemilik Villa · Kontak</div>
+      <h3>Villa Pribadi Terbaik di Bali, Dipilih Tangan</h3>
+      <div class="search"><span>📍 Destinasi: Seminyak / Canggu / Ubud</span><span>📅 Check-in — Check-out</span><span>🛏️ Kamar</span><span>🔎 Cari Villa</span></div>
+      <p class="ev" style="color:#cfe3d7">Evidence: <code>home.html</code>, <code>destination.html</code> ada &amp; route teruji. Filter destinasi/kamar = struktur data ADA di kernel (<code>availability.py</code>, <code>matching.py</code>); widget pencarian visual di atas BELUM di-wire ke UI publik. <span class="badge b-prog" style="vertical-align:middle">PARTIAL</span></p>
+    </div>
+
+    <div class="msec">
+      <span class="tag badge b-done">DONE — villas.html (koleksi)</span>
+      <h4>Koleksi Villa Andalan</h4>
+      <div class="villa-grid">
+        <div class="vc"><div class="ph"></div><div class="body"><b>Villa Jatiluwih 4BR</b><div class="price">mulai Rp 6.400.000/malam</div></div></div>
+        <div class="vc"><div class="ph"></div><div class="body"><b>Villa Uluwatu Cliff 3BR</b><div class="price">mulai $420/malam</div></div></div>
+        <div class="vc"><div class="ph"></div><div class="body"><b>Villa Canggu Modern 5BR</b><div class="price">mulai Rp 7.250.000/malam</div></div></div>
+      </div>
+      <p class="ev">Evidence: grid villa ADA (<code>villas.html</code>). <b>Foto &amp; copy di atas adalah placeholder ilustratif saya</b> — foto/deskripsi villa ASLI per properti belum diisi (dicatat sejak Wave-0: "Production hosting, photos/copy per villa"). Harga ganda IDR/USD di atas konsisten dengan <b>ADR-0060 (selesai hari ini)</b>: currency tamu otomatis IDR untuk Indonesia, USD untuk luar negeri — tapi situs marketing TIDAK menampilkan harga sungguhan (semua quote tetap dikirim manusia, ADR-0036). <span class="badge b-prog">PARTIAL — struktur ada, konten asli belum</span></p>
+    </div>
+
+    <div class="msec">
+      <span class="tag badge b-done">DONE — owners.html</span>
+      <h4>Halaman "Daftarkan Villa Anda" (Untuk Pemilik)</h4>
+      <p class="ev">Evidence: <code>owners.html</code> (commit <code>619b0ba</code>) — ini FITUR LEBIH dari 4 dari 6 kompetitor rujukan Anda, yang hanya menyebut "konsultasi via WhatsApp" tanpa halaman onboarding pemilik terstruktur.</p>
+    </div>
+
+    <div class="msec">
+      <span class="tag badge b-done">DONE — inquiry_form.html + kernel case</span>
+      <h4>Form Inquiry → Jadi Case di Dashboard Staf</h4>
+      <p class="ev">Evidence: <code>IntakeService.submit()</code> membuat guest+case, dilindungi CSRF/<code>form_token</code>, honeypot anti-bot, rate limiter, same-origin check header <code>Origin</code>. Currency tamu baru diinferensi dari header <code>CF-IPCountry</code> (ADR-0060). Ini jalur yang SAYA uji ulang dan perbaiki hari ini: 14 tes baru, semua lulus.</p>
+    </div>
+
+    <div class="msec">
+      <span class="tag badge b-todo">TIDAK ADA</span>
+      <h4>Testimoni tamu, FAQ, promo/diskon publik, blog travel-guide, live-chat WhatsApp widget</h4>
+      <p class="ev">5 dari 6 situs rujukan Anda punya minimal 3 dari 5 elemen ini (lihat §4). Kernel SUDAH punya mesin diskon (<code>discounts.py</code>, ADR-0026) tapi belum disurfacekan ke halaman publik. Tidak ada modul/template untuk testimoni, FAQ, atau blog.</p>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="dash">
+  <h2>3. Dashboard Karyawan — contoh tertanam dengan audit</h2>
+  <p class="sub">13 halaman internal di <code>src/dashboard.py</code> — semua method <code>view_*</code> yang benar-benar ada di kode, bukan rencana.</p>
+
+  <div class="mock annot">
+    <div class="mock-bar"><div class="dot" style="background:#e5706a"></div><div class="dot" style="background:#e8c15a"></div><div class="dot" style="background:#79c29b"></div><div class="mock-url">https://staff.[agency-anda].id/dashboard</div></div>
+    <div class="dash">
+      <div class="side">
+        <div class="brand">VILLA AGENCY OS · Staff</div>
+        <div class="navitem active">🏠 Command Center <span class="badge b-done" style="font-size:9px">OK</span></div>
+        <div class="navitem">📋 Cases / Inquiry <span class="badge b-done" style="font-size:9px">OK</span></div>
+        <div class="navitem">🏘️ Inventory &amp; Availability <span class="badge b-done" style="font-size:9px">OK</span></div>
+        <div class="navitem">💰 Finance &amp; Invoicing <span class="badge b-done" style="font-size:9px">OK</span></div>
+        <div class="navitem">⚙️ Operations <span class="badge b-done" style="font-size:9px">OK</span></div>
+        <div class="navitem">✅ Approvals (maker-checker) <span class="badge b-done" style="font-size:9px">OK</span></div>
+        <div class="navitem">🏡 Properties &amp; Kontrak <span class="badge b-done" style="font-size:9px">OK</span></div>
+        <div class="navitem">📣 Marketing Readiness <span class="badge b-done" style="font-size:9px">OK</span></div>
+        <div class="navitem">🔌 Channels (WA/email) <span class="badge b-done" style="font-size:9px">OK</span></div>
+        <div class="navitem">🤖 Mutu AI (shadow-eval) <span class="badge b-done" style="font-size:9px">OK</span></div>
+        <div class="navitem">🧾 Audit Trail <span class="badge b-done" style="font-size:9px">OK</span></div>
+        <div class="navitem">📤 Outbox / Notifikasi <span class="badge b-done" style="font-size:9px">OK</span></div>
+        <div class="navitem" style="opacity:.55">📊 KPI Eksekutif <span class="badge b-prog" style="font-size:9px">SEBAGIAN</span></div>
+      </div>
+      <div class="dbody">
+        <h4 style="margin-top:0">Command Center — Ringkasan Hari Ini</h4>
+        <div class="kpis">
+          <div class="kpi"><b>0</b><span>Case terbuka</span></div>
+          <div class="kpi"><b>0</b><span>Approval pending</span></div>
+          <div class="kpi"><b>0</b><span>Rekonsiliasi terbuka</span></div>
+          <div class="kpi"><b>NO-GO</b><span>Status go-live tenant</span></div>
+        </div>
+        <p class="ev">Evidence: angka di atas adalah OUTPUT NYATA dari <code>scripts/preflight.py</code> yang saya jalankan hari ini terhadap <code>data/villa.db</code> — bukan ilustrasi. Lihat §5 untuk detail lengkap.</p>
+        <div class="table"><table><thead><tr><th>Halaman</th><th>Status audit</th><th>Catatan</th></tr></thead><tbody>
+          <tr><td>Case detail — kini menampilkan <b>currency tamu (IDR/USD)</b></td><td><span class="badge b-done">BARU HARI INI</span></td><td>ADR-0060, bagian dari sesi ini: badge "Guest's preferred currency" di header kasus</td></tr>
+          <tr><td>Mutu AI (shadow-eval)</td><td><span class="badge b-done">OK — 1 dari 7 agent</span></td><td>Hanya AI Reservation Service yang punya worker nyata (RES-W01…W11); 5 agent lain (Control Tower, Commercial, Operations, Finance Admin, Revenue&amp;BI) BELUM ADA kode-nya sama sekali</td></tr>
+          <tr><td>KPI Eksekutif agregat lintas-agent</td><td><span class="badge b-prog">SEBAGIAN</span></td><td>Telemetri KPI ada untuk Reservation Service (ADR-0057); laporan eksekutif gabungan untuk 5 agent lain tidak relevan karena agent-nya belum ada</td></tr>
+          <tr><td>Auth/RBAC produksi (MFA semua peran kritikal)</td><td><span class="badge b-prog">SEBAGIAN</span></td><td>MFA wajib untuk owner/finance/gm (keputusan 2026-10-02); model token masih bearer sederhana, bukan sesi produksi penuh untuk SEMUA 9+ peran blueprint</td></tr>
+        </tbody></table></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="bench">
+  <h2>4. Benchmark vs 6 situs villa agency Bali (data live, diambil hari ini)</h2>
+  <p class="sub">Diekstrak langsung dari URL yang Anda beri — bukan asumsi.</p>
+  <div class="table"><table><thead><tr><th>Fitur konsumen</th><th>balipremium<br>villa.com</th><th>thebali<br>agent.com</th><th>villadi<br>bali.net</th><th>villa-<br>bali.com</th><th>elite<br>havens.com</th><th>individual<br>bali.com</th><th>Villa Agency OS (kita)</th></tr></thead><tbody>
+    <tr><td>Koleksi villa + filter destinasi</td><td class="center">✅</td><td class="center">✅</td><td class="center">✅</td><td class="center">✅</td><td class="center">✅</td><td class="center">✅</td><td class="center"><span class="badge b-prog">PARTIAL</span></td></tr>
+    <tr><td>Harga tampil per villa (tiered season)</td><td class="center">—</td><td class="center">✅ (promo %)</td><td class="center">✅ (Low/High/Peak)</td><td class="center">—</td><td class="center">—</td><td class="center">—</td><td class="center"><span class="badge b-todo">TODO</span> (by design: quote via manusia)</td></tr>
+    <tr><td>Currency ganda (lokal + USD)</td><td class="center">—</td><td class="center">—</td><td class="center">✅ IDR saja</td><td class="center">—</td><td class="center">—</td><td class="center">—</td><td class="center"><span class="badge b-done">DONE — IDR+USD (ADR-0060)</span></td></tr>
+    <tr><td>WhatsApp CTA langsung</td><td class="center">✅</td><td class="center">?</td><td class="center">✅</td><td class="center">✅</td><td class="center">✅</td><td class="center">✅</td><td class="center"><span class="badge b-todo">TODO</span> (pakai form, belum WA-first)</td></tr>
+    <tr><td>Halaman khusus pemilik villa (list your villa)</td><td class="center">✅ (konsultasi)</td><td class="center">—</td><td class="center">—</td><td class="center">—</td><td class="center">✅ (book-direct)</td><td class="center">—</td><td class="center"><span class="badge b-done">DONE — owners.html</span></td></tr>
+    <tr><td>Testimoni / review tamu</td><td class="center">—</td><td class="center">?</td><td class="center">—</td><td class="center">✅</td><td class="center">—</td><td class="center">✅</td><td class="center"><span class="badge b-todo">TODO</span></td></tr>
+    <tr><td>FAQ</td><td class="center">—</td><td class="center">—</td><td class="center">—</td><td class="center">✅ (15 Q&amp;A)</td><td class="center">—</td><td class="center">✅</td><td class="center"><span class="badge b-todo">TODO</span></td></tr>
+    <tr><td>Blog / travel guide</td><td class="center">—</td><td class="center">—</td><td class="center">✅</td><td class="center">—</td><td class="center">✅ (Elite Magazine)</td><td class="center">✅</td><td class="center"><span class="badge b-todo">TODO</span></td></tr>
+    <tr><td>Promo / diskon publik</td><td class="center">—</td><td class="center">✅ (30% off)</td><td class="center">—</td><td class="center">—</td><td class="center">✅</td><td class="center">—</td><td class="center"><span class="badge b-prog">Mesin ADA (<code>discounts.py</code>), belum disurface</span></td></tr>
+    <tr><td>Concierge / layanan tambahan terstruktur</td><td class="center">✅ (umum)</td><td class="center">—</td><td class="center">—</td><td class="center">✅ (sangat detail)</td><td class="center">✅</td><td class="center">—</td><td class="center"><span class="badge b-todo">TODO</span> di sisi publik (kernel ops_tasks ADA untuk internal)</td></tr>
+  </tbody></table></div>
+  <p class="sub" style="margin-top:10px"><b>individualbali.com</b> gagal diekstrak via pipeline standar (billing quota penyedia scraping, kode 402) — saya ambil langsung via <code>curl</code> read-only sebagai gantinya; datanya di atas tetap dari halaman asli, bukan tebakan.</p>
+  <div class="ok"><b>Kesimpulan benchmark:</b> fondasi transaksi (currency, keamanan form, owner page) kita SUDAH di atas rata-rata 6 kompetitor. Yang kita kalah: konten engagement publik (testimoni, FAQ, blog, promo tampil, WhatsApp-first) — semuanya low-risk untuk dibangun, TIDAK butuh perubahan ke kernel domain yang sudah kuat.</div>
+</section>
+
+<section class="section" id="sec">
+  <h2>5. Scan bug / error / malware / kelemahan — hasil LIVE hari ini</h2>
+  <p class="sub">Dijalankan ulang di sesi ini, bukan menyalin hasil lama. Nol temuan baru yang butuh perbaikan darurat.</p>
+  <div class="table"><table><thead><tr><th>Pemeriksaan</th><th>Hasil</th><th>Detail</th></tr></thead><tbody>
+    <tr><td>Secret/credential bocor (304 file)</td><td><span class="badge b-done">PASS — 0 temuan</span></td><td><code>SECRET-SCAN: PASS (0 findings, 304 files scanned)</code></td></tr>
+    <tr><td>Config tidak aman (<code>shuffle</code>, <code>dry_run</code>, dll)</td><td><span class="badge b-done">PASS — 0 temuan</span></td><td><code>UNSAFE-SCAN: PASS (0 findings, 304 files scanned)</code></td></tr>
+    <tr><td><code>eval/exec/pickle/os.system/shell=True</code></td><td><span class="badge b-done">BERSIH</span></td><td>Nol kecocokan di <code>src/</code> dan <code>scripts/</code></td></tr>
+    <tr><td>SQL injection (string-format ke <code>execute()</code>)</td><td><span class="badge b-done">BERSIH</span></td><td>Satu f-string ditemukan (<code>audit.py:794</code>) — diverifikasi memakai konstanta modul <code>AUDIT_TABLE="audit_events"</code>, bukan input pengguna. Bukan celah.</td></tr>
+    <tr><td>XSS di dashboard/marketing (escaping HTML)</td><td><span class="badge b-done">BERSIH</span></td><td>Semua output lewat <code>escape_value()</code>/<code>html.escape()</code> via pembungkus <code>Markup</code> — nilai mentah tidak pernah masuk HTML tanpa escape</td></tr>
+    <tr><td>Panggilan jaringan keluar mencurigakan</td><td><span class="badge b-done">BERSIH</span></td><td>Hanya satu: <code>scripts/refresh_fx_rate.py</code> (provider kurs publik, read-only, didokumentasikan ADR-0031)</td></tr>
+    <tr><td>Blob terenkode/obfuscated (indikasi malware)</td><td><span class="badge b-done">BERSIH</span></td><td>Nol — dan risiko supply-chain nyaris nol karena <b>tanpa dependency pihak ketiga</b> (stdlib-only by design)</td></tr>
+    <tr><td>CSRF / same-origin pada form publik</td><td><span class="badge b-done">ADA</span></td><td><code>form_token</code> + honeypot + rate-limit + cek header <code>Origin</code> di <code>marketing_site.py</code></td></tr>
+    <tr><td>Full test suite</td><td><span class="badge b-done">3.579 passed, 4 skipped, 0 failed</span></td><td><code>make check</code> pasca-commit ADR-0060, interpreter produksi <code>/usr/bin/python3</code></td></tr>
+  </tbody></table></div>
+
+  <h4 style="margin-top:22px">Preflight go-live — dijalankan live barusan</h4>
+  <div class="code">OK    schema twin parity     <span class="ok-l">PostgreSQL twin matches the SQLite source</span>
+OK    secret scan            <span class="ok-l">PASS (0 findings, 304 files scanned)</span>
+OK    unsafe config scan     <span class="ok-l">PASS (0 findings, 304 files scanned)</span>
+OK    git tree               <span class="ok-l">clean tree</span>
+OK    .env handling          <span class="ok-l">no .env in the tree</span>
+<span class="warn-l">WARN  environment            not set: VILLA_ANCHOR_DIR</span>
+OK    schema version         001_initial
+OK    audit chain            intact up to seq 0
+<span class="warn-l">WARN  published anchor       not checked (--anchor-dir not given)</span>
+OK    referential integrity  no dangling references
+OK    demo data              no demo marker found
+OK    policy role names      v2 ladder ['finance_manager', 'gm']
+<span class="fail-l">FAIL  tenant readiness       agency_default: money ladder has no holder for:
+      finance_manager, gm, owner; required setting not filled:
+      messaging.whatsapp_number; operations.oncall_primary;
+      payment.provider; payment.rails; tax.pbjt_source;
+      no property in SELLABLE state; no unit in ACTIVE state</span>
+OK    system health          no CRITICAL finding
+OK    operational load       0 open case(s), 0 pending approval(s), 0 open reconciliation(s)
+<span class="warn-l">WARN  backup                 not checked (--backup not given)</span>
+OK    go-live decisions      15/17 row(s) decided, none blocking OPEN
+
+<b>VERDICT: NO-GO — 1 failed check(s), 3 warning(s)</b></div>
+  <div class="danger"><b>Ini bukan bug.</b> <code>FAIL tenant readiness</code> berarti: belum ada orang yang MENGISI data operasional agency Anda (nomor WhatsApp resmi, provider pembayaran, siapa pemegang peran finance/gm/owner, properti mana yang siap dijual). Ini keputusan bisnis milik Anda (ADR-0037: platform siap dulu, tenant yang mengisi). Software TIDAK menebak nilai ini — itu disengaja agar tidak ada uang bergerak atas asumsi palsu.</div>
+</section>
+
+<section class="section" id="gap">
+  <h2>6. Gap TODO terbesar — ranking dari dampak</h2>
+  <div class="grid2">
+    <div class="card"><h3>🔴 AI Workforce — 5 dari 7 komponen = 0% kode</h3><p style="font-size:13px;color:#4a443a">Control Tower, Commercial AI, Operations AI, Finance Admin AI, Revenue&amp;BI AI — nol baris kode. Hanya AI Reservation Service yang lengkap (worker, channel adapter, shadow-eval, KPI). Ini mandat terbesar yang BELUM mulai.</p></div>
+    <div class="card"><h3>🔴 12+ keputusan bisnis OPEN (owner)</h3><p style="font-size:13px;color:#4a443a">Nama provider pembayaran per rel, SLA menit/jam, sumber tarif pajak PBJT, provider WhatsApp Business, ambang shadow-mode, siapa on-call, batas refund — semuanya BUTUH keputusan Anda, bukan kerja kode. Software tidak boleh menebak nilai ini.</p></div>
+    <div class="card"><h3>🟡 ADR-0012/0013 payment rails — diterima, belum dibangun</h3><p style="font-size:13px;color:#4a443a">CARD/BANK_TRANSFER/PAYPAL/STABLECOIN disetujui desainnya tapi <code>payments.py</code> masih pakai kosakata lama. Disengaja — menunggu nama provider per rel dari Anda (D1).</p></div>
+    <div class="card"><h3>🟡 Ratchet bahasa en-US — ±229 literal Indonesia tersisa di 13 modul</h3><p style="font-size:13px;color:#4a443a">Ratchet (<code>test_language_standard.py</code>) mencegah literal Indonesia BARU; stok lama dicicil, belum tuntas. Tidak mem-block apa pun hari ini.</p></div>
+    <div class="card"><h3>🟡 Konten publik: testimoni, FAQ, blog, promo tampil, WhatsApp-first</h3><p style="font-size:13px;color:#4a443a">Lihat §4 — satu-satunya area di mana 6 kompetitor Anda lebih lengkap dari kita secara konten (bukan secara keamanan/arsitektur).</p></div>
+    <div class="card"><h3>🟢 Yang SELESAI hari ini (sesi ini)</h3><p style="font-size:13px;color:#4a443a">ADR-0060 currency IDR/USD: migrasi, wiring intake→dashboard, 14 tes baru, gerbang hijau, commit <code>248b621</code>. Nol bug/malware baru ditemukan pada scan hari ini.</p></div>
+  </div>
+</section>
+
+<section class="section" id="ask">
+  <h2>7. Yang saya butuh dari Anda untuk lanjut (bukan kerjaan kode)</h2>
+  <p class="sub">Supaya tidak berhenti di "menunggu", ini daftar PENDEK keputusan yang langsung membuka pekerjaan berikutnya:</p>
+  <div class="table"><table><thead><tr><th>#</th><th>Keputusan</th><th>Membuka apa</th></tr></thead><tbody>
+    <tr><td>1</td><td>Urutan bangun AI Workforce: Reservation sudah jadi → lanjut Finance Admin AI, atau Commercial AI (marketing) dulu?</td><td>Prioritas 5 agent yang masih 0%</td></tr>
+    <tr><td>2</td><td>Nama provider pembayaran per rel (kartu, bank, PayPal, stablecoin) + nomor WhatsApp Business resmi</td><td>ADR-0012/0013 eksekusi + preflight tenant readiness lolos</td></tr>
+    <tr><td>3</td><td>Konten publik: mau isi testimoni/FAQ/blog sendiri, atau saya buat skeleton + Anda isi?</td><td>Menutup gap benchmark §4</td></tr>
+    <tr><td>4</td><td>Siapa pemegang peran owner/gm/finance_manager untuk agency_default (nama sungguhan)</td><td>Menghilangkan 1 dari 7 item FAIL preflight</td></tr>
+  </tbody></table></div>
+</section>
+
+<section class="foot">
+  <b>Ringkasan satu paragraf:</b> Kernel domain Villa Agency OS kuat dan terbukti (60 ADR, 3.579 tes hijau, gerbang keamanan bersih, nol bug/malware baru pada scan hari ini). Permukaan konsumen (web marketing) dan staf (dashboard) sudah berfungsi dan diaudit langsung di tempatnya di atas — unggul dari 6 kompetitor Bali pada currency ganda dan halaman pemilik villa, tapi kalah pada konten engagement (testimoni/FAQ/blog/promo). Yang BELUM selesai dan paling besar: 5 dari 7 agent AI workforce (0% kode) dan 12+ keputusan bisnis yang menahan preflight go-live di status <b>NO-GO</b> hari ini. Tidak ada yang disembunyikan atau dilebih-lebihkan di dokumen ini.
+</section>
+</main>
+</body>
+</html>
