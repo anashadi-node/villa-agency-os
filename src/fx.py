@@ -91,6 +91,25 @@ class FxRateStale(FxError):
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+GUEST_CURRENCIES = ("IDR", "USD")
+_INDONESIA_COUNTRY_CODE = "ID"
+
+
+def infer_guest_currency(country_code: Any) -> str:
+    """A guest's apparent country, mapped to one of exactly two display currencies.
+
+    Only ``IDR`` and ``USD`` exist here on purpose (decision, ADR-0060): the agency is not
+    pricing in a visitor's home currency, it is only showing Indonesian guests rupiah instead
+    of dollars. ``"ID"`` (ISO-3166 alpha-2, case-insensitive) is the only input that returns
+    ``"IDR"``; every other value — a different country, ``None``, blank, or malformed input
+    from an untrusted edge header — returns ``"USD"`` rather than raising, because a guessed
+    location is cosmetic (it only pre-selects a currency a human still quotes in) and must
+    never block an inquiry from reaching the team.
+    """
+    code = str(country_code).strip().upper() if country_code else ""
+    return "IDR" if code == _INDONESIA_COUNTRY_CODE else "USD"
+
+
 def normalise_currency(currency: Any) -> str:
     """Validate and upper-case an ISO-4217 code through the money primitive.
 
@@ -365,11 +384,13 @@ __all__ = [
     "FxRateNotPublished",
     "FxRateStale",
     "FxTable",
+    "GUEST_CURRENCIES",
     "PAIR_SEPARATOR",
     "ROUNDINGS",
     "ROUND_NEAREST",
     "ROUND_UP",
     "as_day",
+    "infer_guest_currency",
     "normalise_currency",
     "pair_key",
     "parse_rate",

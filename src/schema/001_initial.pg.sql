@@ -795,6 +795,9 @@ CREATE TABLE guests (
     email        TEXT,
     phone        TEXT,
     locale       TEXT NOT NULL DEFAULT 'en-US' CHECK (length(locale) BETWEEN 2 AND 35),
+    -- Display-only default (ADR-0060): inferred from the guest's apparent country at
+    -- intake, never the authority for what a quote is actually priced in.
+    preferred_currency TEXT NOT NULL DEFAULT 'USD' CHECK (preferred_currency IN ('IDR','USD')),
     status       TEXT NOT NULL CHECK (status IN ('ACTIVE','ARCHIVED')),
     created_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL,

@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Villa Agency OS — Currency Tamu IDR/USD (ADR-0060) · 2026-10-06</title>
+  <style>
+    :root{--sand:#f7efe2;--paper:#fffaf2;--ink:#1f2520;--muted:#6e665b;--teak:#214a3b;--teak2:#2f6a52;--gold:#c99442;--clay:#b66a3c;--line:#e6d8c2;--dark:#111816;}
+    *{box-sizing:border-box} body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:linear-gradient(180deg,#fbf4e8,#fffaf2 32%,#f8efe1);color:var(--ink);line-height:1.58}
+    .hero{position:relative;overflow:hidden;padding:56px 28px 44px;background:radial-gradient(circle at 12% 10%,rgba(201,148,66,.28),transparent 28%),radial-gradient(circle at 90% 18%,rgba(47,106,82,.22),transparent 31%),linear-gradient(135deg,#17372d,#0f1916 58%,#3b1f17);color:#fff}
+    .wrap{max-width:1080px;margin:auto;position:relative;z-index:1}.eyebrow{letter-spacing:.15em;text-transform:uppercase;color:#e7c27a;font-weight:800;font-size:12px}.hero h1{font-family:Georgia,serif;font-size:clamp(34px,5.4vw,62px);line-height:1.02;margin:14px 0 16px;max-width:880px}.hero p{max-width:780px;color:#f5ead9;font-size:18px}.pillrow{display:flex;flex-wrap:wrap;gap:10px;margin-top:22px}.pill{border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.08);color:#fff;border-radius:999px;padding:9px 14px;font-weight:700;font-size:13px}
+    main{max-width:1080px;margin:0 auto;padding:30px 22px 70px}.section{margin-top:36px}.section h2{font-family:Georgia,serif;font-size:32px;line-height:1.06;margin:0 0 12px;color:#1b2b25}.section p{color:#3d463f;max-width:900px}
+    .flow{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.step{background:#fff;border:1px solid var(--line);border-radius:18px;padding:16px;box-shadow:0 8px 26px rgba(80,62,28,.07)}.step b{display:block;color:var(--teak);margin-bottom:6px}.step code{font-size:12.5px;background:#f1e6d2;border-radius:6px;padding:2px 6px}
+    .table{overflow:auto;border:1px solid var(--line);border-radius:18px;background:#fffdf8;margin-top:8px}table{border-collapse:collapse;width:100%;min-width:640px}th,td{padding:12px 14px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}th{background:#f1dfc3;color:#49391f}tr:last-child td{border-bottom:0}
+    .split{display:grid;grid-template-columns:1fr 1fr;gap:16px}.card{background:#fff;border:1px solid var(--line);border-radius:20px;padding:20px}.card h3{margin:0 0 8px;color:var(--teak)}.card ul{margin:8px 0 0;padding-left:20px}.card li{margin:6px 0}
+    .warn{background:#fff5e7;border:1px solid #ead3af;border-left:6px solid var(--gold);border-radius:16px;padding:18px 20px;margin-top:10px}.warn b{color:#7a5410}
+    .code{background:#111816;color:#dce8dd;border-radius:16px;padding:16px 18px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;overflow:auto;line-height:1.5}.code .k{color:#8fd3b6}.code .s{color:#f4c46b}
+    .tests{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.t{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px;font-size:13.5px}.t b{color:var(--teak2)}
+    .footer{margin-top:44px;padding:22px;border-radius:20px;background:#111816;color:#dce8dd}.footer b{color:#f4c46b}
+    @media(max-width:860px){.flow,.tests,.split{grid-template-columns:1fr}.hero{padding:42px 18px}.hero h1{font-size:38px}main{padding:22px 14px 54px}}
+  </style>
+</head>
+<body>
+  <header class="hero"><div class="wrap"><div class="eyebrow">Villa Agency OS · Fitur &amp; ADR-0060 · 2026-10-06</div><h1>Currency tamu otomatis: IDR untuk tamu Indonesia, USD untuk sisanya</h1><p>Sejak inquiry masuk, platform menandai mata uang yang tamu harapkan — dua currency saja, IDR dan USD. Nilainya disimpulkan dari negara asal tamu pada header tepi, disimpan di master tamu, dan tampil di dashboard internal. Ia tidak pernah menentukan harga: kutipan tetap kerja manusia, sesuai ADR-0036.</p><div class="pillrow"><span class="pill">2 currency: IDR · USD</span><span class="pill">Fail-open ke USD</span><span class="pill">Display-only</span><span class="pill">Migrasi aman: 016</span></div></div></header>
+  <main>
+    <section class="section"><h2>Alur data, dari kunjungan sampai dashboard</h2>
+      <div class="flow">
+        <div class="step"><b>1 · Kunjungan</b>Tamu membuka situs marketing. Edge tepercaya (CDN) melampirkan negara asal di header <code>CF-IPCountry</code>.</div>
+        <div class="step"><b>2 · Inquiry masuk</b><code>MarketingIntake.submit(country_hint=…)</code> membaca header itu murni sebagai <i>petunjuk</i> — bukan keputusan harga, bukan filter keamanan.</div>
+        <div class="step"><b>3 · Simpulkan</b><code>fx.infer_guest_currency("ID") → IDR</code>; negara lain, kosong, atau sampah → <code>USD</code>. Fungsi tidak pernah melempar error: inquiry tidak pernah ditolak karena lokasi.</div>
+        <div class="step"><b>4 · Simpan &amp; tampilkan</b>Kolom <code>guests.preferred_currency</code> tersimpan saat tamu baru dibuat; staf melihat badge <i>“Guest's preferred currency”</i> di detail kasus dashboard.</div>
+      </div>
+    </section>
+    <section class="section"><h2>Aturan yang dipatok (dan yang sengaja bukan bagian fitur)</h2>
+      <div class="split">
+        <div class="card"><h3>Yang dipatok fitur ini</h3><ul>
+          <li><b>Tepat dua currency</b> — <code>GUEST_CURRENCIES = ("IDR","USD")</code>; CHECK constraint dua nilai di database, service menolak sisanya.</li>
+          <li><b>Hanya "ID" yang jadi IDR</b> — case-insensitive, di-trim; semua input lain → USD.</li>
+          <li><b>Gagal-terbuka</b> — tebakan lokasi kosmetik; tidak boleh memblokir calon tamu.</li>
+          <li><b>Hanya tamu baru</b> — inquiry kedua dari negara lain tidak pernah menimpa catatan tamu.</li>
+          <li><b>Header tepi</b> — bukan lookup geo-IP di aplikasi, tanpa dependensi baru.</li>
+        </ul></div>
+        <div class="card"><h3>Yang sengaja BUKAN bagian fitur</h3><ul>
+          <li><b>Harga tidak berubah</b> — situs marketing tidak menampilkan harga; <code>quote_calculator</code> (policy.currency) tetap satu-satunya otoritas kutipan.</li>
+          <li><b>Uang tetap lewat tangan manusia</b> — ADR-0036: approval GM untuk setiap pergerakan uang.</li>
+          <li><b>Bukan terjemahan situs</b> — bahasa produksi tetap en-US (ADR-0011); locale tamu Indonesia adalah keputusan lain.</li>
+          <li><b>Bukan klaim lokasi pasti</b> — nilai header adalah petunjuk tampilan, bukan data kepercayaan tinggi.</li>
+        </ul></div>
+      </div>
+      <div class="warn"><b>Batas penting:</b> jika suatu hari platform benar-benar mengutip dalam IDR, itu keputusan baru di quote_calculator + keselarasan ADR-0036 — bukan kolom ini. Kolom ini hanya memberi staf konteks sejak kasus terbuka.</div>
+    </section>
+    <section class="section"><h2>Perubahan teknis</h2>
+      <div class="table"><table><thead><tr><th>Berkas</th><th>Perubahan</th><th>Peran</th></tr></thead><tbody>
+        <tr><td><code>src/fx.py</code></td><td><code>GUEST_CURRENCIES</code> + <code>infer_guest_currency()</code></td><td>Pemetaan murni IDR/USD, gagal-terbuka, tanpa efek samping</td></tr>
+        <tr><td><code>src/schema/001_initial.sql</code></td><td>Kolom <code>guests.preferred_currency TEXT NOT NULL DEFAULT 'USD' CHECK (… IN ('IDR','USD'))</code></td><td>Skema database baru</td></tr>
+        <tr><td><code>src/schema/016_guest_preferred_currency.sql</code></td><td><code>ALTER TABLE guests ADD COLUMN …</code></td><td>Migrasi untuk database yang sudah ada; semua baris lama jadi USD</td></tr>
+        <tr><td><code>src/schema/001_initial.pg.sql</code></td><td>Diregenerasi otomatis (<code>scripts/generate_pg_twin.py --write</code>)</td><td>Twin PostgreSQL selaras</td></tr>
+        <tr><td><code>src/crm.py</code></td><td><code>register_guest(preferred_currency="USD")</code> + validasi kosakata</td><td>Service menulis kolom, menolak nilai di luar IDR/USD</td></tr>
+        <tr><td><code>src/marketing_site.py</code></td><td><code>submit(country_hint=…)</code> + handler membaca <code>CF-IPCountry</code></td><td>Kabel situs marketing → tamu baru</td></tr>
+        <tr><td><code>src/dashboard.py</code></td><td>Baris “Guest's preferred currency” di header detail kasus</td><td>Staf melihat konteks currency tanpa membuka CRM</td></tr>
+        <tr><td><code>docs/adr/0060-guest-currency-idr-usd.md</code></td><td>ADR lengkap: konteks, keputusan, alternatif ditolak</td><td>Rekam jejak keputusan</td></tr>
+      </tbody></table></div>
+      <div class="code" style="margin-top:12px"><span class="k">&gt;&gt;&gt;</span> fx.infer_guest_currency(<span class="s">"ID"</span>)   <span style="color:#7fa98f"># id, Id, "  ID  " sama-sama IDR</span>
+<span class="s">'IDR'</span>
+<span class="k">&gt;&gt;&gt;</span> fx.infer_guest_currency(<span class="s">"AU"</span>)   <span style="color:#7fa98f"># US, SG, None, "", sampah → semua USD</span>
+<span class="s">'USD'</span></div>
+    </section>
+    <section class="section"><h2>Pengujian &amp; verifikasi</h2>
+      <div class="tests">
+        <div class="t"><b>14 tes baru</b><br><code>tests/test_guest_currency.py</code>: pemetaan (subtest per input), skema/CHECK, kabel intake, ketahanan tamu lama, tampilan dashboard.</div>
+        <div class="t"><b>Migrasi terbukti</b><br>Database lama (tanpa kolom) dimutasi 13 migrasi: <code>applied 016_guest_preferred_currency</code>; baris lama terbaca <code>('g1','USD')</code>.</div>
+        <div class="t"><b>Suite penuh hijau</b><br>3.565 lulus · 4 skip · 0 gagal (exit 0) pada <code>/usr/bin/python3</code> — runtime yang sama dengan produksi systemd.</div>
+        <div class="t"><b>Pre-Deploy bersih</b><br>Secret scan: tidak ada rahasia baru. Shuffle: bersih. dry_run: bersih. Syntax: OK semua file.</div>
+      </div>
+    </section>
+    <section class="footer"><b>Keputusan (ADR-0060):</b> currency tamu adalah default <i>tampilan</i> dua nilai yang disimpulkan sekali saat intake, gagal-terbuka ke USD, tidak pernah menulis ulang tamu lama, dan tidak pernah menentukan harga. Kutipan tetap pekerjaan manusia.</section>
+  </main>
+</body>
+</html>

@@ -10,6 +10,10 @@ approvals, no finance, no staff pages, no channel back office.
 Recorded decisions:
  * Language: en-US copy (ADR-0011 direction; the language ratchet pins ``src/``
    literals). An Indonesian marketing locale is a separate, future decision.
+ * Guest currency default: a new guest's ``preferred_currency`` (IDR or USD —
+   display default only) is inferred from the apparent visitor country on the
+   inquiry request (ADR-0060); it never prices anything shown on this site —
+   no price is shown here at all, a human sends every quote.
  * Guest PII: the email lives in the ``guests`` table (its designed home, written
    through :class:`crm.CrmService`); the case carries only the opaque
    ``guest_id``. The message body is stored under content class ``P2`` — the
@@ -43,6 +47,8 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any, Mapping, Optional
 from urllib.parse import parse_qsl, urlsplit
+
+import fx as FX
 
 from cases import CaseService, SLA_POLICIES
 from crm import CrmService, DuplicateGuest, CrmError
@@ -241,8 +247,15 @@ class InquiryIntake:
         rate_limiter: Any,
         expected_origin_host: Optional[str],
         origin_header: Optional[str],
+        country_hint: Optional[str] = None,
     ) -> dict[str, str]:
         """Validate the form, upsert the guest, open the case.
+
+        ``country_hint`` is the visitor's apparent country (e.g. a trusted edge header such
+        as ``CF-IPCountry``) — cosmetic only. It sets the new guest's ``preferred_currency``
+        (ADR-0060: IDR for Indonesia, USD otherwise) so staff see the right default currency
+        in the dashboard; it never prices anything and is ignored for a guest who already
+        exists.
 
         Returns ``{"reference", "case_id", "guest_id"}``; raises :class:`IntakeError`
         subclasses for every rejection the visitor (or a bot) can cause.
@@ -276,7 +289,10 @@ class InquiryIntake:
         guest = self.crm.find_guest(email=email)
         if guest is None:
             try:
-                guest_id = self.crm.register_guest(name, email=email, locale="en-US")
+                guest_id = self.crm.register_guest(
+                    name, email=email, locale="en-US",
+                    preferred_currency=FX.infer_guest_currency(country_hint),
+                )
             except DuplicateGuest:  # pragma: no cover - single-threaded server
                 existing = self.crm.find_guest(email=email)
                 guest_id = str(existing["guest_id"])
@@ -732,6 +748,7 @@ class _MarketingRequestHandler(BaseHTTPRequestHandler):
                 rate_limiter=self.site.rate_limiter,
                 expected_origin_host=self.headers.get("Host"),
                 origin_header=self.headers.get("Origin"),
+                country_hint=self.headers.get("CF-IPCountry"),
             )
         except RateLimited as exc:
             self._error(429, str(exc.message))

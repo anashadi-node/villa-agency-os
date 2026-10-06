@@ -1424,6 +1424,15 @@ class Dashboard:
         if not rows:
             raise NotFound("kasus tidak ditemukan", case_id=clean)
         case = rows[0]
+        guest_rows = (
+            self._rows(
+                "SELECT preferred_currency FROM guests WHERE guest_id = ? AND agency_id = ?",
+                (case["guest_id"], self.agency_id),
+            )
+            if case["guest_id"]
+            else []
+        )
+        guest_currency = guest_rows[0]["preferred_currency"] if guest_rows else None
         events = [
             (
                 row["seq"],
@@ -1496,6 +1505,7 @@ class Dashboard:
                 ("Prioritas", case["priority"]),
                 ("Kanal", case["channel"]),
                 ("Guest ref", case["guest_ref"]),
+                ("Guest's preferred currency", guest_currency or "—"),
                 ("Pemilik", case["owner_actor"] or "—"),
                 ("Booking", case["booking_id"] or "—"),
                 ("Kebijakan SLA", case["sla_policy"]),

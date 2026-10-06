@@ -31,6 +31,7 @@ from primitives import (
     require_text,
     to_iso,
 )
+from fx import GUEST_CURRENCIES
 from references import REFERENCE_PREFIXES, ReferenceAllocator, parse_reference
 
 VALUE_TYPES = ("date", "integer", "text", "money", "boolean", "enum")
@@ -195,10 +196,14 @@ class CrmService:
 
     # -- guest master ------------------------------------------------------- #
     def register_guest(self, full_name: Any, *, email: Any = None, phone: Any = None,
-                       locale: str = "en-US") -> str:
+                       locale: str = "en-US", preferred_currency: str = "USD") -> str:
         name = require_text(full_name, "full_name", max_len=200).strip()
         if len(name) < 2:
             raise RequirementRejected("full_name is too short", code="VALIDATION_ERROR")
+        if preferred_currency not in GUEST_CURRENCIES:
+            raise RequirementRejected(
+                f"preferred_currency must be one of {GUEST_CURRENCIES}", code="VALIDATION_ERROR",
+            )
         mail = _normalise_email(email)
         tel = _normalise_phone(phone)
         if mail is None and tel is None:
@@ -214,10 +219,11 @@ class CrmService:
         guest_id = self.ids.new("guest")
         stamp = to_iso(self.clock.now())
         self.conn.execute(
-            "INSERT INTO guests (guest_id, agency_id, full_name, email, phone, locale, status,"
-            " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)",
+            "INSERT INTO guests (guest_id, agency_id, full_name, email, phone, locale,"
+            " preferred_currency, status, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)",
             (guest_id, self.agency_id, name, mail, tel, require_text(locale, "locale", max_len=35),
-             stamp, stamp),
+             preferred_currency, stamp, stamp),
         )
         return guest_id
 
