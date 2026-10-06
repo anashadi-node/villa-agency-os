@@ -5,7 +5,8 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/home/anashadi/villa-agency-os
-ExecStart=/usr/bin/python3 /home/anashadi/villa-agency-os/src/dashboard.py --db /home/anashadi/villa-agency-os/data/villa.db --port 8085
+EnvironmentFile=/home/anashadi/.config/systemd/user/villa.env
+ExecStart=/usr/bin/python3 /home/anashadi/villa-agency-os/src/dashboard.py --db /home/anashadi/villa-agency-os/data/villa.db --port 8085 --role owner --token ${VILLA_DASHBOARD_TOKEN}
 Restart=on-failure
 RestartSec=3
 
