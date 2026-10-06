@@ -64,7 +64,7 @@ adaptation the rest of ``src/`` requires.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -851,6 +851,77 @@ def _is_sqlite(conn: Any) -> bool:
     return type(conn).__module__.split(".", 1)[0] == "sqlite3"
 
 
+def _is_pg_conn(conn: Any) -> bool:
+    """True when ``conn`` is a psycopg connection."""
+    return type(conn).__module__.split(".", 1)[0] in ("psycopg", "psycopg2")
+
+
+def _positional_to_psql(sql: str) -> str:
+    """Rewrite ``?`` placeholders to psycopg ``%s`` placeholders."""
+    out: list[str] = []
+    in_single = False
+    in_double = False
+    for char in sql:
+        if char == "'" and not in_double:
+            in_single = not in_single
+        elif char == '"' and not in_single:
+            in_double = not in_double
+        if char == "?" and not in_single and not in_double:
+            out.append("%s")
+        else:
+            out.append(char)
+    return "".join(out)
+
+
+class _PgRow(Mapping[str, Any]):
+    """Mapping wrapper for psycopg tuple rows."""
+
+    __slots__ = ("_names", "_values")
+
+    def __init__(self, names: Sequence[str], values: Sequence[Any]) -> None:
+        object.__setattr__(self, "_names", tuple(names))
+        object.__setattr__(self, "_values", tuple(values))
+
+    def __getitem__(self, key: Any) -> Any:
+        if isinstance(key, str):
+            try:
+                return self._values[self._names.index(key)]
+            except ValueError:
+                raise KeyError(key) from None
+        return self._values[int(key)]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._names)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+
+def _read_rows(conn: Any, sql: str, params: Sequence[Any] = ()) -> list[Mapping[str, Any]]:
+    """Return rows with by-name access for SQLite and psycopg."""
+    if not _is_pg_conn(conn):
+        return list(conn.execute(sql, tuple(params)))
+    with conn.cursor() as cur:
+        cur.execute(_positional_to_psql(sql), tuple(params))
+        names = [str(desc[0]) for desc in cur.description or ()]
+        return [_PgRow(names, row) for row in cur.fetchall()]
+
+
+def _read_one(conn: Any, sql: str, params: Sequence[Any] = ()) -> Optional[Mapping[str, Any]]:
+    """Return one row with by-name access, or ``None``."""
+    rows = _read_rows(conn, sql, params)
+    return rows[0] if rows else None
+
+
+def _execute_write(conn: Any, sql: str, params: Sequence[Any] = ()) -> None:
+    """Execute a write statement in the active transaction."""
+    if not _is_pg_conn(conn):
+        conn.execute(sql, tuple(params))
+        return
+    with conn.cursor() as cur:
+        cur.execute(_positional_to_psql(sql), tuple(params))
+
+
 def guard_append_only(conn: Any) -> tuple[str, ...]:
     """Fail closed unless both tables exist and the decision log is append-only.
 
@@ -860,7 +931,7 @@ def guard_append_only(conn: Any) -> tuple[str, ...]:
     """
     for table in (REQUEST_TABLE, DECISION_TABLE):
         try:
-            conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
+            _read_one(conn, f"SELECT 1 FROM {table} LIMIT 1")
         except Exception as exc:  # absent table, in either dialect
             raise ApprovalAppendOnlyUnenforced(
                 f"{table} does not exist: apply the schema before queueing approvals",
@@ -895,13 +966,14 @@ def _write_transaction(conn: Any) -> Iterator[None]:
     if getattr(conn, "in_transaction", False):
         yield
         return
-    conn.execute("BEGIN IMMEDIATE")
+    begin = "BEGIN IMMEDIATE" if _is_sqlite(conn) else "BEGIN"
+    _execute_write(conn, begin)
     try:
         yield
     except BaseException:
-        conn.execute("ROLLBACK")
+        _execute_write(conn, "ROLLBACK")
         raise
-    conn.execute("COMMIT")
+    _execute_write(conn, "COMMIT")
 
 
 # --------------------------------------------------------------------------- #
@@ -926,12 +998,11 @@ def _ensure_agency(conn: Any, agency_id: str) -> None:
     creating the row here keeps the failure mode at "the queue is empty" instead of a
     raw IntegrityError on the first write.
     """
-    if conn.execute(
-        "SELECT 1 FROM agencies WHERE agency_id = ?", (agency_id,)
-    ).fetchone() is not None:
+    if _read_one(conn, "SELECT 1 FROM agencies WHERE agency_id = ?", (agency_id,)) is not None:
         return
     now = to_iso(SystemClock().now())
-    conn.execute(
+    _execute_write(
+        conn,
         "INSERT INTO agencies (agency_id, name, status, created_at, updated_at)"
         " VALUES (?, ?, 'ACTIVE', ?, ?)"
         " ON CONFLICT(agency_id) DO NOTHING",
@@ -1071,7 +1142,7 @@ class ApprovalService:
             None,
         )
         with _write_transaction(self._conn):
-            self._conn.execute(_INSERT_REQUEST_SQL, values)
+            _execute_write(self._conn, _INSERT_REQUEST_SQL, values)
         return self.get(approval_id)
 
     # -- decisions --------------------------------------------------------- #
@@ -1155,7 +1226,8 @@ class ApprovalService:
 
         payload_sha256 = row["payload_sha256"]
         with _write_transaction(self._conn):
-            self._conn.execute(
+            _execute_write(
+                self._conn,
                 _INSERT_DECISION_SQL,
                 (
                     self._ids.new("decision"),
@@ -1191,7 +1263,8 @@ class ApprovalService:
             status, closed_at = "PENDING", None
         if status == "PENDING":
             return
-        self._conn.execute(
+        _execute_write(
+            self._conn,
             f"UPDATE {REQUEST_TABLE} SET status = ?, closed_at = ? WHERE approval_id = ?",
             (status, closed_at, approval_id),
         )
@@ -1205,22 +1278,24 @@ class ApprovalService:
         """Every recorded signature, oldest first."""
         approval_id = _approval_ref(approval_id)
         self._verify_integrity(self._row_or_raise(approval_id))
-        rows = self._conn.execute(
+        rows = _read_rows(
+            self._conn,
             f"SELECT * FROM {DECISION_TABLE} WHERE approval_id = ? "
             "ORDER BY decided_at, decision_id",
             (approval_id,),
-        ).fetchall()
+        )
         return [self._decision_of(row) for row in rows]
 
     def for_subject(self, subject_type: str, subject_id: str) -> list[Approval]:
         """Every request ever raised for one subject, oldest first."""
         subject_type = _subject_type(subject_type)
         subject_id = require_ref(subject_id, "subject_id")
-        rows = self._conn.execute(
+        rows = _read_rows(
+            self._conn,
             f"SELECT * FROM {REQUEST_TABLE} WHERE subject_type = ? AND subject_id = ? "
             "AND agency_id = ? ORDER BY requested_at, approval_id",
             (subject_type, subject_id, self.agency_id),
-        ).fetchall()
+        )
         return [self._approval_of(row) for row in rows]
 
     def outstanding(
@@ -1234,11 +1309,12 @@ class ApprovalService:
         """
         when = _aware(now if now is not None else self._clock.now())
         role = None if required_role is None else _role(required_role, "required_role")
-        rows = self._conn.execute(
+        rows = _read_rows(
+            self._conn,
             f"SELECT * FROM {REQUEST_TABLE} WHERE status = 'PENDING' AND agency_id = ? "
             "ORDER BY requested_at, approval_id",
             (self.agency_id,),
-        ).fetchall()
+        )
         counts = self._aggregate([row["approval_id"] for row in rows])
         items: list[ApprovalQueueItem] = []
         for row in rows:
@@ -1284,11 +1360,12 @@ class ApprovalService:
         when = _aware(now if now is not None else self._clock.now())
         expired: list[str] = []
         with _write_transaction(self._conn):
-            rows = self._conn.execute(
+            rows = _read_rows(
+                self._conn,
                 f"SELECT * FROM {REQUEST_TABLE} WHERE status = 'PENDING' AND agency_id = ? "
                 "ORDER BY requested_at, approval_id",
                 (self.agency_id,),
-            ).fetchall()
+            )
             counts = self._aggregate([row["approval_id"] for row in rows])
             for row in rows:
                 self._verify_integrity(row)
@@ -1305,10 +1382,11 @@ class ApprovalService:
 
     # -- internals --------------------------------------------------------- #
     def _row_or_raise(self, approval_id: str) -> Mapping[str, Any]:
-        row = self._conn.execute(
+        row = _read_one(
+            self._conn,
             f"SELECT * FROM {REQUEST_TABLE} WHERE approval_id = ? AND agency_id = ?",
             (approval_id, self.agency_id),
-        ).fetchone()
+        )
         if row is None:
             raise ApprovalNotFound(
                 f"no approval request with id {approval_id}", approval_id=approval_id
@@ -1316,10 +1394,11 @@ class ApprovalService:
         return row
 
     def _row_by_key(self, idempotency_key: str) -> Optional[Mapping[str, Any]]:
-        return self._conn.execute(
+        return _read_one(
+            self._conn,
             f"SELECT * FROM {REQUEST_TABLE} WHERE idempotency_key = ? AND agency_id = ?",
             (idempotency_key, self.agency_id),
-        ).fetchone()
+        )
 
     def _row_fingerprint(self, row: Mapping[str, Any]) -> str:
         return request_fingerprint(
@@ -1340,14 +1419,15 @@ class ApprovalService:
 
     def _counts(self, approval_id: str) -> tuple[int, int, Optional[str]]:
         """``(approvals, rejections, last_decided_at)`` straight from the log."""
-        row = self._conn.execute(
+        row = _read_one(
+            self._conn,
             f"SELECT "
             f"SUM(CASE WHEN decision = 'APPROVE' THEN 1 ELSE 0 END) AS approvals, "
             f"SUM(CASE WHEN decision = 'REJECT' THEN 1 ELSE 0 END) AS rejections, "
             f"MAX(decided_at) AS last_decided_at "
             f"FROM {DECISION_TABLE} WHERE approval_id = ?",
             (approval_id,),
-        ).fetchone()
+        )
         if row is None or row["approvals"] is None:
             return 0, 0, None
         return int(row["approvals"]), int(row["rejections"]), row["last_decided_at"]
@@ -1358,7 +1438,8 @@ class ApprovalService:
         if not approval_ids:
             return {}
         marks = ", ".join("?" * len(approval_ids))
-        rows = self._conn.execute(
+        rows = _read_rows(
+            self._conn,
             f"SELECT approval_id, "
             f"SUM(CASE WHEN decision = 'APPROVE' THEN 1 ELSE 0 END) AS approvals, "
             f"SUM(CASE WHEN decision = 'REJECT' THEN 1 ELSE 0 END) AS rejections, "
@@ -1366,7 +1447,7 @@ class ApprovalService:
             f"FROM {DECISION_TABLE} WHERE approval_id IN ({marks}) "
             f"GROUP BY approval_id",
             tuple(approval_ids),
-        ).fetchall()
+        )
         return {
             row["approval_id"]: (
                 int(row["approvals"] or 0),
@@ -1377,10 +1458,11 @@ class ApprovalService:
         }
 
     def _has_decision(self, approval_id: str, approver: str) -> bool:
-        row = self._conn.execute(
+        row = _read_one(
+            self._conn,
             f"SELECT 1 FROM {DECISION_TABLE} WHERE approval_id = ? AND approver = ? LIMIT 1",
             (approval_id, approver),
-        ).fetchone()
+        )
         return row is not None
 
     def _verify_integrity(self, row: Mapping[str, Any]) -> None:
@@ -1401,11 +1483,12 @@ class ApprovalService:
                 stored=row["payload_sha256"],
                 recomputed=recomputed,
             )
-        stale = self._conn.execute(
+        stale = _read_one(
+            self._conn,
             f"SELECT decision_id FROM {DECISION_TABLE} "
             f"WHERE approval_id = ? AND request_hash <> ? LIMIT 1",
             (approval_id, row["payload_sha256"]),
-        ).fetchone()
+        )
         if stale is not None:
             raise ApprovalTampered(
                 "a decision was signed over a different payload hash: the request "
@@ -1415,7 +1498,8 @@ class ApprovalService:
             )
 
     def _mark_expired(self, row: Mapping[str, Any]) -> None:
-        self._conn.execute(
+        _execute_write(
+            self._conn,
             f"UPDATE {REQUEST_TABLE} SET status = 'EXPIRED', closed_at = ? "
             f"WHERE approval_id = ? AND status = 'PENDING'",
             (row["expires_at"], row["approval_id"]),

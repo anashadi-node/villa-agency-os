@@ -959,8 +959,8 @@ class Dashboard:
             self.conn,
             "SELECT 1 FROM agencies WHERE agency_id = ? LIMIT 1",
             (self.agency_id,),
-        )[0:1]
-        if found is None:
+        )
+        if not found:
             raise InvalidInput(
                 "agency_id belum terdaftar di tabel agencies",
                 agency_id=self.agency_id,
