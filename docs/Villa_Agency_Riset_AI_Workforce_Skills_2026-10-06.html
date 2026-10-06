@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Riset Workforce AI × Skills Pendukung</title>
+<style>
+:root{--ink:#20252b;--muted:#66707a;--line:#dfe4e8;--accent:#6f553f;--dark:#252a2f}
+*{box-sizing:border-box}
+body{margin:0;background:#eef0f1;color:var(--ink);
+     font-family:Inter,"Segoe UI",Arial,sans-serif;line-height:1.6}
+.page{max-width:1180px;margin:auto;background:#fff;min-height:100vh;box-shadow:0 1px 24px #0000001a}
+header{padding:48px 60px 38px;background:var(--dark);color:#fff}
+.eyebrow{text-transform:uppercase;letter-spacing:1.8px;font-size:12px;opacity:.72}
+header h1{margin:10px 0 12px;font-size:34px;line-height:1.15}
+header .sub{color:#dfe3e6;max-width:900px;font-size:14px}
+.badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:20px}
+.badge{border:1px solid #ffffff33;border-radius:999px;padding:5px 11px;font-size:12px}
+main{padding:36px 60px 60px}
+h2{font-size:23px;margin:44px 0 14px;padding-bottom:8px;border-bottom:2px solid var(--dark)}
+h3{font-size:18px;margin:28px 0 10px}
+h4{font-size:15px;margin:20px 0 8px}
+table{width:100%;border-collapse:collapse;margin:14px 0 26px;font-size:13.5px}
+th,td{border:1px solid var(--line);padding:9px 11px;vertical-align:top;text-align:left}
+th{background:#f0f2f3}
+tbody tr:nth-child(even){background:#fafbfb}
+code{background:#f3f4f5;padding:2px 5px;border-radius:4px;font-size:12.5px}
+pre{background:#fafafa;border:1px solid var(--line);padding:14px;border-radius:9px;
+    overflow-x:auto;font-size:12.5px}
+ul,ol{padding-left:24px}
+li{margin:4px 0}
+hr{border:0;border-top:1px solid var(--line);margin:34px 0}
+strong{color:#111}
+blockquote{margin:16px 0;padding:12px 16px;background:#f7f2ed;border-left:4px solid var(--accent)}
+#toc{background:#f7f8f9;border:1px solid var(--line);border-radius:10px;padding:18px 22px}
+#toc::before{content:"Daftar Isi";display:block;font-weight:600;margin-bottom:8px}
+#toc ul{list-style:none;padding-left:0;margin:0;columns:2;column-gap:32px}
+#toc ul ul{padding-left:16px;columns:1;font-size:13px;color:var(--muted)}
+#toc a{text-decoration:none;color:var(--ink)}
+#toc a:hover{color:var(--accent);text-decoration:underline}
+footer{padding:26px 60px;background:var(--dark);color:#d9dcde;font-size:12px}
+@media(max-width:820px){header,main,footer{padding-left:22px;padding-right:22px}#toc ul{columns:1}}
+@media print{body{background:#fff}.page{box-shadow:none;max-width:none}
+  table,pre,#toc{break-inside:avoid}h2,h3{break-after:avoid}}
+</style>
+</head>
+<body><div class="page">
+<header>
+<div class="eyebrow">Sumber: docs/RESEARCH_AI_WORKFORCE_SKILLS_2026-10-06.md &middot; edisi 2026-10-06</div>
+<h1>Riset Workforce AI × Skills Pendukung</h1>
+<div class="sub">Cakupan fondasi tiap agen AI, gap substantif, dan skills Hermes yang menunjang.</div>
+<div class="badges"><span class="badge">Sumber: repository</span><span class="badge">Edisi 2026-10-06</span><span class="badge">Riset 2026-10-06</span></div>
+</header>
+<main>
+<div id="toc"><div class="toc">
+<ul>
+<li><a href="#riset-arsitektur-6-agen-ai-villa-agency-os-skills-pendukung">Riset: Arsitektur 6 Agen AI Villa Agency OS × Skills Pendukung</a><ul>
+<li><a href="#1-ringkasan-eksekutif">1. Ringkasan Eksekutif</a></li>
+<li><a href="#2-bukti-cakupan-per-agen-apa-yang-sudah-ada">2. Bukti Cakupan per Agen (Apa yang SUDAH Ada)</a><ul>
+<li><a href="#agen-3-reservation-selesai-1111-worker">Agen 3 — Reservation: SELESAI (11/11 worker)</a></li>
+<li><a href="#agen-5-finance-admin-fondasi-terberat-sudah-ada-80">Agen 5 — Finance Admin: fondasi terberat sudah ada (~80%)</a></li>
+<li><a href="#agen-1-control-tower-core-baru-selesai-4-worker-sisanya-sebagian-sudah-ada-infra">Agen 1 — Control Tower: core baru selesai, 4 worker sisanya sebagian sudah ada infra</a></li>
+<li><a href="#agen-4-operations-55">Agen 4 — Operations: ~55%</a></li>
+<li><a href="#agen-2-commercial-paling-tipis-15">Agen 2 — Commercial: paling tipis (~15%)</a></li>
+<li><a href="#agen-6-revenue-bi-45">Agen 6 — Revenue &amp; BI: ~45%</a></li>
+</ul>
+</li>
+<li><a href="#3-skills-hermes-yang-langsung-menunjang-jawaban-pertanyaan-anda">3. Skills Hermes yang Langsung Menunjang (Jawaban Pertanyaan Anda)</a></li>
+<li><a href="#4-gap-substantif-yang-benar-benar-harus-dibangun-prioritas">4. Gap Substantif (Yang Benar-Benar Harus Dibangun) — Prioritas</a></li>
+<li><a href="#5-temuan-audit-terhadap-pekerjaan-saya-sendiri-falsifikasi">5. Temuan Audit terhadap Pekerjaan Saya Sendiri (Falsifikasi)</a></li>
+<li><a href="#6-rekomendasi-urutan-kerja-falsifiable">6. Rekomendasi Urutan Kerja (Falsifiable)</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+<h1 id="riset-arsitektur-6-agen-ai-villa-agency-os-skills-pendukung">Riset: Arsitektur 6 Agen AI Villa Agency OS × Skills Pendukung</h1>
+<p><strong>Tanggal:</strong> 6 Oktober 2026 · <strong>Metode:</strong> audit kode langsung (40+ pemeriksaan) × dokumen AI Workforce V1.1 × inventaris 177 skills Hermes · <strong>Protokol:</strong> falsification-first, triangulasi, rule 11 riset-penelitian ("ukur cakupan sebelum membangun baru")</p>
+<hr />
+<h2 id="1-ringkasan-eksekutif">1. Ringkasan Eksekutif</h2>
+<p><strong>Temuan utama — hipotesis Anda BENAR sebagian besar:</strong> fondasi worker yang dibutuhkan 6 agen <strong>sudah ada di repo</strong> (7 dari 10 keluarga worker), dan <strong>≥10 skills Hermes sudah ada</strong> yang protokolnya bisa dipakai langsung. Yang benar-benar belum ada hanya <strong>4 gap substantif</strong> — bukan 47 worker dari nol seperti yang disirat status lama.</p>
+<table>
+<thead>
+<tr>
+<th>Agen</th>
+<th>Cakupan fondasi</th>
+<th>Gap substantif</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1. Control Tower</td>
+<td>~60% (core routing/health/retry/escalation baru dibangun)</td>
+<td>Budget monitor (W10), SLA sweep wiring</td>
+</tr>
+<tr>
+<td>2. Commercial AI</td>
+<td><strong>~15%</strong> — paling tipis</td>
+<td>Hampir semua (11 worker)</td>
+</tr>
+<tr>
+<td>3. Reservation Service</td>
+<td><strong>100%</strong> — 11/11 worker ada</td>
+<td>— (selesai)</td>
+</tr>
+<tr>
+<td>4. Operations AI</td>
+<td>~55%</td>
+<td>Doc-completeness, readiness sweep, SOP store</td>
+</tr>
+<tr>
+<td>5. Finance Admin AI</td>
+<td><strong>~80%</strong> — fondasi terberat sudah ada</td>
+<td>AR/AP aging, due monitor, exposure report</td>
+</tr>
+<tr>
+<td>6. Revenue &amp; BI</td>
+<td>~45%</td>
+<td>Forecast, anomaly detection, executive report</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Sumber bukti:</strong> <code>src/</code> (50.105 baris), 3.598 tes hijau, tabel <code>payments/invoices/reconciliation_cases/supplier_settlements/deposit_resolutions</code> terverifikasi hidup di <code>data/villa.db</code> (skema v016 setelah 5 migrasi tertunda diterapkan hari ini).</p>
+<hr />
+<h2 id="2-bukti-cakupan-per-agen-apa-yang-sudah-ada">2. Bukti Cakupan per Agen (Apa yang SUDAH Ada)</h2>
+<h3 id="agen-3-reservation-selesai-1111-worker">Agen 3 — Reservation: SELESAI (11/11 worker)</h3>
+<p><code>reservation_workers.py</code> mendefinisikan RES-W01 s.d. RES-W11 semua (verifikasi regex): inquiry extraction, matching, availability, pricing, quotation, follow-up, hold, booking status, amend/cancel, pre-arrival, human handoff. 136+ tes khusus. Status dokumen lama "W11 belum" sudah <strong>basi</strong> — W11 (<code>hand_off</code>) ada di baris 1145, teruji di <code>test_reservation_workers.py:1659</code>.</p>
+<h3 id="agen-5-finance-admin-fondasi-terberat-sudah-ada-80">Agen 5 — Finance Admin: fondasi terberat sudah ada (~80%)</h3>
+<table>
+<thead>
+<tr>
+<th>Worker</th>
+<th>Yang sudah ada di repo</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>W04 Recon Assistance</td>
+<td><code>payments.py</code>: 4 kind rekonsiliasi (<code>UNMATCHED_PAYMENT</code>, <code>AMOUNT_MISMATCH</code>, <code>DUPLICATE_EVENT</code>, <code>REFUND_WITHOUT_PAYMENT</code>), SLA recon, <code>unmatched()</code></td>
+</tr>
+<tr>
+<td>W08 Unallocated Receipt</td>
+<td><code>unmatched()</code> + tabel <code>reconciliation_cases</code> (owner + due_at)</td>
+</tr>
+<tr>
+<td>W09 Duplicate Detection</td>
+<td>webhook idempoten (<code>handle_webhook</code>, <code>duplicate=True</code> di <code>PaymentEvent</code>)</td>
+</tr>
+<tr>
+<td>W05 Invoice Validation</td>
+<td><code>invoicing.py</code> <code>derive_totals</code> + <code>check_lines_against_totals</code>, 141 tes</td>
+</tr>
+<tr>
+<td>W06 Settlement Calc</td>
+<td><code>supplier_settlements.py</code> DUE/PAID dengan guard overpay (ADR-0056)</td>
+</tr>
+<tr>
+<td>W11 Cash/Exposure</td>
+<td><code>ledger_balance()</code> + <code>verify_ledger()</code> (chain append-only)</td>
+</tr>
+<tr>
+<td>Deposit</td>
+<td><code>deposit_resolutions.py</code> (ADR-0055)</td>
+</tr>
+<tr>
+<td>Fx</td>
+<td><code>fx.py</code> — inferensi mata uang guest (ADR-0060)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Yang belum:</strong> W01 AR aging (bucket 30/60/90), W02 AP aging, W07 due monitor (kolom <code>due_at</code> ada di <code>invoices</code>, tidak ada sweep), W03 payment matching lanjutan (partial/over sudah di recon), W10 financial exception report (kompilasi).</p>
+<h3 id="agen-1-control-tower-core-baru-selesai-4-worker-sisanya-sebagian-sudah-ada-infra">Agen 1 — Control Tower: core baru selesai, 4 worker sisanya sebagian sudah ada infra</h3>
+<ul>
+<li>W01/W03 Router+Dispatcher: ✅ baru (<code>control_tower.py</code>, vocabulary tertutup §2A.3, outbox idempoten)</li>
+<li>W05/W06 Exception+Escalation: ✅ baru (lewat exception engine yang sama)</li>
+<li>W08 Retry: ✅ baru (pakai <code>publish_due</code> outbox; dead letter hanya bisa dibangunkan <code>requeue()</code> manusia)</li>
+<li>W04 SLA Monitor: <strong>scheduler.py sudah punya</strong> sweep <code>case_sla</code> + <code>ops_sla</code> — tinggal wiring, bukan bangun</li>
+<li>W07 Agent Health: <strong>observability.py <code>health_checks()</code> sudah ada</strong> ("UNKNOWN is never OK")</li>
+<li>W09 Notification: <strong>messages.py (katalog template) + connectors.py (outbound transport) sudah ada</strong></li>
+<li>W10 Cost/Token Budget: <strong>BELUM ADA</strong> — tidak ada penghitung token, tidak ada policy key budget</li>
+<li>W02 Workflow Coordinator: parsial (correlation_id ada di outbox; tidak ada peta workflow durable)</li>
+</ul>
+<h3 id="agen-4-operations-55">Agen 4 — Operations: ~55%</h3>
+<p>Ada: <code>ops_tasks.py</code> (8 kind tugas + SLA + assignment), scheduler sweeps, <code>incidents.py</code> (playbook + severity), <code>documents.py</code> (penyimpanan + format), <code>scan_untrusted</code> (comm QC), gates komersial/inventaris/finansial per-booking di reservation_workers.
+Belum: W03 doc-completeness checker (tidak ada pemeriksa dokumen-wajib per booking), W04 booking QC sweep, W05 pre-arrival readiness sweep (RES-W10 ada per-konversasi, tidak ada sweep armada), W10 SOP/process compliance store.</p>
+<h3 id="agen-2-commercial-paling-tipis-15">Agen 2 — Commercial: paling tipis (~15%)</h3>
+<p>Ada: <code>crm.py</code> (profil guest + requirements ter-tipe), <code>matching.py</code> (skoring VILLA — bukan lead; eligibility-first + score dengan alasan — pola bagus untuk disalin ke lead scoring), <code>reservation_kpi.py</code> (funnel inquiry→quote→hold→booking = konversi).
+Belum: lead scoring, segmentasi, campaign analysis (konsep "campaign" <strong>nol</strong> di repo), content drafting, SEO, social, nurture, B2B research, abandoned-inquiry recovery.</p>
+<h3 id="agen-6-revenue-bi-45">Agen 6 — Revenue &amp; BI: ~45%</h3>
+<p>Ada: <code>reservation_kpi.py</code> (konversi + funnel, read-only idempoten), data pendukung lengkap di tabel (<code>bookings.confirmed_at/cancelled_at/total_minor/currency</code>, <code>cases.channel</code>, <code>rate_versions</code>, <code>supplier_settlements</code>), <code>shadow_eval.py</code> (pola KPI ber-bar dengan floor tenant).
+Belum: W04 demand intel, W09 forecasting, W10 margin analysis (kolom payout owner tidak ada di <code>quotes</code> — margin hanya bisa dihitung dari settlements vs invoice), W11 anomaly detection, W12 executive report.</p>
+<hr />
+<h2 id="3-skills-hermes-yang-langsung-menunjang-jawaban-pertanyaan-anda">3. Skills Hermes yang Langsung Menunjang (Jawaban Pertanyaan Anda)</h2>
+<p><strong>Ya, ada — 12 skills relevan.</strong> Tapi jujur soal batasnya: skills memberi <strong>protokol kerja &amp; standar analisis</strong> untuk agen riset/BI/finans/ops saat <em>Hermes mengoperasikan</em> agen-agen itu; implementasi worker itu sendiri tetap kode deterministik di repo (aturan dokumen §20.2 — deterministic code untuk otorisasi, aritmetika, invariants; LLM hanya bahasa).</p>
+<table>
+<thead>
+<tr>
+<th>Skill</th>
+<th>Menunjang agen</th>
+<th>Cara pakai konkret</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>riset-penelitian</code> (always-on)</td>
+<td>SEMUA, esp. 6</td>
+<td>Falsification-first + rule 11 (cek cakupan dulu) + rule 10 (oracle sebelum model)</td>
+</tr>
+<tr>
+<td><code>sodex-venue-ledger-reconcile</code></td>
+<td>5</td>
+<td>Pola rekonsiliasi ledger-vs-venue: PnL wallet vs buku — langsung transferable ke FIN-W04</td>
+</tr>
+<tr>
+<td><code>trading-system-audit</code></td>
+<td>5, 6</td>
+<td>Pola audit forensik lintas-sumber (cross-DB PnL) → audit invoice vs payment vs ledger</td>
+</tr>
+<tr>
+<td><code>quantitative-trading-analytics</code></td>
+<td>6</td>
+<td>Bootstrap CI95, metrik terukur → interval keyakinan forecast RBI-W09</td>
+</tr>
+<tr>
+<td><code>causal-inference-analysis</code></td>
+<td>2, 6</td>
+<td>DiD/IV untuk klaim atribusi kampanye — mencegah "claim attribution unsupported by data" (larangan §8)</td>
+</tr>
+<tr>
+<td><code>data-triangulation-verification</code></td>
+<td>5, 6</td>
+<td>Enforce source-of-truth matrix §15: ≥2 sumber independen</td>
+</tr>
+<tr>
+<td><code>grounded-citations</code></td>
+<td>6</td>
+<td>Setiap angka executive report wajib bawa lineage (RBI-W12)</td>
+</tr>
+<tr>
+<td><code>meta-analysis-synthesis</code></td>
+<td>6</td>
+<td>Pigi-pool hasil kampanye/season untuk demand intel</td>
+</tr>
+<tr>
+<td><code>advanced-root-cause-analysis</code> + <code>structured-problem-solving</code> + <code>bottleneck-analysis</code></td>
+<td>1, 4</td>
+<td>Playbook eskalasi: incident → RCA KT IS/IS-NOT, A3 untuk SLA bolong berulang</td>
+</tr>
+<tr>
+<td><code>anantara-master-evidence-framework</code></td>
+<td>SEMUA</td>
+<td>Standar bukti (n, p-value, OOS) sebelum klaim "worker ini efektif"</td>
+</tr>
+<tr>
+<td><code>claude-code</code> / <code>codex</code> / <code>opencode</code></td>
+<td>build</td>
+<td>Delegasi implementasi paralel antar-worker dengan review</td>
+</tr>
+<tr>
+<td><code>xlsx</code> / <code>pdf</code> / <code>html-to-pdf</code></td>
+<td>6, 12</td>
+<td>Format executive report yang dibaca GM/Owner</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Yang TIDAK ada dan memang tidak seharusnya sebagai skill:</strong> worker domain villa (matching villa, hold, recon invoice). Itu kode repo — stdlib-only, fail-closed, ter-audit — bukan skill eksternal.</p>
+<hr />
+<h2 id="4-gap-substantif-yang-benar-benar-harus-dibangun-prioritas">4. Gap Substantif (Yang Benar-Benar Harus Dibangun) — Prioritas</h2>
+<ol>
+<li><strong>CT-W10 Budget Monitor</strong> — tanpa ini, kill-switch §17 punya gelar tapi tidak ada biaya yang dipantau. Butuh: policy key <code>ai.budget.token_daily</code> + tabel kecil penggunaan + sweep. (Kecil, ~1 hari)</li>
+<li><strong>FIN AR/AP aging + due sweep</strong> — data sudah ada (<code>invoices.due_at</code>, <code>supplier_settlements</code>), tinggal agregasi baca-saja + wiring scheduler. (Kecil, ~1 hari)</li>
+<li><strong>OPS doc-completeness + readiness sweep</strong> — perlu definisi dokumen-wajib per booking (policy matrix sudah menunjuk <code>check_in_document_required</code>). (Sedang, ~2 hari)</li>
+<li><strong>RBI forecast + anomaly + executive report</strong> — <code>reservation_kpi.collect()</code> jadi basis; anomaly = statistik sederhana dulu (z-score rolling), bukan ML. (Sedang-besar, ~3-4 hari)</li>
+<li><strong>Commercial AI utuh</strong> — 11 worker; mulai dari lead scoring (salin pola eligibility-first dari <code>matching.py</code>) + abandoned-inquiry recovery (query case terbuka tanpa aktivitas). (Besar, bertahap)</li>
+<li><strong>KPI store §18</strong> (<code>kpi_definition</code> versioned) — prasyarat sebelum target KPI dipakai sebagai kebenaran operasional. (Sedang)</li>
+</ol>
+<h2 id="5-temuan-audit-terhadap-pekerjaan-saya-sendiri-falsifikasi">5. Temuan Audit terhadap Pekerjaan Saya Sendiri (Falsifikasi)</h2>
+<p>Falsifikasi menemukan <strong>2 cacat di core Control Tower yang baru dibangun</strong> (commit <code>e819783</code>):
+1. <strong>Tool CT belum lolos gerbang:</strong> <code>workflow.status</code>/<code>workflow.retry_safe</code> terdaftar di <code>ai_tools</code>, tetapi TIDAK ada di <code>TOOL_EFFECTS</code> gateway → <code>effect_of()</code> akan menolak dengan <code>AI_TOOL_EFFECT_UNKNOWN</code>. Route() juga belum meminta pintu gateway (langsung <code>outbox.emit</code>). Perlu ADR-0061: daftarkan efek READ/WRITE + panggil pintu di setiap aksi tower.
+2. <strong>5 migrasi tertunda</strong> (<code>012</code>–<code>016</code>) ternyata belum diterapkan ke <code>data/villa.db</code> — dashboard yang jalan tadi melayani skema lama. <strong>Sudah diterapkan hari ini</strong> (v016), service perlu restart untuk memakai skema baru.</p>
+<h2 id="6-rekomendasi-urutan-kerja-falsifiable">6. Rekomendasi Urutan Kerja (Falsifiable)</h2>
+<p><strong>Hipotesis kerja:</strong> "Dengan fondasi yang ada, 5 agen tersisa mencapai core-to-done dalam urutan FIN → OPS → RBI → CT-lengkap → COM, masing-masing lulus Definition of Done §22." <strong>Cara verifikasi:</strong> setiap agen keluar hanya jika: tool allowlist server-side ✅, handoff tested ✅, degraded/suspend per-agen ✅, observability ✅, KPI telemetry sebelum target.</p>
+<p>Langkah berikutnya yang disarankan: <strong>FIN dulu</strong> (fondasi 80%, dampak langsung ke uang, risiko paling terkendali karena zero money authority), sambil ADR-0061 memperbaiki gerbang CT.</p>
+<p><em>Keyakinan: tinggi untuk inventaris repo (diverifikasi langsung ke kode + DB); sedang untuk estimasi effort (belum ada data kecepatan historis).</em></p>
+</main>
+<footer>Dihasilkan dari Markdown repository oleh scripts/build_deliverables.py &middot; edisi 2026-10-06
+&middot; angka dan klaim di dokumen ini dapat diverifikasi langsung di kode.</footer>
+</div></body></html>

@@ -56,6 +56,13 @@ DELIVERABLES: tuple[dict[str, object], ...] = (
         "slug": "Villa_Agency_Panduan_Setelan_Tenant",
     },
     {
+        "source": "docs/RESEARCH_AI_WORKFORCE_SKILLS_2026-10-06.md",
+        "title": "Riset Workforce AI × Skills Pendukung",
+        "subtitle": "Cakupan fondasi tiap agen AI, gap substantif, dan skills Hermes yang menunjang.",
+        "badges": ("Sumber: repository", f"Edisi {EDITION}", "Riset 2026-10-06"),
+        "slug": "Villa_Agency_Riset_AI_Workforce_Skills",
+    },
+    {
         "source": "docs/MESSAGE_TEMPLATES.md",
         "title": "Pustaka Template Pesan — Villa Agency OS",
         "subtitle": "Kalimat siap pakai untuk tamu, dengan batas keamanan yang sudah dipasang.",
