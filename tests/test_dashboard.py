@@ -39,6 +39,7 @@ ROUTES = {
     "operations": "/operations",
     "approvals": "/approvals",
     "properties": "/properties",
+    "marketing": "/marketing",
     "channels": "/channels",
     "shadow_eval": "/shadow_eval",
     "outbox": "/outbox",
@@ -55,6 +56,7 @@ ENTITLED = {
     "operations": {"reservation", "operations", "owner"},
     "approvals": set(D.ROLES),
     "properties": set(D.ROLES),
+    "marketing": {"reservation", "operations", "owner", "auditor"},
     "channels": {"reservation", "operations", "owner"},
     "shadow_eval": {"operations", "owner", "auditor"},
     "outbox": {"operations", "owner", "auditor"},
@@ -583,7 +585,7 @@ def test_empty_db_pages_render_an_explicit_empty_marker(app):
     for page, role in (("cases", "reservation"), ("inventory", "operations"),
                        ("finance", "finance"), ("operations", "operations"),
                        ("approvals", "owner"), ("properties", "auditor"),
-                       ("channels", "operations"), ("shadow_eval", "owner"),
+                       ("marketing", "owner"), ("channels", "operations"), ("shadow_eval", "owner"),
                        ("audit", "auditor")):
         body = render(app, page, role)
         assert 'data-empty="1"' in body, page
@@ -1823,6 +1825,18 @@ def _seed_shadow(seeded_app, *, statuses=(("ACCEPTED", 14), ("ACCEPTED", 7), ("R
             ),
         )
     return message_id
+
+
+def test_marketing_page_shows_public_readiness_without_guest_pii(seeded_app):
+    page = render(seeded_app, "marketing", "owner")
+    assert "Marketing surface" in page
+    assert "Sellable villas" in page
+    assert "Villa Anantara" in page
+    assert "Website inquiries" in page
+    assert SEED_CASE_2 in page
+    assert RAW_EMAIL not in page
+    assert RAW_PHONE not in page
+    assert "Hidden Backoffice" not in page
 
 
 def test_shadow_eval_page_shows_the_rate_next_to_its_bar(seeded_app):

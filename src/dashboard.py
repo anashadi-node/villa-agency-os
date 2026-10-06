@@ -151,6 +151,7 @@ PAGE_ROLES: Mapping[str, tuple[str, ...]] = MappingProxyType(
         "operations": ("reservation", "operations", "owner"),
         "approvals": ("reservation", "operations", "finance", "owner", "auditor", "gm"),
         "properties": ALL_ROLES,
+        "marketing": ("reservation", "operations", "owner", "auditor"),
         "channels": ("reservation", "operations", "owner"),
         "shadow_eval": ("operations", "owner", "auditor"),
         "outbox": ("operations", "owner", "auditor"),
@@ -236,6 +237,7 @@ SHADOW_WINDOW_DAYS = 90
 #: the queue note counts as "still waiting".
 OUTBOX_WINDOW_DAYS = 7
 OUTBOX_LIVE_STATES = ("PENDING", "FAILED")
+MARKETING_WINDOW_DAYS = 14
 
 #: Hard cap on an operational queue: a queue is read at a glance, and an
 #: unbounded table is how one bad row turns a page into a wall.
@@ -281,6 +283,7 @@ NAV: tuple[tuple[str, str], ...] = (
     ("operations", "/operations"),
     ("approvals", "/approvals"),
     ("properties", "/properties"),
+    ("marketing", "/marketing"),
     ("channels", "/channels"),
     ("shadow_eval", "/shadow_eval"),
     ("outbox", "/outbox"),
@@ -296,6 +299,7 @@ PAGE_TITLES: Mapping[str, str] = MappingProxyType(
         "operations": "Operasi",
         "approvals": "Antrean Approval",
         "properties": "Properti & Unit",
+        "marketing": "Marketing Surface",
         "channels": "Channels",
         "shadow_eval": "AI Quality (Shadow)",
         "outbox": "Outbox & Integrations",
@@ -2041,6 +2045,79 @@ class Dashboard:
             ),
         }
 
+    def view_marketing(self, principal: Principal) -> dict[str, Any]:
+        """Public-site readiness without exposing guest PII."""
+        now_iso = to_iso(self.clock.now())
+        cutoff = to_iso(self.clock.now() - timedelta(days=MARKETING_WINDOW_DAYS))
+        status_rows = self._rows(
+            "SELECT status, COUNT(*) AS n FROM properties WHERE agency_id = ?"
+            " GROUP BY status ORDER BY status",
+            (self.agency_id,),
+        )
+        status_counts = {str(row["status"]): _as_int(row["n"]) for row in status_rows}
+        recent_cases = self._rows(
+            "SELECT COALESCE(reference, case_id) AS reference, status, created_at, first_response_due_at, quote_due_at"
+            " FROM cases WHERE agency_id = ? AND channel = 'website' AND created_at >= ?"
+            " ORDER BY created_at DESC LIMIT ?",
+            (self.agency_id, cutoff, QUEUE_LIMIT),
+        )
+        coverage = self._rows(
+            "SELECT p.property_id AS property_id, p.name AS name, p.status AS status,"
+            " COUNT(DISTINCT CASE WHEN u.status = 'ACTIVE' THEN u.unit_id END) AS active_units,"
+            " COUNT(DISTINCT CASE WHEN ae.valid_until > ? THEN u.unit_id END) AS units_with_current_evidence,"
+            " MAX(ae.captured_at) AS latest_captured_at, MAX(ae.valid_until) AS latest_valid_until"
+            " FROM properties p"
+            " LEFT JOIN units u ON u.agency_id = p.agency_id AND u.property_id = p.property_id"
+            " LEFT JOIN availability_evidence ae ON ae.agency_id = u.agency_id AND ae.unit_id = u.unit_id"
+            " WHERE p.agency_id = ? AND p.status IN ('SELLABLE', 'SELLABLE_WITH_REVIEW')"
+            " GROUP BY p.property_id, p.name, p.status ORDER BY p.status, p.name LIMIT ?",
+            (now_iso, self.agency_id, QUEUE_LIMIT),
+        )
+        return {
+            "window_days": MARKETING_WINDOW_DAYS,
+            "summary": definition_list(
+                [
+                    ("Sellable villas", status_counts.get("SELLABLE", 0)),
+                    ("With review", status_counts.get("SELLABLE_WITH_REVIEW", 0)),
+                    ("Not sellable", status_counts.get("NOT_SELLABLE", 0)),
+                    ("Website inquiries", len(recent_cases)),
+                ]
+            ),
+            "coverage_table": table(
+                ["Villa", "Status", "Active units", "Current evidence", "Latest captured", "Valid until"],
+                [
+                    (
+                        row["name"],
+                        row["status"],
+                        row["active_units"],
+                        row["units_with_current_evidence"],
+                        row["latest_captured_at"] or "—",
+                        row["latest_valid_until"] or "—",
+                    )
+                    for row in coverage
+                ],
+                empty="marketing property",
+            ),
+            "website_case_table": table(
+                ["Reference", "Status", "Created", "First response due", "Quote due"],
+                [
+                    (
+                        row["reference"],
+                        row["status"],
+                        row["created_at"],
+                        row["first_response_due_at"],
+                        row["quote_due_at"],
+                    )
+                    for row in recent_cases
+                ],
+                empty="website inquiry",
+            ),
+            "note": Markup(
+                "This page reads public-site readiness only. It does not publish a villa, "
+                "send an inquiry, or change availability evidence."
+            ),
+        }
+
     def view_audit(self, principal: Principal) -> dict[str, Any]:
         chain = self.chain_health()
         anchor = self.last_anchor()
@@ -2478,7 +2555,7 @@ class Dashboard:
             # The case id is the *last* segment, so /cases/<id>/anything still
             # names the case; an id that is not a reference token is a 404.
             return "case_detail", segments[-1]
-        for page in ("inventory", "finance", "operations", "approvals", "properties", "channels",
+        for page in ("inventory", "finance", "operations", "approvals", "properties", "marketing", "channels",
                      "shadow_eval", "outbox", "audit"):
             if head == page and len(segments) == 1:
                 return page, None
