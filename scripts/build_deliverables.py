@@ -63,6 +63,13 @@ DELIVERABLES: tuple[dict[str, object], ...] = (
         "slug": "Villa_Agency_Riset_AI_Workforce_Skills",
     },
     {
+        "source": "docs/RESEARCH_AGENT6_REVENUE_BI_2026-10-07.md",
+        "title": "Riset — Agent 6: Revenue & BI AI",
+        "subtitle": "Apa yang sudah ada, metrik yang boleh dihitung, dan celah data yang harus diakui — sebelum satu baris kode.",
+        "badges": ("Sumber: repository", f"Edisi {EDITION}", "Pra-implementasi"),
+        "slug": "Villa_Agency_Riset_Agent6_Revenue_BI",
+    },
+    {
         "source": "docs/MESSAGE_TEMPLATES.md",
         "title": "Pustaka Template Pesan — Villa Agency OS",
         "subtitle": "Kalimat siap pakai untuk tamu, dengan batas keamanan yang sudah dipasang.",
