@@ -8,9 +8,10 @@ human Operations Manager works from. The claims this file pins down:
 
 1. every number is read from recorded facts and nothing is invented between
    them — no predicted load, no estimated completion;
-2. authority is structural: the agent registers LOW-tier read tools whose
-   tier ceiling keeps task-writing and state-forcing tools out of reach;
-   this module contains no task-creation or transition path at all;
+2. authority is structural: the agent registers no tool at all — it *declares*
+   its read verbs (OPERATIONS_TOOLS) and writes no row into the catalogue — and
+   the gateway's tier and policy layer keeps task-writing and state-forcing
+   tools out of reach; this module contains no task-creation path at all;
 3. SLA honesty is the core: a task whose ``due_at`` has passed while still
    active is overdue; an incident past its severity SLA response window is
    a breach; empty denominators give ``None``, never a fabricated 0%;
@@ -540,46 +541,72 @@ class TestReadOnlyAndRefusals(Harness):
 # 9. identity — read-tier tools, and the ceiling that keeps writes out of reach
 # --------------------------------------------------------------------------- #
 class TestIdentityAndCeiling(Harness):
-    """Claim #2 in the module docstring: the agent registers READ-tier tools
-    and the gateway's tier ceiling — not this module's good intentions — is
-    what stops it creating tasks or forcing states, even while ACTIVE."""
+    """Claim #2 in the module docstring: the agent registers no tool of its own, and the
+    gateway's tier and policy layer — not this module's good intentions — is what stops it
+    creating tasks or forcing states, even while its principal is ACTIVE.
 
-    def test_operations_tools_are_low_tier_only(self):
-        at = P.to_iso(self.clock.now())
-        self.assertEqual(
-            OPS.ensure_operations_tools(self.conn, at=at),
-            len(OPS.OPERATIONS_TOOLS),
-        )
-        rows = self.conn.execute(
-            "SELECT tool, tier FROM ai_tools WHERE tool LIKE 'ops.%'"
-        ).fetchall()
-        self.assertEqual(len(rows), len(OPS.OPERATIONS_TOOLS))
-        for row in rows:
-            self.assertEqual(row[1], "LOW")
+    ADR-0061 (owner decision 2026-10-07) chose option B: the declared names stay a library
+    contract. Registering them would insert rows into `ai_tools` that
+    `ai_gateway.TOOL_EFFECTS` cannot classify, and widening READ erodes the read-only rung
+    for every tenant at once. The invariant itself is guarded on the real catalogue in
+    `tests/test_ai_gateway.py`.
+    """
+
+    def test_the_declared_tools_are_low_tier_read_verbs_and_stay_unregistered(self):
+        """A declaration is not a registration: LOW tier, no write verb, no row."""
         banned = ("create", "assign", "cancel", "transition", "resolve",
                   "force", "approve", "execute", "send")
-        for name, *_ in OPS.OPERATIONS_TOOLS:
+        self.assertTrue(OPS.OPERATIONS_TOOLS)
+        for name, tier, policy_key, description in OPS.OPERATIONS_TOOLS:
+            self.assertEqual(tier, "LOW")
+            self.assertIsNone(policy_key)
+            self.assertTrue(description.strip())
             self.assertFalse(
                 [verb for verb in banned if verb in name],
                 f"write verb leaked into a read-tier tool name: {name}",
             )
+        rows = self.conn.execute(
+            "SELECT tool FROM ai_tools WHERE tool LIKE 'ops.%'"
+        ).fetchall()
+        self.assertEqual(rows, [], "the declaration must not be registered")
 
-    def test_ensure_operations_tools_is_idempotent(self):
-        at = P.to_iso(self.clock.now())
-        first = OPS.ensure_operations_tools(self.conn, at=at)
-        self.assertEqual(first, len(OPS.OPERATIONS_TOOLS))
-        self.assertEqual(OPS.ensure_operations_tools(self.conn, at=at), 0)
+    def test_collecting_telemetry_never_touches_the_catalogue(self):
+        """26 rows in, 26 rows out — and the same 26 the effect table classifies."""
+        import ai_gateway as AG
+
+        before = {r[0] for r in self.conn.execute("SELECT tool FROM ai_tools")}
+        self.assertEqual(before, set(AG.TOOL_EFFECTS))
+        self.add_task("t_preflight", due_days=0.5)
+        OPS.collect(self.conn, clock=self.clock, agency_id=self.agency)
+        after = {r[0] for r in self.conn.execute("SELECT tool FROM ai_tools")}
+        self.assertEqual(after, before)
 
     def test_agent_cannot_create_tasks_even_when_active(self):
+        """§10 Must Not, as a refusal an operator can name: task creation is not a
+        machine tool at all — no principal holds it, this agent least of all."""
         ai, gateway = self._wired()
         principal = OPS.register_principal(
             ai, secret_ref="VILLA_OPS_SECRET", owner_actor="owner_anas"
         )
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception) as ctx:
             gateway.request(
                 principal.principal_id, "ops_tasks.create",
                 intent="ops: create task",
             )
+        self.assertEqual(getattr(ctx.exception, "code", None), "AI_UNKNOWN_TOOL")
+
+    def test_money_stays_out_of_reach_for_this_principal(self):
+        """The second defence, and the one a tier ceiling cannot fake: `payment.approve`
+        *is* a registered tool, and the deny layer still refuses it here."""
+        ai, gateway = self._wired()
+        principal = OPS.register_principal(
+            ai, secret_ref="VILLA_OPS_SECRET", owner_actor="owner_anas"
+        )
+        with self.assertRaises(Exception) as ctx:
+            gateway.request(
+                principal.principal_id, "payment.approve", intent="ops: approve"
+            )
+        self.assertEqual(getattr(ctx.exception, "code", None), "AI_DENIED_ACTION")
 
     def test_register_principal_refuses_without_an_ai_service(self):
         with self.assertRaises(OPS.OperationsClientError) as ctx:
@@ -635,13 +662,12 @@ class TestDefinitionOfDone(Harness):
         self.assertIn("owner_anas", blob)
         self.assertIn("§40 drill", blob)
 
-    def test_read_tools_are_declared_but_not_yet_classified(self):
-        """Known, tracked gap (ADR-0061): the tools are read-tier in `ai_tools`,
-        but `ai_gateway.TOOL_EFFECTS` does not classify them yet, so the gateway
-        refuses them as unclassified rather than executing them. That is the
-        fail-safe direction — but until they are classified, no worker may rely
-        on calling them through the gateway. When ADR-0061 lands, invert this
-        test to assert the classified effect is READ.
+    def test_the_declared_tools_stay_library_calls_the_door_refuses(self):
+        """ADR-0061 option B closed the "declared but not yet classified" gap: the names
+        are declared and never registered, so the door refuses them because the service
+        holds no such tool — the fail-safe direction, and now the intended one. The
+        two-way invariant over the real catalogue (plus "only the schema writes
+        ai_tools") is guarded in `tests/test_ai_gateway.py`; this pins this module's side.
         """
         import ai_gateway as AG
 
@@ -649,14 +675,13 @@ class TestDefinitionOfDone(Harness):
         principal = OPS.register_principal(
             ai, secret_ref="VILLA_OPS_SECRET", owner_actor="owner_anas"
         )
-        OPS.ensure_operations_tools(self.conn, at=P.to_iso(self.clock.now()))
+        catalogue = {r[0] for r in self.conn.execute("SELECT tool FROM ai_tools")}
         for name, *_ in OPS.OPERATIONS_TOOLS:
+            self.assertNotIn(name, catalogue)
+            self.assertNotIn(name, AG.TOOL_EFFECTS)
             with self.assertRaises(Exception) as ctx:
                 gateway.request(principal.principal_id, name, intent="ops: telemetry")
-            self.assertEqual(
-                getattr(ctx.exception, "code", None), "AI_TOOL_EFFECT_UNKNOWN"
-            )
-            self.assertNotIn(name, AG.TOOL_EFFECTS)
+            self.assertEqual(getattr(ctx.exception, "code", None), "AI_UNKNOWN_TOOL")
 
 
 if __name__ == "__main__":

@@ -358,9 +358,12 @@ def shift_instant(iso: str, days: int) -> str:
 # --------------------------------------------------------------------------- #
 # identity — read-tier only, enforced by the gateway's ceiling
 # --------------------------------------------------------------------------- #
-#: §11 read-tier tools. Every verb here is a read: the agent ranks money facts
-#: for a human. No payment/refund/payout/bank verb may be added from this
-#: module — those stay HIGH-tier human calls in the services that own them.
+#: §11 read-tier names — *declared intent, not registered tools* (ADR-0061 option B).
+#: Every verb here is a read: the agent ranks money facts for a human. No
+#: payment/refund/payout/bank verb may be added from this module — those stay HIGH-tier
+#: human calls in the services that own them. Registering these names would add rows to
+#: `ai_tools` that `ai_gateway.TOOL_EFFECTS` cannot classify; the telemetry stays a
+#: deterministic library call and the gateway keeps refusing the money verbs.
 FINANCE_TOOLS: tuple[tuple[str, str, Optional[str], str], ...] = (
     ("finance.ar_aging", "LOW", None, "Read open AR and its age from due_at"),
     ("finance.ap_payables", "LOW", None, "Read open AP per supplier route"),
@@ -371,29 +374,13 @@ FINANCE_TOOLS: tuple[tuple[str, str, Optional[str], str], ...] = (
 FINANCE_AGENT_NAME = "finance-admin-ai"
 
 
-def ensure_finance_tools(conn: Any, *, at: str) -> int:
-    """Insert the finance agent's read-tier tools if absent. Idempotent; a policy act."""
-    inserted = 0
-    for name, tier, policy_key, description in FINANCE_TOOLS:
-        try:
-            conn.execute(
-                "INSERT INTO ai_tools (tool, tier, policy_key, spec_ref,"
-                " description, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (name, tier, policy_key, "§11", description, at),
-            )
-            inserted += 1
-        except Exception:  # noqa: BLE001 - already present is the happy path
-            pass  # idempotent by design
-    return inserted
-
-
 def register_principal(ai: Any, *, secret_ref: str, owner_actor: str,
                        at: Any = None) -> Any:
     """Register the finance agent as one machine principal among the workforce.
 
-    Its tools are read-tier (see :data:`FINANCE_TOOLS`); the gateway's tier
-    ceiling — not this module's good intentions — is what keeps an administrator
-    from approving money.
+    It registers no tool of its own (ADR-0061 option B): :data:`FINANCE_TOOLS` is a
+    declaration of intent, and the gateway's tier and policy layer — not this module's
+    good intentions — is what keeps an administrator from approving money.
     """
     if ai is None:
         raise FinanceClientError(

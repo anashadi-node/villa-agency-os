@@ -226,8 +226,33 @@ def test_tower_cannot_request_a_high_tier_tool(world):
         world.gateway.request(principal.principal_id, "payment.approve", intent="ct: approve")
 
 
-def test_tower_principal_is_registered_low_tier_only(world):
-    """§7: the tower routes, coordinates, escalates. Its own tools are read-tier."""
-    names = {t.tool for t in world.ai.tools() if t.tier == "LOW"}
-    assert "workflow.status" in names
-    assert "workflow.retry_safe" in names
+def test_the_towers_tools_are_declared_and_never_registered(world):
+    """§7 + ADR-0061 (owner decision 2026-10-07, option B): the tower declares its own
+    names and registers none. Constructing the tower must not add rows to `ai_tools`:
+    the catalogue's only writer is the schema, so every row it holds is classified in
+    `ai_gateway.TOOL_EFFECTS`."""
+    declared = {name for name, *_ in CT.TOWER_TOOLS}
+    assert declared == {"workflow.status", "workflow.retry_safe"}
+    catalogue = {t.tool for t in world.ai.tools()}
+    assert declared.isdisjoint(catalogue), "the tower registered its own declaration"
+    assert catalogue == set(AG.TOOL_EFFECTS)
+
+
+def test_constructing_the_tower_twice_leaves_the_catalogue_alone(conn):
+    """The invariant broke on the *construction* path — 26 rows became 28, two names no
+    effect table could classify — and no fixture saw it, because every fixture built
+    `ai_tools` from the seed. Retry is the outbox's own budget: a deterministic call on
+    this object, not a gateway tool."""
+    before = {row[0] for row in conn.execute("SELECT tool FROM ai_tools")}
+    clock = FrozenClock.at(NOW)
+    ids = IdFactory(True, "ct-construct")
+    audit = AUD.AuditLog(conn, clock=clock, ids=ids)
+    outbox = OB.OutboxService(conn, clock=clock, ids=ids, agency_id=AGENCY)
+    exceptions = EE.ExceptionEngine(conn, clock=clock, ids=ids, agency_id=AGENCY)
+    for _ in range(2):
+        CT.ControlTower(
+            conn, clock=clock, ids=ids, audit=audit, outbox=outbox,
+            exceptions=exceptions, agency_id=AGENCY,
+        )
+    after = {row[0] for row in conn.execute("SELECT tool FROM ai_tools")}
+    assert after == before == set(AG.TOOL_EFFECTS)

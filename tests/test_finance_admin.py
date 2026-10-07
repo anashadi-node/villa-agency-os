@@ -476,9 +476,13 @@ class TestReadOnlyAndRefusals(Harness):
 # 9. identity — read-tier tools, and the ceiling that keeps money out of reach
 # --------------------------------------------------------------------------- #
 class TestIdentityAndCeiling(Harness):
-    """Claim #2 in the module docstring: the agent registers READ-tier tools and
-    the gateway's tier ceiling — not this module's good intentions — is what
-    stops it approving money, even while its principal is ACTIVE."""
+    """Claim #2 in the module docstring: the agent registers no tool of its own, and the
+    gateway's tier and policy layer — not this module's good intentions — is what stops it
+    approving money, even while its principal is ACTIVE.
+
+    ADR-0061 (owner decision 2026-10-07) chose option B: `FINANCE_TOOLS` is a declaration
+    of intent, not a registration. Adding those rows to `ai_tools` would put names in the
+    catalogue that `ai_gateway.TOOL_EFFECTS` cannot classify."""
 
     def _wired(self):
         import ai_gateway as AG
@@ -495,43 +499,47 @@ class TestIdentityAndCeiling(Harness):
         gateway = AG.AiGateway(ai, audit=audit, clock=self.clock, ids=ids)
         return ai, gateway
 
-    def test_finance_tools_are_read_tier_only(self):
-        """Every tool this module mints is LOW tier, and no money verb is in it."""
-        at = P.to_iso(self.clock.now())
-        self.assertEqual(
-            FIN.ensure_finance_tools(self.conn, at=at), len(FIN.FINANCE_TOOLS)
-        )
-        rows = self.conn.execute(
-            "SELECT tool, tier FROM ai_tools WHERE tool LIKE 'finance.%'"
-        ).fetchall()
-        self.assertEqual(len(rows), len(FIN.FINANCE_TOOLS))
-        for row in rows:
-            self.assertEqual(row[1], "LOW")
+    def test_the_declared_tools_are_low_tier_read_verbs_and_stay_unregistered(self):
+        """Every name this module declares is LOW tier and no money verb — and no row:
+        a declaration of intent is not a registration in the catalogue."""
         banned = ("approve", "execute", "refund", "payout", "bank", "charge",
                   "transfer", "withdraw")
-        for name, *_ in FIN.FINANCE_TOOLS:
+        self.assertTrue(FIN.FINANCE_TOOLS)
+        for name, tier, policy_key, description in FIN.FINANCE_TOOLS:
+            self.assertEqual(tier, "LOW")
+            self.assertIsNone(policy_key)
+            self.assertTrue(description.strip())
             self.assertFalse(
                 [verb for verb in banned if verb in name],
                 f"money verb leaked into a read-tier tool name: {name}",
             )
+        rows = self.conn.execute(
+            "SELECT tool FROM ai_tools WHERE tool LIKE 'finance.%'"
+        ).fetchall()
+        self.assertEqual(rows, [], "the declaration must not be registered")
 
-    def test_ensure_finance_tools_is_idempotent(self):
-        at = P.to_iso(self.clock.now())
-        first = FIN.ensure_finance_tools(self.conn, at=at)
-        self.assertEqual(first, len(FIN.FINANCE_TOOLS))
-        self.assertEqual(FIN.ensure_finance_tools(self.conn, at=at), 0)
+    def test_building_the_finance_report_never_touches_the_catalogue(self):
+        """26 rows in, 26 rows out — and the same 26 the effect table classifies."""
+        import ai_gateway as AG
+
+        before = {r[0] for r in self.conn.execute("SELECT tool FROM ai_tools")}
+        self.assertEqual(before, set(AG.TOOL_EFFECTS))
+        FIN.collect(self.conn, clock=self.clock, agency_id=self.agency)
+        after = {r[0] for r in self.conn.execute("SELECT tool FROM ai_tools")}
+        self.assertEqual(after, before)
 
     def test_agent_cannot_approve_money_even_when_active(self):
-        """The ceiling is the gateway's, so the refusal holds without this
-        module doing any policing of its own."""
+        """The defence is the gateway's — tool registration, policy and the deny layer —
+        so the refusal holds without this module policing anything of its own."""
         ai, gateway = self._wired()
         principal = FIN.register_principal(
             ai, secret_ref="VILLA_FIN_SECRET", owner_actor="owner_anas"
         )
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception) as ctx:
             gateway.request(
                 principal.principal_id, "payment.approve", intent="fin: approve"
             )
+        self.assertEqual(getattr(ctx.exception, "code", None), "AI_DENIED_ACTION")
 
     def test_register_principal_refuses_without_an_ai_service(self):
         with self.assertRaises(FIN.FinanceClientError) as ctx:

@@ -26,9 +26,12 @@ What this module owns — and refuses to do:
   collector only SELECTs. Missing facts are refused loudly
   (``OperationsClientError``), never swallowed into a zero.
 
-Authority is structural: the report is derived data with zero write paths, and
-the agent's registered tools are LOW tier — the gateway's tier ceiling, not
-this module's good intentions, is what keeps task-writing and state-forcing
+Authority is structural: the report is derived data with zero write paths, and the
+agent registers no tool at all (ADR-0061 option B, owner decision 2026-10-07). The
+read verbs it would need are *declared* in :data:`OPERATIONS_TOOLS` and written
+nowhere: the catalogue `ai_tools` has one writer, the schema, so every row it holds
+is classified in `ai_gateway.TOOL_EFFECTS`. The gateway's tier and policy layer —
+not this module's good intentions — is what keeps task-writing and state-forcing
 tools out of reach. The agent may *recommend*; the human *decides*.
 """
 
@@ -42,9 +45,13 @@ import primitives as P
 
 ZERO_SHA256 = "0" * 64
 
-#: §10 read-tier tools. Every verb here is a read: the agent ranks operational
-#: facts for a human. No create/assign/transition/resolve verb may be added
-#: from this module — those stay in the services that already own them.
+#: §10 read-tier names — *declared intent, not registered tools* (ADR-0061 option B).
+#: Every verb here is a read: the agent ranks operational facts for a human. No
+#: create/assign/transition/resolve verb may be added from this module — those stay in
+#: the services that already own them. Registering these names would add rows to
+#: `ai_tools` that `ai_gateway.TOOL_EFFECTS` cannot classify, and widening READ erodes
+#: the read-only rung for every tenant at once: the telemetry stays a deterministic
+#: library call, and the gateway keeps refusing the human verbs.
 OPERATIONS_TOOLS: tuple[tuple[str, str, Optional[str], str], ...] = (
     ("ops.workflow", "LOW", None, "Read open work per task kind and status"),
     ("ops.sla", "LOW", None, "Read overdue work and incident SLA breaches"),
@@ -378,29 +385,15 @@ def _require_tables(conn: Any, *tables: str) -> None:
 # --------------------------------------------------------------------------- #
 # identity — read-tier only, enforced by the gateway's ceiling
 # --------------------------------------------------------------------------- #
-def ensure_operations_tools(conn: Any, *, at: str) -> int:
-    """Insert the operations agent's read-tier tools if absent. Idempotent."""
-    inserted = 0
-    for name, tier, policy_key, description in OPERATIONS_TOOLS:
-        try:
-            conn.execute(
-                "INSERT INTO ai_tools (tool, tier, policy_key, spec_ref,"
-                " description, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (name, tier, policy_key, "§10", description, at),
-            )
-            inserted += 1
-        except Exception:  # noqa: BLE001 - already present is the happy path
-            pass  # idempotent by design
-    return inserted
 
 
 def register_principal(ai: Any, *, secret_ref: str, owner_actor: str,
                        at: Any = None) -> Any:
     """Register the operations agent as one machine principal among the workforce.
 
-    Its tools are read-tier (see :data:`OPERATIONS_TOOLS`); the gateway's tier
-    ceiling — not this module's good intentions — is what keeps an
-    administrator from writing task state.
+    It registers no tool of its own (ADR-0061 option B): :data:`OPERATIONS_TOOLS` is
+    a declaration of intent, and the gateway's tier and policy layer — not this
+    module's good intentions — is what keeps an administrator from writing task state.
     """
     if ai is None:
         raise OperationsClientError(

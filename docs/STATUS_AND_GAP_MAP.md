@@ -42,9 +42,9 @@ Satu hal yang saya tegaskan di depan, karena ini akar semua yang di bawah: **pad
 
 | # | Yang sudah OK | Bukti |
 |---|---|---|
-| 1 | **61 ADR — 60 Accepted, 1 PROPOSED (ADR-0061); semua status terbaca** | 61 berkas `docs/adr/`; penjaga `tests/test_adr_status.py` |
-| 2 | **Suite tes hijau penuh** | `3064 passed, 4 skipped, 3780 subtests passed` |
-| 3 | **Gerbang pre-deploy bersih** | `SECRET-SCAN: PASS (0/195)`, `UNSAFE-SCAN: PASS (0/195)`, PG twin cocok, tree bersih |
+| 1 | **61 ADR — 61 Accepted (ADR-0061 ✓ opsi B, keputusan owner 2026-10-07); semua status terbaca** | 61 berkas `docs/adr/`; penjaga `tests/test_adr_status.py` |
+| 2 | **Suite tes hijau penuh** | `3659 passed, 4 skipped, 3965 subtests passed` (snapshot gerbang terakhir, 2026-10-07) |
+| 3 | **Gerbang pre-deploy bersih** | `SECRET-SCAN: PASS (0 findings, 334 files)`, `UNSAFE-SCAN: PASS (0 findings, 334 files)`, PG twin cocok |
 | 4 | **Katalog policy lengkap & fail-closed** | **25 dari 25 key terbit**; key tanpa revisi **ditolak**, bukan diberi nilai karangan |
 | 5 | **Invariant inti ditegakkan kode** | `HOLD_REQUESTED != HOLD_CONFIRMED` (`hold_states.py`, `reservation_kernel.py`) · `AI_EXTRACTED != VERIFIED` (`supplier_route.py`) · `SOURCE_UNAVAILABLE != NOT_AVAILABLE` (`crm.py`, `evidence.py`) |
 | 6 | **"Payment reported ≠ funds received"** | Ditegakkan lewat jenis rekonsiliasi `MISSING_SETTLEMENT` + `UNVERIFIED_WEBHOOK` (`payments.py`) — bukan lewat nama itu, tapi fungsinya ada |
@@ -65,7 +65,7 @@ Dokumen Anda mendefinisikan **6 komponen AI**, dan owner menambah **1** lagi pad
 
 | # | Komponen (dok Anda §7–§12) | Berkas kode | Status |
 |---|---|---|---|
-| 1 | AI Control Tower / Orchestrator | `src/control_tower.py` | 🟡 **inti ada 2026-10-06**: tabel `ROUTES`, `UnroutableEvent` (tujuan tak dikenal ditolak, tidak ditebak), keputusan routing membawa alasan, eskalasi lewat `ai.escalation.raised` di gerbang yang sama, `ensure_tower_tools` idempoten. **Belum**: CT-W01…W10 |
+| 1 | AI Control Tower / Orchestrator | `src/control_tower.py` | 🟡 **inti ada 2026-10-06**: tabel `ROUTES`, `UnroutableEvent` (tujuan tak dikenal ditolak, tidak ditebak), keputusan routing membawa alasan, eskalasi lewat `ai.escalation.raised` di gerbang yang sama, tool-nya **dideklarasikan tanpa didaftarkan** (ADR-0061 opsi B). **Belum**: CT-W01…W10 |
 | 2 | Commercial AI Agent | — | ⚠️ belum ada |
 | 3 | AI Reservation Service | `src/reservation_service.py` + `src/schema/012_reservation_service.sql` | 🟡 **inti ada 2026-10-02**: ledger percakapan berisolasi, tangga §13 (8 rung), kosakata eskalasi tertutup, paket handoff berdigest, ambang keyakinan deny-first, handoff hanya ke peran berisi orang. **Ada juga**: 10 worker RES-W01…RES-W10 (inquiry, matching, availability, pricing, versi penawaran, follow-up, hold, status booking, amend/cancel assist, pre-arrival) lewat pintu `ai_gateway` + `src/reservation_workers.py`, pricing di `reservation_kernel.quote_stay` (mengumpulkan aturan yang sudah ada, **tidak menulis**) dan penawaran lewat satu tindakan `quotation.send` (MEDIUM) — keduanya memakai nama §56 yang sudah ada, katalog tidak ditambah. **Belum**: 1 worker sisanya (RES-W11 handoff) + CLI |
 | 4 | Operations AI Agent | `src/operations_agent.py` | 🟡 **inti read-only 2026-10-07**: beban kerja, SLA tugas+insiden, gap dokumen, kesiapan kedatangan, survei eksepsi, KPI §10 (`None` saat kosong), tool LOW `ops.workflow/sla/readiness`. **Belum**: OPS-W04 booking QC, OPS-W09 comm QC, OPS-W10 SOP/compliance store |
@@ -208,10 +208,10 @@ Ini keputusan Anda, dan saya tidak akan memilihkan. Usulan saya di §6.
 
 | # | Komponen | Worker inti (dok §2A) | Pemilik manusia | Laporan eksekutif | Kode |
 |---|---|---|---|---|---|
-| 1 | **AI Control Tower** | CT-W01…W10 (router, workflow, SLA, exception, escalation, health, retry, notif, budget) | General Manager | GM; Owner untuk insiden material | 🟡 **inti 2026-10-06** — router + eskalasi (`src/control_tower.py`); worker CT-W01…W10 belum |
+| 1 | **AI Control Tower** | CT-W01…W10 (router, workflow, SLA, exception, escalation, health, retry, notif, budget) | General Manager | GM; Owner untuk insiden material | 🟡 **inti 2026-10-06** — router + eskalasi (`src/control_tower.py`); tool deklaratif (ADR-0061 opsi B); worker CT-W01…W10 belum |
 | 2 | **Commercial AI** | COM-W01…W11 (lead intel, scoring, CRM, campaign, content, SEO, social, nurture, B2B, perf, abandoned recovery) | Commercial & Marketing Manager | lewat manager/GM | ⚠️ 0% |
 | 3 | **AI Reservation Service** | RES-W01…W11 (✅ lengkap 2026-10-03: inquiry, matching, availability, pricing, quote, follow-up, hold, booking-status, amend/cancel-assist, pre-arrival, handoff ADR-0053) | Operations / Reservation Manager | lewat manager/GM | ✅ **lengkap 2026-10-03** — inti (ledger + tangga §13 + eskalasi), gerbang komersial §9 (ADR-0050), gerbang penutupan §30 lengkap (ADR-0052/0054/0055/0056), CLI staf (`closure_facts.py`), telemetri KPI (ADR-0057), **pengukuran shadow-mode (ADR-0058)**, **adapter kanal (ADR-0059: pintu HMAC per-tenant, replay idempoten, kirim tetap manusia)**; **halaman dashboard Kanal & Mutu AI/shadow selesai 2026-10-04**; tersisa: halaman KPI + bukti go-live end-to-end |
-| 4 | **Operations AI** | OPS-W01…W10 (workflow, SLA, doc completeness, QC, readiness, task, exception, incident, comm QC, compliance) | Operations Manager | GM/Owner per severity | 🟡 **inti read-only 2026-10-07** — beban kerja, SLA, gap dokumen, kesiapan kedatangan, survei eksepsi, KPI (`src/operations_agent.py`, 26 tes); sisa OPS-W04 booking QC sweep, OPS-W09 comm QC sweep, OPS-W10 SOP/process compliance store belum; tool agen belum terklasifikasi di `TOOL_EFFECTS` (ADR-0061) |
+| 4 | **Operations AI** | OPS-W01…W10 (workflow, SLA, doc completeness, QC, readiness, task, exception, incident, comm QC, compliance) | Operations Manager | GM/Owner per severity | 🟡 **inti read-only 2026-10-07** — beban kerja, SLA, gap dokumen, kesiapan kedatangan, survei eksepsi, KPI (`src/operations_agent.py`, 33 tes); sisa OPS-W04 booking QC sweep, OPS-W09 comm QC sweep, OPS-W10 SOP/process compliance store belum; tool agen **dideklarasikan tanpa didaftarkan** (ADR-0061 opsi B, 2026-10-07) |
 | 5 | **Finance Admin AI** | FIN-W01…W11 (AR, AP, matching, recon, invoice validation, settlement, due monitor, unallocated, duplicate, exception, cash/exposure) | Finance & Accounting Manager | **langsung GM + Owner** | 🟡 **inti read-only 2026-10-07** — AR aging, AP, due monitor, exception, cash/exposure, KPI (`src/finance_admin.py`, 23 tes); sisa FIN-W03/05/08/09 belum |
 | 6 | **Revenue & BI AI** | RBI-W01…W12 (revenue KPI, conversion, pace, demand, pricing intel, villa/partner/channel perf, forecast, margin, anomaly, exec report) | Revenue Manager, atau GM bila lean | **langsung GM + Owner** | ⚠️ 0% |
 

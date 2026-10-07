@@ -82,7 +82,14 @@ ROUTED_TO_KEY = "routed_to"
 #: §14: the escalation is a typed event too — the GM reads a queue, not a chat.
 ESCALATION_EVENT = "ai.escalation.raised"
 
-#: The tower's own read-tier tool names (§56 vocabulary extension, LOW tier).
+#: The tower's own tool names (§56 vocabulary extension) — *declared intent, not
+#: registered tools* (ADR-0061 option B, owner decision 2026-10-07). The catalogue
+#: ``ai_tools`` has one writer, the schema, so every row it holds is classified in
+#: ``ai_gateway.TOOL_EFFECTS``; inserting these two on the construction path broke that
+#: invariant silently. Note the second name: ``retry_safe`` *requeues* a delivery, so
+#: its true effect is WRITE — classifying it READ would have been a wrong label, not
+#: merely a wider rung. Health and retry stay deterministic calls on this module and on
+#: the outbox's own budget.
 TOWER_TOOLS: tuple[tuple[str, str, Optional[str], str], ...] = (
     ("workflow.status", "LOW", None, "Read workflow and queue health"),
     ("workflow.retry_safe", "LOW", None, "Requeue idempotent deliveries within budget"),
@@ -130,7 +137,12 @@ class ControlTower:
         self.gateway = gateway
         self.agency_id = require_ref(agency_id, "agency_id")
         self.actor = require_ref(actor, "actor")
-        ensure_tower_tools(conn, at=self.clock.now().isoformat())
+        # ADR-0061 (owner decision 2026-10-07, option B): the tower *declares* its
+        # read-tier names (see TOWER_TOOLS) and registers none of them. The catalogue
+        # ``ai_tools`` has exactly one writer — the schema — so every row it holds is
+        # classified in ``ai_gateway.TOOL_EFFECTS``. Inserting the declaration here
+        # broke that two-way invariant on the *construction* path, silently: 26 rows
+        # became 28 with two names no effect table could classify.
 
     # -- 1. routing --------------------------------------------------------- #
 
@@ -282,9 +294,9 @@ class ControlTower:
     def register_principal(self, *, secret_ref: str, owner_actor: str, at: Any = None) -> Any:
         """Register the tower as one machine principal among the workforce.
 
-        Its tools are read-tier (see :data:`TOWER_TOOLS`); the gateway's tier
-        ceiling — not this module's good intentions — is what keeps a
-        coordinator from approving money.
+        It registers no tool of its own (ADR-0061 option B): :data:`TOWER_TOOLS` is a
+        declaration of intent, and the gateway's tier and policy layer — not this
+        module's good intentions — is what keeps a coordinator from approving money.
         """
         if self.ai is None:
             raise ControlTowerError(
@@ -296,19 +308,3 @@ class ControlTower:
         return self.ai.register_principal(
             "ai-control-tower", secret_ref=clean_ref, actor=clean_owner, at=at
         )
-
-
-def ensure_tower_tools(conn: Any, *, at: str) -> int:
-    """Insert the tower's read-tier tools if absent. Idempotent; a policy act."""
-    inserted = 0
-    for name, tier, policy_key, description in TOWER_TOOLS:
-        try:
-            conn.execute(
-                "INSERT INTO ai_tools (tool, tier, policy_key, spec_ref, description, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
-                (name, tier, policy_key, "§7", description, at),
-            )
-            inserted += 1
-        except Exception:
-            pass  # already present — idempotent by design
-    return inserted

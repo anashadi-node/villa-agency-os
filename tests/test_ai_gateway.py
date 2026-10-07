@@ -146,6 +146,49 @@ def test_every_registered_tool_is_classified_and_nothing_else_is(world):
     assert set(TOOL_EFFECTS.values()) == {READ, WRITE}
 
 
+def test_only_the_schema_writes_the_tool_catalogue():
+    """ADR-0061 (owner decision 2026-10-07, option B). The two-way invariant above is
+    only meaningful while the catalogue has one writer. The Control Tower used to insert
+    its own declaration from its *constructor*, taking a seeded catalogue from 26 rows to
+    28 — two names no effect table could classify — and nothing noticed, because every
+    fixture built `ai_tools` from the seed rather than from the code under test. A module
+    that registers a tool must classify that same name in the same commit; this scan is
+    where that shows up."""
+    writers = sorted(
+        path.name
+        for path in SRC.glob("*.py")
+        if "INSERT INTO ai_tools" in path.read_text(encoding="utf-8")
+    )
+    assert writers == [], f"these modules write the tool catalogue: {writers}"
+
+
+def test_the_workforces_declared_names_stay_out_of_the_door(world):
+    """The workforce's declared names are library contracts, not gateway tools (ADR-0061
+    option B). If a worker ever needs one *through* the door, that is option A — classify
+    the effect READ and add the catalogue row in the same commit. This is the tripwire: it
+    fails the moment a declaration is registered without a classification."""
+    import control_tower as CT
+    import finance_admin as FIN
+    import operations_agent as OPS
+
+    declared = (
+        {name for name, *_ in CT.TOWER_TOOLS}
+        | {name for name, *_ in OPS.OPERATIONS_TOOLS}
+        | {name for name, *_ in FIN.FINANCE_TOOLS}
+    )
+    assert len(declared) == 8, sorted(declared)
+    # Build the coordinator on this catalogue: this is the path that used to insert
+    # the tower's two names, and a fixture that never took it saw nothing.
+    CT.ControlTower(
+        world.conn, clock=world.clock, ids=IdFactory(True, "gw-decl"),
+        audit=world.audit, outbox=world.outbox, exceptions=world.exceptions,
+        ai=world.ai, agency_id=AGENCY,
+    )
+    from_catalogue = {row[0] for row in world.conn.execute("SELECT tool FROM ai_tools")}
+    assert declared.isdisjoint(from_catalogue)
+    assert declared.isdisjoint(TOOL_EFFECTS)
+
+
 def test_an_unclassified_tool_is_refused_rather_than_guessed(world):
     with pytest.raises(ToolEffectUnknown) as raised:
         effect_of("villa.teleport")
