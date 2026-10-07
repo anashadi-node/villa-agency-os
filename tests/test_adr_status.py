@@ -62,3 +62,47 @@ def test_the_guard_would_notice_a_missing_status(tmp_path):
     stray.write_text("# ADR-9999 — a decision nobody can audit\n\n## Decision\n\nDo the thing.\n")
 
     assert _declared_status(stray) is None
+
+
+#: A claim about how many ADRs exist, e.g. "61 ADR". The lookahead keeps references to a
+#: single record out of it: "§56 ADR-0023" is a pointer, not a count.
+COUNT_CLAIM_RE = re.compile(r"\b(\d{1,3})\s+ADR(?!-)")
+
+#: Living documents that state the size of the set. Dated artefacts (`*2026-10-06*`) are
+#: deliberately absent: they record what was true on a day, and editing them to say 61 would
+#: falsify an audit rather than refresh it. Only the documents that must be true *now* are held.
+COUNT_CLAIM_DOCS = ("docs/SALES_PACKAGE.md", "docs/STATUS_AND_GAP_MAP.md")
+
+
+def test_living_documents_state_the_real_number_of_adrs():
+    """A stale count is a claim nobody can trust — the sales package said 59 for a day.
+
+    The number lives in prose, so no test noticed as ADRs were added. This is the ratchet:
+    adding an ADR without refreshing the living documents fails here.
+    """
+    real = len(list(ADR_DIR.glob("*.md")))
+    root = ADR_DIR.parent.parent
+
+    problems: list[str] = []
+    for rel in COUNT_CLAIM_DOCS:
+        path = root / rel
+        assert path.exists(), f"{rel} moved — update COUNT_CLAIM_DOCS"
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for match in COUNT_CLAIM_RE.finditer(line):
+                claimed = int(match.group(1))
+                if claimed != real:
+                    problems.append(f"{rel}:{lineno}: claims {claimed} ADR, {ADR_DIR.name}/ holds {real}")
+
+    assert not problems, "stale ADR counts:\n" + "\n".join(problems)
+
+
+def test_the_count_claim_regex_reads_counts_and_ignores_references():
+    """Negative controls for the ratchet: it must catch a count and leave a pointer alone."""
+    counted = COUNT_CLAIM_RE.search("+ 61 ADR |")
+    assert counted is not None
+    assert counted.group(1) == "61"
+
+    assert COUNT_CLAIM_RE.search("59 ADR") is not None
+
+    assert COUNT_CLAIM_RE.search("celah §56 ADR-0023/0024") is None
+    assert COUNT_CLAIM_RE.search("ADR-0042/0043/0044") is None
