@@ -28,7 +28,7 @@ Satu hal yang saya tegaskan di depan, karena ini akar semua yang di bawah: **pad
 
 | Area | Status | Bukti ringkas |
 |---|---|---|
-| Domain: booking, hold, pembayaran, policy, bukti, identitas | ✅ **kuat** | 40 ADR, 3.208 tes hijau (+3.780 subtes), gerbang PASS, katalog policy 25/25 |
+| Domain: booking, hold, pembayaran, policy, bukti, identitas | ✅ **kuat** | 61 ADR, 3.208 tes hijau (+3.780 subtes), gerbang PASS, katalog policy 25/25 |
 | Lapisan **AI Workforce** (6 komponen dok Anda + 1 tambahan owner 2026-10-02) | ⚠️ **0% dibangun** | 0 dari 7 komponen ada di kode |
 | Infrastruktur non-agent | ✅ **6 ada, 1 belum** | Policy/Approval/Identity/Audit ada; **Outbox + Exception Engine ada (2026-10-02)**; sisa: DLP |
 | Organisasi & peran (D3) | ✅ **DECIDED, kosakata sudah satu rumah** | ADR-0035 (§5 "3 kosakata hidup bersamaan") direkonsiliasi 2026-10-02 lewat `src/roles.py` + amendment ADR-0035: `approvals.ROLE_RANK` **adalah** `roles.ROLE_RANK`, nama lama tetap resolvable untuk baris historis, dan `gm` masuk tangga (rank 4). **`gm` juga sudah punya halaman** (Command Center/Approvals/Finance/Cases/Properties) dan **wajib MFA** — policy `security.mfa.required_roles` v2 = owner, finance, gm (keputusan owner 2026-10-02). |
@@ -42,7 +42,7 @@ Satu hal yang saya tegaskan di depan, karena ini akar semua yang di bawah: **pad
 
 | # | Yang sudah OK | Bukti |
 |---|---|---|
-| 1 | **40 ADR, semua berstatus terbaca, 0 PROPOSED** | 40 berkas `docs/adr/`; penjaga `tests/test_adr_status.py` |
+| 1 | **61 ADR — 60 Accepted, 1 PROPOSED (ADR-0061); semua status terbaca** | 61 berkas `docs/adr/`; penjaga `tests/test_adr_status.py` |
 | 2 | **Suite tes hijau penuh** | `3064 passed, 4 skipped, 3780 subtests passed` |
 | 3 | **Gerbang pre-deploy bersih** | `SECRET-SCAN: PASS (0/195)`, `UNSAFE-SCAN: PASS (0/195)`, PG twin cocok, tree bersih |
 | 4 | **Katalog policy lengkap & fail-closed** | **25 dari 25 key terbit**; key tanpa revisi **ditolak**, bukan diberi nilai karangan |
@@ -211,7 +211,7 @@ Ini keputusan Anda, dan saya tidak akan memilihkan. Usulan saya di §6.
 | 1 | **AI Control Tower** | CT-W01…W10 (router, workflow, SLA, exception, escalation, health, retry, notif, budget) | General Manager | GM; Owner untuk insiden material | 🟡 **inti 2026-10-06** — router + eskalasi (`src/control_tower.py`); worker CT-W01…W10 belum |
 | 2 | **Commercial AI** | COM-W01…W11 (lead intel, scoring, CRM, campaign, content, SEO, social, nurture, B2B, perf, abandoned recovery) | Commercial & Marketing Manager | lewat manager/GM | ⚠️ 0% |
 | 3 | **AI Reservation Service** | RES-W01…W11 (✅ lengkap 2026-10-03: inquiry, matching, availability, pricing, quote, follow-up, hold, booking-status, amend/cancel-assist, pre-arrival, handoff ADR-0053) | Operations / Reservation Manager | lewat manager/GM | ✅ **lengkap 2026-10-03** — inti (ledger + tangga §13 + eskalasi), gerbang komersial §9 (ADR-0050), gerbang penutupan §30 lengkap (ADR-0052/0054/0055/0056), CLI staf (`closure_facts.py`), telemetri KPI (ADR-0057), **pengukuran shadow-mode (ADR-0058)**, **adapter kanal (ADR-0059: pintu HMAC per-tenant, replay idempoten, kirim tetap manusia)**; **halaman dashboard Kanal & Mutu AI/shadow selesai 2026-10-04**; tersisa: halaman KPI + bukti go-live end-to-end |
-| 4 | **Operations AI** | OPS-W01…W10 (workflow, SLA, doc completeness, QC, readiness, task, exception, incident, comm QC, compliance) | Operations Manager | GM/Owner per severity | 🟡 **inti read-only 2026-10-07** — beban kerja, SLA, gap dokumen, kesiapan kedatangan, survei eksepsi, KPI (`src/operations_agent.py`, 26 tes); sisa OPS-W04 booking QC sweep, OPS-W09 comm QC sweep, OPS-W10 SOP/process compliance store belum |
+| 4 | **Operations AI** | OPS-W01…W10 (workflow, SLA, doc completeness, QC, readiness, task, exception, incident, comm QC, compliance) | Operations Manager | GM/Owner per severity | 🟡 **inti read-only 2026-10-07** — beban kerja, SLA, gap dokumen, kesiapan kedatangan, survei eksepsi, KPI (`src/operations_agent.py`, 26 tes); sisa OPS-W04 booking QC sweep, OPS-W09 comm QC sweep, OPS-W10 SOP/process compliance store belum; tool agen belum terklasifikasi di `TOOL_EFFECTS` (ADR-0061) |
 | 5 | **Finance Admin AI** | FIN-W01…W11 (AR, AP, matching, recon, invoice validation, settlement, due monitor, unallocated, duplicate, exception, cash/exposure) | Finance & Accounting Manager | **langsung GM + Owner** | 🟡 **inti read-only 2026-10-07** — AR aging, AP, due monitor, exception, cash/exposure, KPI (`src/finance_admin.py`, 23 tes); sisa FIN-W03/05/08/09 belum |
 | 6 | **Revenue & BI AI** | RBI-W01…W12 (revenue KPI, conversion, pace, demand, pricing intel, villa/partner/channel perf, forecast, margin, anomaly, exec report) | Revenue Manager, atau GM bila lean | **langsung GM + Owner** | ⚠️ 0% |
 
@@ -252,7 +252,7 @@ Yang **tidak** saya usulkan sekarang: membangun Commercial AI sebelum reservatio
 
 | Klaim | Perintah |
 |---|---|
-| 40 ADR & statusnya | `for f in docs/adr/*.md; do grep -m1 -iE '^\- ?\*?\*?Status' "$f"; done` |
+| 61 ADR & statusnya | `for f in docs/adr/*.md; do grep -m1 -iE '^\- ?\*?\*?Status' "$f"; done` |
 | 3 dari 7 komponen AI belum ada | `ls src/commercial_ai.py src/revenue_bi.py src/security_warden.py` → No such file (Control Tower, Reservation, Finance Admin, Operations sudah ada) |
 | ADR-0012 belum dibangun | `grep -c "method_category" src/payments.py` → 0 |
 | Outbox belum ada | `grep -in outbox src/schema/001_initial.sql` → kosong |
@@ -261,4 +261,4 @@ Yang **tidak** saya usulkan sekarang: membangun Commercial AI sebelum reservatio
 
 ---
 
-**Kesimpulan satu paragraf.** Sistem domainnya **sehat dan bisa dipercaya** — 40 ADR, 3.208 tes hijau, katalog policy penuh, invariant ditegakkan kode. Yang **belum** adalah lapisan AI workforce (0 dari 6 komponen) dan tiga infrastruktur penopangnya (outbox, exception engine, DLP), plus dua ADR pembayaran yang sudah diterima tapi belum dieksekusi. Yang **menahan go-live** bukan software, tapi 1 keputusan bisnis (kesiapan tenant, D17). Dan **pendapat saya soal dokumen Anda: setuju, dokumen itu memang acuan yang tepat** — ia satu-satunya sumber yang memisahkan *agent*, *worker*, dan *manusia* dengan tegas, dan itu persis pembedaan yang mencegah sistem ini tumbuh jadi kumpulan chatbot yang saling mengklaim wewenang. Yang perlu ditambahkan hanya satu: dokumen itu harus **tersambung ke traceability repo** supaya jadi acuan proyek, bukan acuan percakapan.
+**Kesimpulan satu paragraf.** Sistem domainnya **sehat dan bisa dipercaya** — 61 ADR, 3.208 tes hijau, katalog policy penuh, invariant ditegakkan kode. Yang **sudah** ada: inti 4 dari 7 komponen AI workforce (Control Tower, Reservation, Finance Admin, Operations — ADR & baris traceability). Yang **belum** adalah 3 komponen sisanya (Commercial, Revenue & BI, Security & Privacy Warden) dan tiga infrastruktur penopangnya (outbox, exception engine, DLP), plus dua ADR pembayaran yang sudah diterima tapi belum dieksekusi. Yang **menahan go-live** bukan software, tapi 1 keputusan bisnis (kesiapan tenant, D17). Dan **pendapat saya soal dokumen Anda: setuju, dokumen itu memang acuan yang tepat** — ia satu-satunya sumber yang memisahkan *agent*, *worker*, dan *manusia* dengan tegas, dan itu persis pembedaan yang mencegah sistem ini tumbuh jadi kumpulan chatbot yang saling mengklaim wewenang. Yang perlu ditambahkan hanya satu: dokumen itu harus **tersambung ke traceability repo** supaya jadi acuan proyek, bukan acuan percakapan.

@@ -272,6 +272,23 @@ class Harness(unittest.TestCase):
 # --------------------------------------------------------------------------- #
 # 1. empty estate — honest zeros and Nones
 # --------------------------------------------------------------------------- #
+    # -- shared wiring: the workforce's identity + gateway, as production builds it
+    def _wired(self):
+        import ai_gateway as AG
+        import ai_service as AIS
+        import audit as AUD
+        import policy_engine as PE
+
+        policy = PE.PolicyResolver(
+            self.conn, clock=self.clock, agency_id=self.agency
+        )
+        ai = AIS.AiService(self.conn, policy=policy, clock=self.clock)
+        ids = P.IdFactory(True, "ops")
+        audit = AUD.AuditLog(self.conn, clock=self.clock, ids=ids)
+        gateway = AG.AiGateway(ai, audit=audit, clock=self.clock, ids=ids)
+        return ai, gateway
+
+
 class TestEmptyEstate(Harness):
 
     def test_empty_estate_reports_zero_and_no_rates(self):
@@ -527,21 +544,6 @@ class TestIdentityAndCeiling(Harness):
     and the gateway's tier ceiling — not this module's good intentions — is
     what stops it creating tasks or forcing states, even while ACTIVE."""
 
-    def _wired(self):
-        import ai_gateway as AG
-        import ai_service as AIS
-        import audit as AUD
-        import policy_engine as PE
-
-        policy = PE.PolicyResolver(
-            self.conn, clock=self.clock, agency_id=self.agency
-        )
-        ai = AIS.AiService(self.conn, policy=policy, clock=self.clock)
-        ids = P.IdFactory(True, "ops")
-        audit = AUD.AuditLog(self.conn, clock=self.clock, ids=ids)
-        gateway = AG.AiGateway(ai, audit=audit, clock=self.clock, ids=ids)
-        return ai, gateway
-
     def test_operations_tools_are_low_tier_only(self):
         at = P.to_iso(self.clock.now())
         self.assertEqual(
@@ -585,6 +587,76 @@ class TestIdentityAndCeiling(Harness):
                 None, secret_ref="VILLA_OPS_SECRET", owner_actor="owner_anas"
             )
         self.assertEqual(ctx.exception.code, "OPS_NO_AI_SERVICE")
+
+
+# --------------------------------------------------------------------------- #
+# 8. Definition of Done §22 — the items that are not about arithmetic
+# --------------------------------------------------------------------------- #
+class TestDefinitionOfDone(Harness):
+    """§22 as the workforce research compresses it: tool allowlist server-side,
+    handoff wired, degraded/suspend per agent, observability, KPI telemetry."""
+
+    def test_handoff_target_is_wired_in_the_router(self):
+        """Routing must name *this* agent — a handoff to a misspelt or absent
+        principal is the failure mode §2A.7 warns about."""
+        import control_tower as CT
+
+        self.assertEqual(CT.ROUTES["OPS_PROCESS"], OPS.OPERATIONS_AGENT_NAME)
+
+    def test_suspend_stops_this_agent_and_reinstate_returns_it(self):
+        """§40 kill switch, per agent: a suspended principal is refused even for
+        a tool it is otherwise allowed to use."""
+        ai, gateway = self._wired()
+        principal = OPS.register_principal(
+            ai, secret_ref="VILLA_OPS_SECRET", owner_actor="owner_anas"
+        )
+        pid = principal.principal_id
+        gateway.request(pid, "villa.search", intent="ops: read reference")
+        ai.suspend(pid, actor="owner_anas", reason="§40 drill")
+        with self.assertRaises(Exception) as ctx:
+            gateway.request(pid, "villa.search", intent="ops: read reference")
+        self.assertIn("SUSPEND", str(ctx.exception).upper() + str(
+            getattr(ctx.exception, "code", "")
+        ))
+        ai.reinstate(pid, actor="owner_anas", reason="drill over")
+        gateway.request(pid, "villa.search", intent="ops: read reference")
+
+    def test_lifecycle_is_observable_per_agent(self):
+        """Observability: the suspend/reinstate trail must name the actor and
+        reason for *this* principal, not just for the workforce at large."""
+        ai, _ = self._wired()
+        principal = OPS.register_principal(
+            ai, secret_ref="VILLA_OPS_SECRET", owner_actor="owner_anas"
+        )
+        ai.suspend(principal.principal_id, actor="owner_anas", reason="§40 drill")
+        events = ai.events(principal.principal_id)
+        self.assertTrue(events, "no lifecycle events recorded for the agent")
+        blob = " ".join(str(dict(row)) for row in events)
+        self.assertIn("owner_anas", blob)
+        self.assertIn("§40 drill", blob)
+
+    def test_read_tools_are_declared_but_not_yet_classified(self):
+        """Known, tracked gap (ADR-0061): the tools are read-tier in `ai_tools`,
+        but `ai_gateway.TOOL_EFFECTS` does not classify them yet, so the gateway
+        refuses them as unclassified rather than executing them. That is the
+        fail-safe direction — but until they are classified, no worker may rely
+        on calling them through the gateway. When ADR-0061 lands, invert this
+        test to assert the classified effect is READ.
+        """
+        import ai_gateway as AG
+
+        ai, gateway = self._wired()
+        principal = OPS.register_principal(
+            ai, secret_ref="VILLA_OPS_SECRET", owner_actor="owner_anas"
+        )
+        OPS.ensure_operations_tools(self.conn, at=P.to_iso(self.clock.now()))
+        for name, *_ in OPS.OPERATIONS_TOOLS:
+            with self.assertRaises(Exception) as ctx:
+                gateway.request(principal.principal_id, name, intent="ops: telemetry")
+            self.assertEqual(
+                getattr(ctx.exception, "code", None), "AI_TOOL_EFFECT_UNKNOWN"
+            )
+            self.assertNotIn(name, AG.TOOL_EFFECTS)
 
 
 if __name__ == "__main__":
