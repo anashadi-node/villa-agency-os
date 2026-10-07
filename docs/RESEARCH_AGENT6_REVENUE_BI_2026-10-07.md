@@ -1,6 +1,12 @@
 # Riset — Agent 6: Revenue & BI AI (RBI)
 
-**Tanggal:** 7 Oktober 2026 · **Jenis:** riset pra-implementasi (**belum ada satu baris kode Agent 6**) · **Metode:** audit kode langsung (tabel, kolom, modul, kosakata) × dokumen acuan repo · **Protokol:** *falsification-first* + rule 11 `riset-penelitian` — *ukur cakupan sebelum membangun baru*.
+**Tanggal:** 7 Oktober 2026 · **Jenis:** riset pra-implementasi · **Metode:** audit kode langsung (tabel, kolom, modul, kosakata) × dokumen acuan repo · **Protokol:** *falsification-first* + rule 11 `riset-penelitian` — *ukur cakupan sebelum membangun baru*.
+
+> **Pembaruan status (7 Oktober 2026, setelah laporan ini).** Q1 dan Q5 di §10 **sudah dijawab** dan **slice 1 sudah dibangun**, jadi kalimat "belum ada satu baris kode Agent 6" di atas berlaku untuk *tanggal laporan*, bukan hari ini:
+> - **Q5 terjawab** — dua belas worker kini punya nama kanonik (`docs/adr/0064-…md`): `revenue_kpi`, `conversion`, `pace_leadtime`, `demand_intel`, `pricing_intel`, `villa_performance`, `partner_performance`, `channel_performance`, `forecast`, `margin`, `anomaly`, `exec_report`; lima nomor yang sudah dikutip dokumen lain (W04/W09/W10/W11/W12) tidak bergeser.
+> - **Q1 terjawab** — denominator okupansi resmi = **unit-nights `units.status='ACTIVE'`** di dalam jendela, dipotong `units.created_at`; malam terjual dari `reservation_kpi.BOOKED_STATUSES`; malam MAINTENANCE/SUSPENDED **dilaporkan** di samping rasio. Jalur bukti ketersediaan tetap **didefinisikan tapi tidak diterbitkan**: terukur **0 baris** `occupancy_ranges` di DB nyata dan **0 pembaca** di seluruh kode — menerbitkannya hari ini berarti mengarang.
+> - **Slice 1 landed** — `src/revenue_bi_agent.py` (M1, M2, M3, M6, M8, M9 per mata uang + lineage per metrik), 28 tes; §7 Q2–Q4 masih terbuka (label margin, penandaan ramalan, ambang observasi) dan tidak memblokir slice 2.
+> - Satu koreksi untuk slice 2: `invoicing.derive_totals` memasukkan DISCOUNT **ke dalam** subtotal (net, bukan gross), sehingga kedalaman diskon M12 harus dibagi terhadap subtotal **+ |diskon|** bila yang diinginkan porsi terhadap harga kotor.
 
 ---
 
