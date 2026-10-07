@@ -510,6 +510,26 @@ def local_date(when: datetime, tz_name: str) -> date:
 # --------------------------------------------------------------------------- #
 # Identifiers
 # --------------------------------------------------------------------------- #
+#: Positions of a minted token that always carry a hex letter. A sixteen-character
+#: hex token can be read as a direct identifier by four neighbouring detectors
+#: (``gates.IDENTIFIER_PATTERNS``, ``redact()``, ``dashboard.redact_pii``,
+#: ``payments.contains_card_data``) about once in 200 ids — which refuses a real
+#: document, a real payment record or a log line (ADR-0063). Two forced letters
+#: eight characters apart make a run longer than seven digits impossible, so no
+#: detector can match inside a token; the token stays sixteen hex characters
+#: (entropy 2^61 instead of 2^64).
+_TOKEN_LETTER_POSITIONS = (4, 12)
+_TOKEN_LETTERS = "abcdef"
+
+
+def _identifier_safe_hex() -> str:
+    """Sixteen hex characters that no identifier detector reads as an identifier."""
+    token = list(secrets.token_hex(8))
+    for position in _TOKEN_LETTER_POSITIONS:
+        token[position] = secrets.choice(_TOKEN_LETTERS)
+    return "".join(token)
+
+
 class IdFactory:
     """Generates opaque record ids.
 
@@ -529,7 +549,7 @@ class IdFactory:
         if self.deterministic:
             token = f"{self.seed}{self._counter:06d}"
         else:
-            token = secrets.token_hex(8)
+            token = _identifier_safe_hex()
         return f"{prefix}_{token}"
 
 

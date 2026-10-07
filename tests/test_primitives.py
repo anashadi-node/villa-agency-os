@@ -255,5 +255,46 @@ class TestLimits(unittest.TestCase):
             self.assertIn(currency, P.MINOR_UNITS)
 
 
+class TestAMintedIdIsNeverIdentifierShaped(unittest.TestCase):
+    """ADR-0063 — an opaque id may not look like a phone, a card or a NIK.
+
+    ``IdFactory`` mints sixteen hex characters. Thirteen of them are decimal digits
+    about once in 200 ids, and four detectors then read the id as an identifier: the
+    document gate refuses a confirmation (ADR-0062), ``payments.contains_card_data``
+    refuses the record, and ``redact()`` / ``dashboard.redact_pii`` mask the id in the
+    middle of a log line. Two forced hex letters, eight characters apart, make a run
+    longer than seven digits impossible while the token stays sixteen hex characters.
+    """
+
+    def test_no_minted_id_carries_a_run_of_nine_digits(self):
+        """Nine digits is where ``redact()``'s phone rule starts matching."""
+        import re
+
+        factory = P.IdFactory()
+        longest = 0
+        for _ in range(20_000):
+            runs = [len(m.group(0)) for m in re.finditer(r"\d+", factory.new("book"))]
+            longest = max([longest, *runs])
+        self.assertLess(longest, 9, f"a minted id carries a {longest}-digit run")
+
+    def test_the_token_keeps_its_declared_shape(self):
+        token = P.IdFactory().new("book").split("_", 1)[1]
+        self.assertRegex(token, r"^[0-9a-f]{16}$")
+
+    def test_the_four_detectors_never_read_a_minted_id_as_an_identifier(self):
+        import dashboard
+        import gates
+        import payments
+
+        factory = P.IdFactory()
+        for _ in range(3_000):
+            token = factory.new("book")
+            self.assertEqual(P.redact(token), token, token)
+            self.assertEqual(dashboard.redact_pii(token), token, token)
+            self.assertFalse(payments.contains_card_data(token), token)
+            for name, pattern in gates.IDENTIFIER_PATTERNS:
+                self.assertIsNone(pattern.search(token), f"{name} read {token}")
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

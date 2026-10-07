@@ -141,8 +141,10 @@ forces a hex letter at two positions fewer than 13 apart (and fewer than 9 apart
 | `payments.contains_card_data` `_CARD_CANDIDATE` | refused a payment record as card data, 0.0415%/id | **0.000%** |
 | `dashboard.redact_pii` `_PHONE_RE` | **corrupted the id in a dashboard log line** — executed: `redact_pii("book_028e0837814326b1")` → `book_028e[TELEPON_DIHAPUS]b1`; same regex, same ~0.11%/id — traceability damage, not a refusal | **0.000%** |
 
-It is not taken here because it changes the id format ADR-0014 records and the id entropy (2^64 → 2^61;
-measured 0 hits across 300,000 generated ids at all four sites); it is the recommended next decision.
+It is not taken here because it changes the id format ADR-0014 records and the id entropy; it was
+recommended as the next decision and the owner took it the same day — **ADR-0063** forces a hex letter
+at two positions of every minted token, which measured 0 hits across 300,000 ids at all four sites
+(2^64 → 2^61) and drives the confirmation refusal rate to 0.000%.
 
 ## Tests
 
