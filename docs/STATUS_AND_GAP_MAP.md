@@ -65,14 +65,14 @@ Dokumen Anda mendefinisikan **6 komponen AI**, dan owner menambah **1** lagi pad
 
 | # | Komponen (dok Anda §7–§12) | Berkas kode | Status |
 |---|---|---|---|
-| 1 | AI Control Tower / Orchestrator | — | ⚠️ belum ada |
+| 1 | AI Control Tower / Orchestrator | `src/control_tower.py` | 🟡 **inti ada 2026-10-06**: tabel `ROUTES`, `UnroutableEvent` (tujuan tak dikenal ditolak, tidak ditebak), keputusan routing membawa alasan, eskalasi lewat `ai.escalation.raised` di gerbang yang sama, `ensure_tower_tools` idempoten. **Belum**: CT-W01…W10 |
 | 2 | Commercial AI Agent | — | ⚠️ belum ada |
 | 3 | AI Reservation Service | `src/reservation_service.py` + `src/schema/012_reservation_service.sql` | 🟡 **inti ada 2026-10-02**: ledger percakapan berisolasi, tangga §13 (8 rung), kosakata eskalasi tertutup, paket handoff berdigest, ambang keyakinan deny-first, handoff hanya ke peran berisi orang. **Ada juga**: 10 worker RES-W01…RES-W10 (inquiry, matching, availability, pricing, versi penawaran, follow-up, hold, status booking, amend/cancel assist, pre-arrival) lewat pintu `ai_gateway` + `src/reservation_workers.py`, pricing di `reservation_kernel.quote_stay` (mengumpulkan aturan yang sudah ada, **tidak menulis**) dan penawaran lewat satu tindakan `quotation.send` (MEDIUM) — keduanya memakai nama §56 yang sudah ada, katalog tidak ditambah. **Belum**: 1 worker sisanya (RES-W11 handoff) + CLI |
-| 4 | Operations AI Agent | — | ⚠️ belum ada |
-| 5 | Finance Admin AI Agent | — | ⚠️ belum ada |
+| 4 | Operations AI Agent | `src/operations_agent.py` | 🟡 **inti read-only 2026-10-07**: beban kerja, SLA tugas+insiden, gap dokumen, kesiapan kedatangan, survei eksepsi, KPI §10 (`None` saat kosong), tool LOW `ops.workflow/sla/readiness`. **Belum**: OPS-W04/06/09/10 |
+| 5 | Finance Admin AI Agent | `src/finance_admin.py` | 🟡 **inti read-only 2026-10-07**: AR aging, AP, due monitor, eksepsi, kas/eksposur, KPI §11. **Belum**: FIN-W03/05/08/09 |
 | 6 | Revenue & Business Intelligence AI Agent | — | ⚠️ belum ada |
 
-Bukti: `grep -rl "control_tower\|reservation_service\|commercial_ai\|operations_ai\|finance_admin\|revenue_bi" src/` → **0 berkas**.
+Bukti: `ls src/control_tower.py src/reservation_service.py src/finance_admin.py src/operations_agent.py` → **4 ada**; sisa `commercial_ai`, `revenue_bi`, `security_warden` belum ada. (Jangan pakai `grep` nama komponen sebagai bukti: `control_tower.py` menyebut COM/RBI di ROUTES meski modulnya belum ada.)
 Yang **sudah** ada adalah **identitas** AI (`ai_service.py`, ADR-0018) — yaitu *siapa* AI di mata sistem dan apa yang dilarang. Itu fondasi yang benar, bukan agent-nya.
 
 **Artinya: seluruh mandat AI-spesifik di dokumen Anda belum bisa dijalankan** — §13 human handoff, §14 event envelope, §17 kill switch berjenjang, §19 matriks tes AI, §20 guardrail. Bukan karena salah, tapi karena belum dimulai.
@@ -208,10 +208,10 @@ Ini keputusan Anda, dan saya tidak akan memilihkan. Usulan saya di §6.
 
 | # | Komponen | Worker inti (dok §2A) | Pemilik manusia | Laporan eksekutif | Kode |
 |---|---|---|---|---|---|
-| 1 | **AI Control Tower** | CT-W01…W10 (router, workflow, SLA, exception, escalation, health, retry, notif, budget) | General Manager | GM; Owner untuk insiden material | ⚠️ 0% |
+| 1 | **AI Control Tower** | CT-W01…W10 (router, workflow, SLA, exception, escalation, health, retry, notif, budget) | General Manager | GM; Owner untuk insiden material | 🟡 **inti 2026-10-06** — router + eskalasi (`src/control_tower.py`); worker CT-W01…W10 belum |
 | 2 | **Commercial AI** | COM-W01…W11 (lead intel, scoring, CRM, campaign, content, SEO, social, nurture, B2B, perf, abandoned recovery) | Commercial & Marketing Manager | lewat manager/GM | ⚠️ 0% |
 | 3 | **AI Reservation Service** | RES-W01…W11 (✅ lengkap 2026-10-03: inquiry, matching, availability, pricing, quote, follow-up, hold, booking-status, amend/cancel-assist, pre-arrival, handoff ADR-0053) | Operations / Reservation Manager | lewat manager/GM | ✅ **lengkap 2026-10-03** — inti (ledger + tangga §13 + eskalasi), gerbang komersial §9 (ADR-0050), gerbang penutupan §30 lengkap (ADR-0052/0054/0055/0056), CLI staf (`closure_facts.py`), telemetri KPI (ADR-0057), **pengukuran shadow-mode (ADR-0058)**, **adapter kanal (ADR-0059: pintu HMAC per-tenant, replay idempoten, kirim tetap manusia)**; **halaman dashboard Kanal & Mutu AI/shadow selesai 2026-10-04**; tersisa: halaman KPI + bukti go-live end-to-end |
-| 4 | **Operations AI** | OPS-W01…W10 (workflow, SLA, doc completeness, QC, readiness, task, exception, incident, comm QC, compliance) | Operations Manager | GM/Owner per severity | ⚠️ 0% |
+| 4 | **Operations AI** | OPS-W01…W10 (workflow, SLA, doc completeness, QC, readiness, task, exception, incident, comm QC, compliance) | Operations Manager | GM/Owner per severity | 🟡 **inti read-only 2026-10-07** — beban kerja, SLA, gap dokumen, kesiapan kedatangan, survei eksepsi, KPI (`src/operations_agent.py`, 26 tes); sisa OPS-W04/06/09/10 belum |
 | 5 | **Finance Admin AI** | FIN-W01…W11 (AR, AP, matching, recon, invoice validation, settlement, due monitor, unallocated, duplicate, exception, cash/exposure) | Finance & Accounting Manager | **langsung GM + Owner** | 🟡 **inti read-only 2026-10-07** — AR aging, AP, due monitor, exception, cash/exposure, KPI (`src/finance_admin.py`, 23 tes); sisa FIN-W03/05/08/09 belum |
 | 6 | **Revenue & BI AI** | RBI-W01…W12 (revenue KPI, conversion, pace, demand, pricing intel, villa/partner/channel perf, forecast, margin, anomaly, exec report) | Revenue Manager, atau GM bila lean | **langsung GM + Owner** | ⚠️ 0% |
 
@@ -253,7 +253,7 @@ Yang **tidak** saya usulkan sekarang: membangun Commercial AI sebelum reservatio
 | Klaim | Perintah |
 |---|---|
 | 40 ADR & statusnya | `for f in docs/adr/*.md; do grep -m1 -iE '^\- ?\*?\*?Status' "$f"; done` |
-| 7 komponen AI belum ada | `grep -rl "control_tower\|reservation_service\|commercial_ai\|operations_ai\|finance_admin\|revenue_bi\|security_warden" src/` |
+| 3 dari 7 komponen AI belum ada | `ls src/commercial_ai.py src/revenue_bi.py src/security_warden.py` → No such file (Control Tower, Reservation, Finance Admin, Operations sudah ada) |
 | ADR-0012 belum dibangun | `grep -c "method_category" src/payments.py` → 0 |
 | Outbox belum ada | `grep -in outbox src/schema/001_initial.sql` → kosong |
 | Gerbang hijau | `make check` |
