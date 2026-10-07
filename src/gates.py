@@ -1129,14 +1129,18 @@ POLICY_TABLE: Mapping[str, Mapping[str, str]] = {
 P2_AUTH_ROLES = ("manager", "admin", "finance", "gm")
 P3_AUTH_ROLES = ("admin", "finance", "gm")
 
-#: Detectors for direct identifiers. Deliberately over-matching (a long digit run
-#: is treated as an identifier) — the fail-closed side of a false positive is a
-#: refused message, the other side is a leak.
+#: Detectors for direct identifiers. The long-digit rule is deliberately
+#: over-matching (a long digit run is treated as an identifier) — the fail-closed
+#: side of a false positive is a refused message, the other side is a leak. What
+#: the patterns do **not** claim is a digit run inside a longer token: ``card`` and
+#: ``phone`` demand a token boundary, because ``IdFactory`` mints
+#: ``prefix_`` + ``secrets.token_hex(8)`` and 13 of those 16 hex characters are
+#: decimal digits about once in 200 ids — a booking code, not a card (ADR-0062).
 IDENTIFIER_PATTERNS: tuple[tuple[str, "re.Pattern[str]"], ...] = (
     ("email", re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")),
-    ("phone", re.compile(r"(?:\+?62|0)8[1-9][0-9]{6,11}")),
+    ("phone", re.compile(r"(?<![0-9A-Za-z_])(?:\+?62|0)8[1-9][0-9]{6,11}(?![0-9A-Za-z_])")),
     ("nik", re.compile(r"\b\d{16}\b")),
-    ("card", re.compile(r"(?:\d[ \-]?){13,19}")),
+    ("card", re.compile(r"(?<![0-9A-Za-z_])(?:\d[ \-]?){12,18}\d(?![0-9A-Za-z_])")),
 )
 
 

@@ -1587,5 +1587,43 @@ class TestSourceHygiene(unittest.TestCase):
         self.assertNotIn("except Exception:\n            pass", self.source)
 
 
+class TestAnIdentifierShapedIdIsNotARefusal(DocumentTestBase):
+    """ADR-0062 — the false refusal, end to end.
+
+    The failing smoke run built a confirmation whose booking code was
+    ``book_7312855452251a0f``: 16 random hex characters of which the first 13 are
+    decimal digits. ``card`` matched that prefix with no token boundary and the
+    document was refused as ``DOCUMENT_IDENTIFIER_LEAK`` — a booking, and a
+    customer, that could not be given a confirmation.
+    """
+
+    #: Captured verbatim from the failing run (1 failure in 100 smoke iterations).
+    TRIGGERING_CODE = "book_7312855452251a0f"
+
+    def test_a_confirmation_for_a_card_shaped_booking_code_is_still_issued(self):
+        # Distinct dates: the seeded world already holds book_1 on unit_1, and a second
+        # booking for the same unit and night is refused by the overlap guard.
+        seed_booking(self.conn, self.TRIGGERING_CODE, check_in="2026-12-01", check_out="2026-12-03")
+        document = self.generate(subject={"booking_id": self.TRIGGERING_CODE})
+        body = self.body_of(document)
+        self.assertIn(self.TRIGGERING_CODE, body)
+        self.assertEqual(DOC.assert_identifier_free(body), body)
+
+    def test_the_detector_accepts_a_minted_id_inside_a_line(self):
+        for token in (self.TRIGGERING_CODE, "book_3f5622888338672e", "inv_1234567890123456"):
+            with self.subTest(token=token):
+                line = f"Kode booking {token}"
+                self.assertEqual(DOC.assert_identifier_free(line), line)
+
+    def test_a_standalone_card_number_is_still_refused(self):
+        for value in (CARD_LIKE, "4111-1111-1111-1111", "4111111111111111"):
+            with self.subTest(value=value):
+                self.refuse(
+                    DOC.DOCUMENT_IDENTIFIER_LEAK,
+                    DOC.assert_identifier_free,
+                    f"Nomor kartu {value}",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

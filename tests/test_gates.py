@@ -1987,5 +1987,61 @@ class TestDecisionObject(GateTestCase):
         )
 
 
+class TestIdentifierPatternsNeedATokenBoundary(unittest.TestCase):
+    """ADR-0062: a digit run *inside* an opaque token is not a direct identifier.
+
+    ``IdFactory`` mints ``prefix_`` + ``secrets.token_hex(8)``. About 0.50% of those
+    16 hex characters begin with 13 decimal digits and about 0.10% carry a
+    phone-shaped run, and the unanchored ``card``/``phone`` patterns read both as
+    identifiers: the confirmation that carried the booking code was refused. The
+    patterns now require the run to stand alone. ``redact()`` keeps its broad
+    masking (ADR-0027), so nothing it can mask escapes the first detector.
+    """
+
+    #: Two ids captured from the failing run, plus siblings and the id shapes the
+    #: factory can mint. Each was refused by ``card`` or ``phone`` before the fix.
+    OPQ_IDS = (
+        "book_7312855452251a0f",
+        "book_3f5622888338672e",
+        "book_8ad5b087340350a1",
+        "book_028e0837814326b1",
+        "inv_1234567890123456",
+        "hold_0812345678901234",
+        "unit_1",
+    )
+
+    def test_an_id_token_is_never_read_as_an_identifier(self):
+        from gates import IDENTIFIER_PATTERNS
+
+        for token in self.OPQ_IDS:
+            for name, pattern in IDENTIFIER_PATTERNS:
+                with self.subTest(token=token, pattern=name):
+                    self.assertIsNone(
+                        pattern.search(token), f"{name} read the id token {token!r}"
+                    )
+
+    def test_a_standalone_card_number_is_still_caught(self):
+        from gates import IDENTIFIER_PATTERNS
+
+        card = dict(IDENTIFIER_PATTERNS)["card"]
+        for value in (
+            "4111 1111 1111 1111",
+            "4111-1111-1111-1111",
+            "4111111111111111",
+            "IDR 4111 1111 1111 1111 1111",
+            "Nomor kartu: 4111 1111 1111 1111.",
+        ):
+            with self.subTest(value=value):
+                self.assertIsNotNone(card.search(value), f"a standalone card was missed: {value!r}")
+
+    def test_a_standalone_phone_number_is_still_caught(self):
+        from gates import IDENTIFIER_PATTERNS
+
+        phone = dict(IDENTIFIER_PATTERNS)["phone"]
+        for value in ("081234567890", "+6281234567890", "wa 0812345678901", "hub.08123456789"):
+            with self.subTest(value=value):
+                self.assertIsNotNone(phone.search(value), f"a standalone phone was missed: {value!r}")
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
