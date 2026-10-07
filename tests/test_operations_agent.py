@@ -394,6 +394,27 @@ class TestDocumentGaps(Harness):
         kpis = OPS.collect(self.conn, clock=self.clock, agency_id=self.agency)
         self.assertEqual(kpis.documents.confirmed_without_doc, 0)
 
+    def test_deposit_and_paid_in_full_bookings_still_owe_a_confirmation(self):
+        """A booking that has taken money is locked in — a missing guest
+        confirmation is a gap even though the status is not CONFIRMED yet."""
+        for i, status in enumerate(("DEPOSIT_PAID", "PAID_IN_FULL")):
+            self.add_booking(f"bkg_money_{i}", status=status)
+        kpis = OPS.collect(self.conn, clock=self.clock, agency_id=self.agency)
+        self.assertEqual(kpis.documents.confirmed_count, 2)
+        self.assertEqual(kpis.documents.confirmed_without_doc, 2)
+
+    def test_doc_required_statuses_are_read_from_their_owners(self):
+        """The set must track `documents` (the module that issues the document)
+        instead of being a copy that silently drifts behind it."""
+        import booking_states as BS
+        import documents as DOC
+
+        required = set(OPS._confirmation_required_statuses())
+        self.assertEqual(
+            required, set(DOC.CONFIRMATION_BOOKING_STATUSES) | {"BALANCE_OVERDUE"}
+        )
+        self.assertTrue(required <= set(BS.BOOKING_STATES))
+
 
 # --------------------------------------------------------------------------- #
 # 5. pre-arrival readiness — W05

@@ -62,14 +62,31 @@ ACTIVE_TASK_STATUSES: tuple[str, ...] = ("OPEN", "IN_PROGRESS", "BLOCKED")
 OPEN_INCIDENT_STATUSES: tuple[str, ...] = ("OPEN", "MITIGATING")
 
 #: Booking statuses whose dates are locked and therefore must have their
-#: guest-facing confirmation document on file.
-CONFIRMED_BOOKING_STATUSES: tuple[str, ...] = (
-    "CONFIRMED",
-    "BALANCE_DUE",
-    "BALANCE_OVERDUE",
-    "PRE_ARRIVAL",
-    "IN_STAY",
-)
+#: guest-facing confirmation on file. The set is *read from its owners*, never
+#: copied: ``documents.CONFIRMATION_BOOKING_STATUSES`` is the module that
+#: decides when a confirmation may be issued, and BALANCE_OVERDUE is the same
+#: lock-in condition left out of that tuple (issuance is blocked while the
+#: balance is overdue, but the guest still needs the document that was issued
+#: earlier). Membership is checked against ``booking_states.BOOKING_STATES`` so
+#: the two vocabularies can never drift apart silently.
+_DOC_REQUIRED_STATUS_EXTRA: tuple[str, ...] = ("BALANCE_OVERDUE",)
+
+
+def _confirmation_required_statuses() -> tuple[str, ...]:
+    """Resolve the doc-required booking statuses from the owning modules."""
+    import booking_states as BS
+    import documents as DOC
+
+    required = set(DOC.CONFIRMATION_BOOKING_STATUSES) | set(
+        _DOC_REQUIRED_STATUS_EXTRA
+    )
+    unknown = required - set(BS.BOOKING_STATES)
+    if unknown:
+        raise OperationsClientError(
+            "operations telemetry unavailable: documents and booking_states"
+            f" disagree on status(es) {sorted(unknown)}"
+        )
+    return tuple(sorted(required))
 
 #: Document statuses that satisfy a requirement. VOID and SUPERSEDED-in-error
 #: do not: a voided confirmation is not a confirmation.
@@ -245,12 +262,13 @@ def collect(conn: Any, *, clock: Any, agency_id: str = "agency_default") -> Oper
         )
 
         # ---- W03: document completeness ------------------------------------
-        confirmed_marks = ",".join("?" for _ in CONFIRMED_BOOKING_STATUSES)
+        doc_required = _confirmation_required_statuses()
+        confirmed_marks = ",".join("?" for _ in doc_required)
         satisfying_marks = ",".join("?" for _ in SATISFYING_DOC_STATUSES)
         confirmed_rows = conn.execute(
             "SELECT booking_id FROM bookings"
             f" WHERE agency_id = ? AND status IN ({confirmed_marks})",
-            (agency_id, *CONFIRMED_BOOKING_STATUSES),
+            (agency_id, *doc_required),
         ).fetchall()
         documented = conn.execute(
             "SELECT DISTINCT booking_id FROM documents"
