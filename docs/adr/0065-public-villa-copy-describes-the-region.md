@@ -1,8 +1,7 @@
 # ADR-0065 — Copy villa publik: menggambarkan wilayah, bukan properti
 
 - Status: **ACCEPTED** (aturan teknis: divisi engineering "Ekosistem Super Dev Builders", 2026-10-08;
-  kalimat *disclosure* yang dibaca tamu masih menunggu tanda tangan owner sebelum hosting publik —
-  lihat §"Yang masih menunggu owner")
+  **kalimat *disclosure* disetujui owner apa adanya, 2026-10-08**)
 - Date: 2026-10-08
 - Deciders: Mas Anas (owner) · divisi engineering Villa Agency OS
 - Spec: §10 (gerbang kualitas) · ADR-0011 (bahasa en-US) · ADR-0040 (security, safety, privacy pertama) ·
@@ -65,12 +64,11 @@ dirancang untuk tidak bisa dilewati.
    `evidence_objects` (bertanggal, terpindai, terklasifikasi) atau kolom konten per villa — bukan
    menambal registry. Itu perubahan skema + migrasi, dan akan punya ADR sendiri.
 
-## Yang masih menunggu owner
+## Persetujuan owner atas kalimat disclosure
 
-Satu hal saja: **kalimat disclosure yang dibaca tamu**. Teksnya satu konstanta
-(`villa_showcase.DISCLOSURE`), jadi mengubahnya adalah satu baris tanpa invasi ke struktur. Semua
-aturan lain di atas hanya *mengurangi* yang diklaim, sehingga aman diambil sebagai keputusan
-engineering.
+Owner menyetujui kalimat `villa_showcase.DISCLOSURE` **apa adanya** pada 2026-10-08. Tidak ada sisa
+keputusan bisnis yang menggantung di ADR ini; teksnya tetap satu konstanta, jadi revisi kalimat di
+kemudian hari adalah satu baris tanpa invasi ke struktur.
 
 ## Konsekuensi
 

@@ -42,7 +42,7 @@ Satu hal yang saya tegaskan di depan, karena ini akar semua yang di bawah: **pad
 
 | # | Yang sudah OK | Bukti |
 |---|---|---|
-| 1 | **65 ADR — 65 Accepted (ADR-0061 ✓ opsi B; ADR-0062 ✓ presisi detektor identifier; ADR-0063 ✓ id tidak berbentuk identitas; ADR-0064 ✓ nama kanonik RBI-W01…W12 + denominator okupansi resmi — keputusan owner 2026-10-07; ADR-0065 ✓ copy villa publik menggambarkan wilayah, bukan properti); semua status terbaca** | 65 berkas `docs/adr/`; penjaga `tests/test_adr_status.py` |
+| 1 | **65 ADR — 65 Accepted (ADR-0061 ✓ opsi B; ADR-0062 ✓ presisi detektor identifier; ADR-0063 ✓ id tidak berbentuk identitas; ADR-0064 ✓ nama kanonik RBI-W01…W12 + denominator okupansi resmi — keputusan owner 2026-10-07; ADR-0065 ✓ copy villa publik menggambarkan wilayah, bukan properti — kalimat disclosure disetujui owner 2026-10-08); semua status terbaca** | 65 berkas `docs/adr/`; penjaga `tests/test_adr_status.py` |
 | 2 | **Suite tes hijau penuh** | `3735 passed, 4 skipped, 4008 subtests passed` (snapshot gerbang terakhir, 2026-10-08 — `make check`: PRE-DEPLOY GATE PASS) |
 | 3 | **Gerbang pre-deploy bersih** | `SECRET-SCAN: PASS (0 findings, 337 files)`, `UNSAFE-SCAN: PASS (0 findings, 337 files)`, PG twin cocok |
 | 4 | **Katalog policy lengkap & fail-closed** | **25 dari 25 key terbit**; key tanpa revisi **ditolak**, bukan diberi nilai karangan |
