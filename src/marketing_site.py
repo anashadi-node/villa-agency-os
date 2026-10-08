@@ -403,6 +403,20 @@ class InquiryIntake:
         return value
 
 
+def _places_line(villa: Mapping[str, Any], *extra: str) -> str:
+    """Join the display parts of a villa's location, dropping empty ones entirely.
+
+    A dropped part must take its separator with it: joining ``province · region`` when
+    the region duplicates the province would leave a stray " · " on the card.
+    """
+    parts = [
+        Showcase.display_place(str(villa["province"]), str(villa["region"])),
+        Showcase.display_place(str(villa["region"]), str(villa["province"])),
+        *extra,
+    ]
+    return " · ".join(part for part in parts if part)
+
+
 def _card_html(villa: Mapping[str, Any]) -> Markup:
     """One villa card; every dynamic value passes through ``escape_value``."""
     bedrooms = int(villa["bedrooms_max"])
@@ -426,7 +440,7 @@ def _card_html(villa: Mapping[str, Any]) -> Markup:
         f'<article class="card">'
         f'{photo_div}'
         f'<div class="body">'
-        f'<div class="card-region">{escape_value(Showcase.display_place(villa["province"], villa["region"]))} · {escape_value(Showcase.display_place(villa["region"], villa["province"]))}</div>'
+        f'<div class="card-region">{escape_value(_places_line(villa))}</div>'
         f'<h3><a href="{href}">{escape_value(villa["name"])}</a></h3>'
         f'<p class="card-facts">{escape_value(villa["property_type"].replace("_", " "))} — {escape_value(fact_line)}</p>'
         f'<a class="card-link" href="{href}">View villa &rarr;</a>'
@@ -641,13 +655,7 @@ class MarketingSite:
             {
                 "page_title": f"{villa['name']} — Villa Agency",
                 "villa_name": escape_value(villa["name"]),
-                "villa_meta": escape_value(" · ".join([
-                    part for part in (
-                        Showcase.display_place(str(villa["province"]), str(villa["region"])),
-                        Showcase.display_place(str(villa["region"]), str(villa["province"])),
-                        str(villa["property_type"]).replace("_", " "),
-                    ) if part
-                ])),
+                "villa_meta": escape_value(_places_line(villa, str(villa["property_type"]).replace("_", " "))),
                 "villa_photo": villa_photo,
                 "villa_story": _villa_story_html(showcase),
                 "villa_highlights": _highlights_html(showcase),

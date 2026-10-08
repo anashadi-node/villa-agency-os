@@ -742,6 +742,21 @@ class TestVillaShowcasePage:
         assert "yogyakarta, DI Yogyakarta" not in html
         assert "<p class=\"lede\">DI Yogyakarta · villa</p>" in html
 
+    def test_card_location_does_not_leave_a_stray_separator(self, clock):
+        """A dropped region takes its separator with it, on the card as well as the lede."""
+        conn, site = _make_site(clock)
+        conn.execute(
+            "INSERT INTO properties (property_id, agency_id, name, property_type, region,"
+            " province, timezone, status, contract_pack_status, created_at, updated_at)"
+            " VALUES ('prop-6', 'agency_default', 'Second Highland Stay', 'villa',"
+            " 'yogyakarta', 'DI Yogyakarta', 'Asia/Jakarta', 'SELLABLE', 'ACTIVATED', ?, ?)",
+            ("2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
+        )
+        listing = site.villas_html()
+        assert '<div class="card-region">DI Yogyakarta</div>' in listing
+        assert "DI Yogyakarta · <" not in listing
+        assert "\u00b7 \u00b7" not in listing
+
     def test_story_block_escapes_hostile_copy(self):
         """The copy is plain text from a data source; the render step must escape it."""
         hostile = M.Showcase.VillaShowcase(
