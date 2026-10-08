@@ -144,7 +144,7 @@ Dashboard yang sudah ada tetap penting, tetapi posisinya adalah **internal opera
 2. **Marketing prototype.** Buat landing/katalog demo Bali+Jogja yang indah, read-only, tanpa menyentuh booking kernel. *(SELESAI — `demo/villa-marketing-bali-yogyakarta-2026-10-05.html`.)*
 3. **Public API read model.** Export villa cards publik dari data yang sudah lolos sellability gate. *(SELESAI — `src/marketing_site.py` `PublicReadModel`, hanya `SELLABLE`, semua baca ber-scope `agency_id`.)*
 4. **Inquiry intake.** Form website menulis `case` via adapter resmi, bukan langsung booking. *(SELESAI — `InquiryIntake` → `CrmService.open_inquiry` → `CaseService`, channel `website`, SLA `web_v1`, PII di tabel `guests`, idempotency + honeypot + rate limit + same-origin.)*
-5. **Villa detail + availability request.** Availability ditampilkan sebagai request/hint sampai kernel membuktikan freshness. *(SEBAGIAN — halaman detail + unit table aktif ada; availability hint menunggu kernel freshness.)*
+5. **Villa detail + availability request.** Availability ditampilkan sebagai request/hint sampai kernel membuktikan freshness. *(SELESAI — halaman detail + unit table + **availability hint** dari bukti terbaru yang masih valid (`availability_evidence.valid_until > now`, unit `ACTIVE`), 6 kalimat guest-safe; tanpa bukti valid → kalimat netral. Foto + copy per villa juga selesai, ADR-0065.)*
 6. **Owner/services page.** Jalur pemilik villa dipisahkan dari jalur tamu. *(BELUM.)*
 7. **Dashboard tetap internal.** Lanjut KPI dashboard/outbox/PG/production tanpa mencampur UI publik.
 
