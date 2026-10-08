@@ -180,6 +180,8 @@ Aktifkan: `systemctl daemon-reload && systemctl enable --now villa-scheduler.tim
 
 ## 4. Reverse proxy (contoh nginx)
 
+### 4.1 Dashboard internal (ops.example.com)
+
 ```nginx
 server {
     listen 443 ssl;
@@ -202,6 +204,96 @@ server {
 Token peran dikirim ke dashboard sebagai header identitas
 (`Authorization: Bearer <token>`). Simpan token di password manager, bukan di
 URL, karena URL tercatat di log proxy.
+
+### 4.2 Situs publik (villa.example.com → 127.0.0.1:8090)
+
+Situs publik dilayani unit `deploy/systemd-user/villa-marketing.service`, yang
+mengikat **hanya loopback**. TLS, nama domain, dan pembatasan laju tingkat
+jaringan adalah tugas reverse proxy; port 8090 tidak pernah mendengar dari luar
+mesin ini.
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name villa.example.com;
+    ssl_certificate     /etc/letsencrypt/live/villa.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/villa.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8090;
+
+        # WAJIB timpa, bukan tambahkan. Unit berjalan dengan --trusted-proxy dan
+        # hanya membaca hop TERAKHIR header ini — hop yang ditulis proxy kita
+        # sendiri. Bentuk "tambahkan" ($proxy_add_x_forwarded_for) menyimpan
+        # alamat kiriman pengunjung di depan, jadi jangan dipakai di sini.
+        proxy_set_header X-Forwarded-For $remote_addr;
+
+        # $http_host, bukan $host: $host membuang nomor port, sedangkan
+        # pemeriksaan same-origin pada form membandingkan Origin dengan Host.
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+Kenapa `--trusted-proxy` bersifat opt-in: tanpa proxy di depan, header
+`X-Forwarded-For` hanyalah data yang bisa dikirim siapa saja. Satu pengunjung
+bisa memutar alamat palsu di setiap permintaan dan menghindari pembatasan laju
+sepuluh menit. Karena itu XFF dipercaya **hanya** ketika unit menyatakannya, dan
+CLI menolak kombinasi `--trusted-proxy` + `--allow-remote` supaya socket yang
+menerima koneksi langsung tidak pernah bisa salah menyangka pemalsu sebagai
+proxy (ADR-0067).
+
+Verifikasi, dalam urutan ini:
+
+```bash
+# 1. Unit user tidak menerima PrivateDevices= / ProtectKernelModules= /
+#    CapabilityBoundingSet=: pengelola user tidak bisa melepas kapabilitas yang
+#    tidak dimilikinya, dan unit yang memuatnya mati dengan status=218/CAPABILITIES
+#    (diukur di mesin ini, 2026-10-08 — bukan asumsi).
+systemd-analyze --user verify deploy/systemd-user/villa-marketing.service
+
+# 2. Probe unit yang sedang berjalan: header keamanan, honeypot, gate dashboard,
+#    dan tidak ada port yang menjawab dari alamat non-loopback.
+python3 scripts/preflight.py --db data/villa.db --host-check
+
+# 3. Buktikan unit yang SAMA benar-benar start, melayani, dan masih boleh menulis.
+#    Port bebas + SALINAN database: jangan pernah menjalankan probe ini di atas
+#    port 8090 atau di atas database yang hidup. Salinan harus lewat `.backup`
+#    (mode WAL: `cp` berkas utama saja kehilangan frame yang sudah commit).
+sqlite3 data/villa.db ".backup data/.probe.db"
+systemd-run --user --unit=villa-probe --collect \
+  -p ProtectSystem=strict -p ProtectHome=read-only \
+  -p ReadWritePaths="$PWD/data" -p NoNewPrivileges=true -p PrivateTmp=true \
+  -p ProtectKernelTunables=true -p ProtectControlGroups=true \
+  -p RestrictNamespaces=true -p RestrictRealtime=true -p LockPersonality=true \
+  -p MemoryDenyWriteExecute=true -p SystemCallArchitectures=native -p UMask=0077 \
+  -p 'RestrictAddressFamilies=AF_INET AF_INET6' \
+  /usr/bin/python3 src/marketing_site.py --db data/.probe.db \
+  --host 127.0.0.1 --port 8199 --trusted-proxy
+# lalu: GET / harus 200 (Server: VillaMarketing/1.0), POST /inquiry honeypot 400,
+# dan POST /inquiry sah harus menambah tepat satu baris `cases`.
+systemctl --user stop villa-probe
+rm -f data/.probe.db data/.probe.db-wal data/.probe.db-shm
+```
+
+Daftar properti di langkah 3 sengaja ditulis lengkap: `PrivateDevices=` dan
+`ProtectKernelModules=` **tidak** ada di sana karena keduanya mematikan unit user
+(`status=218/CAPABILITIES`), dan begitulah isi unit di repo ini.
+
+`--host-check` menjalankan empat pemeriksaan; semuanya read-only kecuali satu
+POST honeypot, yang ditolak intake **sebelum** pembatasan laju dan sebelum ada
+penulisan apa pun — jadi aman dijalankan pada situs yang hidup. Unit yang sama
+juga dibuktikan benar-benar start dan masih boleh menulis ke database dengan
+menjalankannya pada port bebas atas **salinan** database (bukan yang hidup);
+salinan itu harus dibuat lewat `.backup` SQLite, karena `cp` berkas utama saja
+melewatkan frame WAL yang sudah commit dan terlihat seperti skema yang tertinggal.
+
+Catatan terukur (2026-10-08): halaman depan situs ini 537 KiB, dan 455 KiB di
+antaranya adalah satu gambar berbentuk data URI di dalam HTML. Setiap tampilan
+halaman mengunduh ulang gambar itu, tanpa cache berkas gambar yang terpisah.
+Cukup untuk pilot, tetapi rute `/media/` dengan header cache panjang adalah
+langkah berikutnya sebelum trafik membesar.
 
 ## 5. Backup & pemulihan (diuji, bukan diasumsikan)
 

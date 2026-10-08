@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import base64
 import functools
+import ipaddress
 import re
 import secrets
 import sys
@@ -144,7 +145,46 @@ CONTENT_SECURITY_POLICY = (
 RATE_LIMIT_MAX_EVENTS = 5
 RATE_LIMIT_WINDOW_SECONDS = 600
 
+#: The header the reverse proxy must write for the client address. Read only
+#: when the site declares the proxy trusted (see ``--trusted-proxy``).
+FORWARDED_FOR_HEADER = "X-Forwarded-For"
+
 SELLABLE_STATUS = "SELLABLE"
+
+
+def client_address_from_forwarded_for(
+    value: Optional[str], *, peer: str
+) -> str:
+    """The client address a trusted proxy reported, or ``peer`` when it cannot be read.
+
+    Only the **last** hop is considered. A proxy either replaces the header
+    outright (``proxy_set_header X-Forwarded-For $remote_addr;``) or appends the
+    address it actually saw (``$proxy_add_x_forwarded_for``); in both shapes the
+    final element is written by our own proxy, so it is the one element a
+    visitor cannot forge. Everything a visitor could have sent — earlier hops,
+    junk, an empty header — falls back to the socket peer, never to a claim.
+
+    The value is normalised through :mod:`ipaddress`, so one client that appears
+    as ``::ffff:203.0.113.7`` and as ``203.0.113.7`` counts once.
+    """
+    parts = [part.strip() for part in (value or "").split(",")]
+    candidates = [part for part in parts if part]
+    if not candidates:
+        return peer
+    last = candidates[-1]
+    if last.startswith("["):  # "[2001:db8::1]:443" — proxy wrote the port
+        last = last.partition("]")[0].lstrip("[")
+    else:
+        host, sep, port = last.rpartition(":")
+        if sep and port.isdigit() and host.count(":") == 0:
+            last = host  # "203.0.113.7:51234"
+    try:
+        parsed = ipaddress.ip_address(last)
+    except ValueError:
+        return peer
+    # One client, one key: an IPv4-mapped IPv6 form is the same visitor.
+    mapped = getattr(parsed, "ipv4_mapped", None)
+    return str(mapped if mapped is not None else parsed)
 
 
 class IntakeError(DomainError):
@@ -512,12 +552,17 @@ class MarketingSite:
         agency_id: Optional[str] = None,
         templates_dir: Optional[Any] = None,
         rate_limiter: Any = None,
+        trusted_proxy: bool = False,
     ) -> None:
         self.conn = conn
         self.agency_id = agency_id or resolve_agency_id()
         self.clock = clock or SystemClock()
         self.ids = ids or IdFactory()
         self.templates_dir = Path(templates_dir) if templates_dir else DEFAULT_TEMPLATES_DIR
+        #: When true, the reverse proxy's forwarded address is the rate-limit
+        #: key and the logged client. Off by default: a header a visitor can
+        #: send must never be trusted just because a proxy might be in front.
+        self.trusted_proxy = bool(trusted_proxy)
         self.rate_limiter = rate_limiter or SlidingWindowRateLimiter(
             self.clock,
             max_events=RATE_LIMIT_MAX_EVENTS,
@@ -791,6 +836,24 @@ class _MarketingRequestHandler(BaseHTTPRequestHandler):
     def _error(self, status: int, message: str) -> None:
         self._send_html(self.site.error_html(status, message), status, no_store=True)
 
+    def _remote_addr(self) -> str:
+        """The address that identifies this visitor to the rate limiter.
+
+        Behind a proxy the socket peer is the proxy for *every* guest, which
+        would collapse the site onto a single bucket; then, and only then, the
+        address our own proxy wrote is used instead.
+        """
+        peer = str(self.client_address[0])
+        headers = getattr(self, "headers", None)
+        if not self.site.trusted_proxy or headers is None:
+            # ``headers`` is None when the request line never parsed, and this
+            # method also runs from ``log_message`` — a junk request must still
+            # produce a 400 and a log line, not an exception in the log path.
+            return peer
+        return client_address_from_forwarded_for(
+            headers.get(FORWARDED_FOR_HEADER), peer=peer
+        )
+
     # -- GET ---------------------------------------------------------------- #
     def do_GET(self) -> None:  # noqa: N802 - http.server API
         site = self.site
@@ -868,7 +931,7 @@ class _MarketingRequestHandler(BaseHTTPRequestHandler):
         try:
             result = self.site.intake.submit(
                 form=form,
-                remote_addr=self.client_address[0],
+                remote_addr=self._remote_addr(),
                 rate_limiter=self.site.rate_limiter,
                 expected_origin_host=self.headers.get("Host"),
                 origin_header=self.headers.get("Origin"),
@@ -886,7 +949,7 @@ class _MarketingRequestHandler(BaseHTTPRequestHandler):
         self._send_html(self.site.inquiry_success_html(result), no_store=True)
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 - http.server API
-        sys.stderr.write("%s - %s\n" % (self.address_string(), format % args))
+        sys.stderr.write("%s - %s\n" % (self._remote_addr(), format % args))
 
 
 def build_handler(site: MarketingSite) -> type:
@@ -905,11 +968,21 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--port", type=int, default=8090)
     parser.add_argument("--agency", default=None, help="agency id (defaults to the environment)")
     parser.add_argument("--allow-remote", action="store_true", help="bind beyond loopback")
+    parser.add_argument(
+        "--trusted-proxy",
+        action="store_true",
+        help="trust the reverse proxy's X-Forwarded-For (the proxy must overwrite it)",
+    )
     parser.add_argument("--dump", default=None, help="write static pages and exit")
     args = parser.parse_args(argv)
+    if args.trusted_proxy and args.allow_remote:
+        parser.error(
+            "--trusted-proxy cannot be combined with --allow-remote: a socket that"
+            " accepts direct connections cannot tell a proxy apart from a forger"
+        )
 
     conn = connect_sqlite(args.db)
-    site = MarketingSite(conn, agency_id=args.agency)
+    site = MarketingSite(conn, agency_id=args.agency, trusted_proxy=args.trusted_proxy)
     if args.dump:
         written = site.dump(args.dump)
         print(f"wrote {len(written)} pages to {args.dump}")

@@ -6,9 +6,14 @@
 > Jangan mencampur UX publik tamu dengan dashboard internal. Rujukan desain/pemisahan:
 > `docs/PRODUCT_SURFACE_SEPARATION_2026-10-05.md`.
 >
-> **Skeleton public site sudah ada (2026-10-05):** `python3 src/marketing_site.py --db data/villa.db --port 8090`
-> melayani home/collection/destinations/villa-detail/inquiry (read model publik + intake ke kernel
-> case). Detail: seksi "Public marketing website" di bawah.
+> **Situs publik: siap dipasang (2026-10-08).** `src/marketing_site.py` melayani
+> home/collection/destinations/villa-detail/inquiry (read model publik + intake ke kernel
+> case). Unit `deploy/systemd-user/villa-marketing.service` menjalankannya **hanya di
+> loopback** (`127.0.0.1:8090`), ter-harden, sedangkan TLS dan nama domain adalah tugas
+> reverse proxy — contoh nginx, `--trusted-proxy`, dan urutan verifikasinya ada di
+> `docs/DEPLOYMENT.md` §4.2 dan ADR-0067. Pemeriksaan sebelum serah terima:
+> `python3 scripts/preflight.py --db data/villa.db --host-check`.
+> Detail: seksi "Public marketing website" di bawah.
 
 **Sistem operasi reservation & agency untuk Villa Management (Bali + Yogyakarta)** —
 fondasi deterministik sebelum lapisan AI diaktifkan.

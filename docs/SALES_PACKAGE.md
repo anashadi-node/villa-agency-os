@@ -41,7 +41,7 @@ Yang membedakan dari "chatbot villa" atau spreadsheet:
 | Bukti jalur tamu end-to-end | `scripts/go_live_smoke.py` — 16 langkah di database kosong: webhook bertanda tangan → kasus → quote → hold → booking → invoice → pembayaran → dokumen → menginap → settlement → gate §30 → `CLOSED` | dikunci `tests/test_go_live_smoke.py`; kedua penolakan wajib (webhook palsu, hold kedua) diuji di dalamnya |
 | Heartbeat 24/7 | `scheduler.py`: menagih hold, SLA, approval, tenggat notifikasi, penagihan | 40 test idempotensi |
 | Gerbang go-live | `scripts/preflight.py` + daftar keputusan bisnis | menolak jalan bila keputusan BLOCKING belum diambil |
-| Dokumentasi | 20 dokumen (`docs/`) + 1 supervisi HTML + 66 ADR | termasuk model data, klasifikasi akses, retensi & insiden, setelan tenant |
+| Dokumentasi | 20 dokumen (`docs/`) + 1 supervisi HTML + 67 ADR | termasuk model data, klasifikasi akses, retensi & insiden, setelan tenant |
 | Data demo | `scripts/seed_demo.py` | membuat portfolio contoh Bali + Yogyakarta dalam hitungan detik |
 
 ## 3. Jaminan yang bisa diuji (bukan slogan)

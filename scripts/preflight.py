@@ -8,7 +8,8 @@ Run this on the machine that will serve the system, against the real database:
         --decisions docs/GO_LIVE_DECISIONS.md \
         --backup /backups/villa-2026-09-21.sqlite
 
-It checks three different things on purpose:
+It checks three different things on purpose (plus the served ports when
+``--host-check`` is given):
 
 **The repository** — schema parity with the PostgreSQL twin, no committed
 secrets, no unsafe switches, and every module importable. A tree that cannot
@@ -34,8 +35,13 @@ import argparse
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -424,6 +430,188 @@ def check_backup(path: Optional[Path]) -> Check:
 
 
 # --------------------------------------------------------------------------
+# Served ports (--host-check)
+# --------------------------------------------------------------------------
+#: The loopback ports the units in deploy/systemd-user declare.
+DASHBOARD_PORT = 8085
+MARKETING_PORT = 8090
+PROBE_TIMEOUT_SECONDS = 5.0
+#: Headers the public site must always send. A missing one is a regression.
+MARKETING_REQUIRED_HEADERS = {
+    "Content-Security-Policy": "default-src 'self'",
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+}
+HONEYPOT_FIELD = "company"
+
+
+def _get(port: int, path: str = "/") -> Any:
+    return urllib.request.urlopen(
+        f"http://127.0.0.1:{port}{path}", timeout=PROBE_TIMEOUT_SECONDS
+    )
+
+
+def _post(port: int, path: str, fields: dict[str, str]) -> Any:
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}{path}",
+        data=urllib.parse.urlencode(fields).encode(),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    return urllib.request.urlopen(request, timeout=PROBE_TIMEOUT_SECONDS)
+
+
+def _primary_route_address() -> Optional[str]:
+    """The address the kernel would use to leave this host.
+
+    A UDP connect sends no packet, but it makes the kernel pick a source
+    address — which is exactly the address a peer on the same network would
+    use to reach this machine. ``getsockname`` therefore reveals it without
+    waiting for a network round trip.
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.settimeout(0.5)
+            sock.connect(("198.51.100.1", 9))  # TEST-NET-2, documentation range
+            address = str(sock.getsockname()[0])
+    except OSError:
+        return None
+    return address if address and not address.startswith("127.") else None
+
+
+def _interface_addresses() -> list[str]:
+    """Every non-loopback IPv4 address on this host, from ``ip``; [] when unavailable."""
+    try:
+        result = subprocess.run(
+            ["ip", "-4", "-o", "addr", "show"], capture_output=True, text=True, timeout=15
+        )
+    except OSError:  # pragma: no cover - no iproute2
+        return []
+    if result.returncode != 0:
+        return []
+    # ``ip`` lists the loopback address too; probing 127.0.0.1 would "succeed"
+    # against every correctly bound service and fail this check for no reason.
+    return [a for a in re.findall(r"inet (\d+\.\d+\.\d+\.\d+)/", result.stdout) if not a.startswith("127.")]
+
+
+def _non_loopback_addresses() -> list[str]:
+    """This host's own non-loopback IPv4 addresses, for an exposure probe."""
+    addresses: set[str] = set()
+    try:
+        infos = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
+    except OSError:  # pragma: no cover - resolver problem
+        infos = []
+    for info in infos:
+        address = str(info[4][0])
+        if not address.startswith("127."):
+            addresses.add(address)
+    primary = _primary_route_address()
+    if primary:
+        addresses.add(primary)
+    addresses.update(a for a in _interface_addresses() if not a.startswith("127."))
+    return sorted(addresses)
+
+
+def _tcp_open(address: str, port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(PROBE_TIMEOUT_SECONDS)
+        return sock.connect_ex((address, port)) == 0
+
+
+def check_served_ports(
+    dashboard_port: int = DASHBOARD_PORT, marketing_port: int = MARKETING_PORT
+) -> list[Check]:
+    """Probe the running units the way a visitor, and then a bot, would.
+
+    Read-only by construction: the only POST is the honeypot, which the intake
+    rejects before the rate limiter and before any database write, so this can
+    run against the live site without creating a case.
+    """
+    checks: list[Check] = []
+
+    try:
+        with _get(marketing_port) as response:
+            status = response.status
+            headers = {name.lower(): value for name, value in response.headers.items()}
+            body = response.read()
+    except urllib.error.HTTPError as exc:
+        checks.append(_check("marketing site", FAIL, f"GET / -> {exc.code} on 127.0.0.1:{marketing_port}"))
+    except OSError as exc:
+        checks.append(
+            _check(
+                "marketing site", FAIL,
+                f"127.0.0.1:{marketing_port} did not answer ({exc.__class__.__name__})"
+                " — is villa-marketing.service running?",
+            )
+        )
+    else:
+        missing = [
+            name for name, needle in MARKETING_REQUIRED_HEADERS.items()
+            if needle not in headers.get(name.lower(), "")
+        ]
+        if missing:
+            checks.append(_check("marketing site", FAIL, f"GET / is missing header(s): {', '.join(missing)}"))
+        else:
+            checks.append(_check("marketing site", OK, f"GET / -> {status}, {len(body) // 1024} KiB, security headers present"))
+
+        trap = {
+            "name": "Preflight Probe",
+            "email": "probe@example.invalid",
+            "message": "Honeypot probe from scripts/preflight.py — must not create a case.",
+            "form_token": uuid.uuid4().hex,
+            HONEYPOT_FIELD: "Filled by a bot",
+            "property_ref": "",
+        }
+        try:
+            with _post(marketing_port, "/inquiry", trap) as response:
+                checks.append(_check("inquiry write path", FAIL, f"a honeypot submission was accepted ({response.status})"))
+        except urllib.error.HTTPError as exc:
+            if exc.code == 400:
+                checks.append(_check("inquiry write path", OK, "honeypot rejected with 400, nothing written"))
+            else:
+                checks.append(_check("inquiry write path", FAIL, f"honeypot submission -> {exc.code} (expected 400)"))
+        except OSError as exc:
+            checks.append(_check("inquiry write path", FAIL, f"/inquiry did not answer ({exc.__class__.__name__})"))
+
+    try:
+        with _get(dashboard_port) as response:
+            checks.append(_check("dashboard gate", FAIL, f"the dashboard answered {response.status} without a token"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 401:
+            checks.append(_check("dashboard gate", OK, "GET / without a token -> 401 (locked)"))
+        else:
+            checks.append(_check("dashboard gate", WARN, f"GET / without a token -> {exc.code}, not the expected 401"))
+    except OSError as exc:
+        checks.append(
+            _check(
+                "dashboard gate", FAIL,
+                f"127.0.0.1:{dashboard_port} did not answer ({exc.__class__.__name__})"
+                " — is villa-dashboard.service running?",
+            )
+        )
+
+    addresses = _non_loopback_addresses()
+    if not addresses:
+        checks.append(_check("loopback only", WARN, "no non-loopback address on this host to probe"))
+    else:
+        exposed = [
+            f"{address}:{port}"
+            for address in addresses
+            for port in (marketing_port, dashboard_port)
+            if _tcp_open(address, port)
+        ]
+        if exposed:
+            checks.append(_check("loopback only", FAIL, "answer(s) off loopback: " + ", ".join(exposed)))
+        else:
+            checks.append(
+                _check(
+                    "loopback only", OK,
+                    f"nothing answers off loopback ({len(addresses) * 2} address:port pairs tried)",
+                )
+            )
+    return checks
+
+
+# --------------------------------------------------------------------------
 # Business decisions
 # --------------------------------------------------------------------------
 def parse_decisions(path: Path) -> tuple[list[Check], list[str]]:
@@ -472,7 +660,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--env", default="VILLA_DB,VILLA_ANCHOR_DIR",
         help="comma separated environment variables that must be set",
     )
-    parser.add_argument("--host-check", action="store_true", help="also check the served ports")
+    parser.add_argument(
+        "--host-check",
+        action="store_true",
+        help="also probe the running units on loopback (read-only, honeypot only)",
+    )
+    parser.add_argument("--marketing-port", type=int, default=MARKETING_PORT)
+    parser.add_argument("--dashboard-port", type=int, default=DASHBOARD_PORT)
     args = parser.parse_args(argv)
 
     db = Path(args.db)
@@ -496,10 +690,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     decision_checks, open_blocking = parse_decisions(Path(args.decisions))
     checks.extend(decision_checks)
 
+    if args.host_check:
+        checks.extend(check_served_ports(args.dashboard_port, args.marketing_port))
+
     print("=== GO-LIVE PREFLIGHT ===")
     print(f"repository : {REPO}")
     print(f"database   : {db}")
     print(f"anchors    : {anchor_dir if anchor_dir else '(not checked)'}")
+    if args.host_check:
+        print(f"ports      : dashboard {args.dashboard_port}, marketing {args.marketing_port}")
     print()
     for check in checks:
         print(f"{check.verdict:<5} {check.name:<22} {check.detail}")

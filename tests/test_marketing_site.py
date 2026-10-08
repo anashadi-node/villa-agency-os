@@ -8,6 +8,7 @@ read-only crawl), and the static dump.
 
 from __future__ import annotations
 
+import socket
 import threading
 import urllib.error
 import urllib.parse
@@ -89,12 +90,14 @@ def _seeded_db(tmp_path, clock):
 
 
 @contextmanager
-def _live_site(tmp_path, clock, *, seed_data=True):
+def _live_site(tmp_path, clock, *, seed_data=True, site_kwargs=None):
     """A real HTTP server over a file-backed DB, in the dashboard-test pattern.
 
     The DB is seeded from the main thread and closed; the server thread opens
     its own connection (sqlite connections are thread-bound). Verification
-    happens through a separate reader connection.
+    happens through a separate reader connection. ``site_kwargs`` reaches
+    ``MarketingSite(...)`` so a test can flip one construction flag (e.g.
+    ``trusted_proxy``) without touching the rest of the wiring.
     """
     db_path = _seeded_db(tmp_path, clock) if seed_data else (tmp_path / "empty.db")
     box: dict = {}
@@ -102,7 +105,9 @@ def _live_site(tmp_path, clock, *, seed_data=True):
 
     def run() -> None:
         conn = connect_sqlite(db_path)
-        site = M.MarketingSite(conn, clock=clock, ids=IdFactory(seed="mkt"))
+        site = M.MarketingSite(
+            conn, clock=clock, ids=IdFactory(seed="mkt"), **(site_kwargs or {})
+        )
         box["site"] = site
         box["server"] = M.serve(M.build_handler(site), "127.0.0.1", 0)
         ready.set()
@@ -153,13 +158,15 @@ def _get(base, path, host=None):
         return exc.code, dict(exc.headers), exc.read().decode("utf-8")
 
 
-def _post(base, path, fields, *, origin=None, host_header=None):
+def _post(base, path, fields, *, origin=None, host_header=None, extra_headers=None):
     data = urllib.parse.urlencode(fields).encode()
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
     if origin is not None:
         headers["Origin"] = origin
     if host_header is not None:
         headers["Host"] = host_header
+    if extra_headers:
+        headers.update(extra_headers)
     request = urllib.request.Request(base + path, data=data, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
@@ -771,4 +778,133 @@ class TestVillaShowcasePage:
         assert "&lt;script&gt;" in story
         assert "<img" not in highlights
         assert "&lt;img" in highlights
+
+
+# --------------------------------------------------------------------------- #
+# Reverse-proxy awareness for the rate limiter
+#
+# The defect this section locks down: behind a reverse proxy every request
+# arrives from the proxy's address, so using the socket peer as the limiter key
+# collapsed the whole site onto one allowance — five inquiries per ten minutes
+# for *all* visitors, and one abuser could starve everyone. Trusting the proxy
+# fixes that, but only if the trusted hop is the one the proxy itself wrote.
+# --------------------------------------------------------------------------- #
+
+
+class TestForwardedForParsing:
+    """Only the hop our proxy wrote is read; everything else fails closed."""
+
+    @pytest.mark.parametrize(
+        "header, expected",
+        [
+            ("203.0.113.7", "203.0.113.7"),
+            ("203.0.113.7, 198.51.100.9", "198.51.100.9"),  # last hop is ours
+            ("203.0.113.7, 198.51.100.9, ", "198.51.100.9"),
+            ("  203.0.113.7  ", "203.0.113.7"),
+            ("203.0.113.7:51234", "203.0.113.7"),  # proxy wrote ip:port
+            ("[2001:db8::1]:443", "2001:db8::1"),
+            ("2001:db8::1", "2001:db8::1"),
+            ("::ffff:203.0.113.7", "203.0.113.7"),  # one client, one notation
+            ("::ffff:cb00:7107", "203.0.113.7"),
+            (None, "127.0.0.1"),  # header absent: the socket peer stands
+            ("", "127.0.0.1"),
+            ("   ", "127.0.0.1"),
+            ("not-an-ip", "127.0.0.1"),
+            # A forged element must never be promoted when the real hop is junk.
+            ("203.0.113.7, garbage", "127.0.0.1"),
+            ("203.0.113.7, <script>", "127.0.0.1"),
+        ],
+    )
+    def test_resolution(self, header, expected):
+        assert M.client_address_from_forwarded_for(header, peer="127.0.0.1") == expected
+
+
+class TestTrustedProxyRateLimit:
+    def test_an_untrusted_site_ignores_forwarded_for(self, clock, tmp_path):
+        """Default (no proxy declared): the header is data, not identity."""
+        with _live_site(tmp_path, clock) as (_site, base):
+            for i in range(5):
+                status, _h, _b = _post(
+                    base, "/inquiry", _valid_fields(),
+                    extra_headers={M.FORWARDED_FOR_HEADER: f"203.0.113.{i + 1}"},
+                )
+                assert status == 200
+            status, _h, _b = _post(
+                base, "/inquiry", _valid_fields(),
+                extra_headers={M.FORWARDED_FOR_HEADER: "203.0.113.99"},
+            )
+            assert status == 429  # rotating the header buys no extra quota
+
+    def test_each_guest_behind_a_trusted_proxy_gets_its_own_allowance(self, clock, tmp_path):
+        with _live_site(tmp_path, clock, site_kwargs={"trusted_proxy": True}) as (_site, base):
+            for _ in range(5):
+                status, _h, _b = _post(
+                    base, "/inquiry", _valid_fields(),
+                    extra_headers={M.FORWARDED_FOR_HEADER: "203.0.113.1"},
+                )
+                assert status == 200
+            exhausted, _h, _b = _post(
+                base, "/inquiry", _valid_fields(),
+                extra_headers={M.FORWARDED_FOR_HEADER: "203.0.113.1"},
+            )
+            assert exhausted == 429
+            # The whole point: a second guest is not collateral damage.
+            other, _h, _b = _post(
+                base, "/inquiry", _valid_fields(),
+                extra_headers={M.FORWARDED_FOR_HEADER: "203.0.113.2"},
+            )
+            assert other == 200
+
+    def test_a_hop_the_visitor_prepended_is_never_the_key(self, clock, tmp_path):
+        """A forged leading value cannot mint a fresh bucket per request."""
+        with _live_site(tmp_path, clock, site_kwargs={"trusted_proxy": True}) as (_site, base):
+            for i in range(6):
+                status, _h, _b = _post(
+                    base, "/inquiry", _valid_fields(),
+                    extra_headers={
+                        M.FORWARDED_FOR_HEADER: f"203.0.113.{i + 1}, 127.0.0.1"
+                    },
+                )
+                assert status == 200 if i < 5 else 429
+
+
+class TestTrustedProxyFlag:
+    """The CLI refuses the one combination that would turn the header into a lie."""
+
+    def test_trusted_proxy_cannot_be_combined_with_allow_remote(self, capsys):
+        with pytest.raises(SystemExit) as excinfo:
+            M.main(["--db", ":memory:", "--trusted-proxy", "--allow-remote"])
+        assert excinfo.value.code == 2
+        stderr = capsys.readouterr().err
+        assert "--trusted-proxy cannot be combined with --allow-remote" in stderr
+
+    def test_trusted_proxy_is_accepted_for_a_loopback_site(self, clock, tmp_path):
+        db = _seeded_db(tmp_path, clock)
+        out = tmp_path / "site"
+        code = M.main(
+            ["--db", str(db), "--agency", "agency_default",
+             "--trusted-proxy", "--dump", str(out)]
+        )
+        assert code == 0
+        assert (out / "index.html").exists()
+
+    def test_a_junk_request_line_does_not_break_the_log_path(self, clock, tmp_path, capfd):
+        """A request that never parsed has no headers, and the log path reads one.
+
+        Regression: ``_remote_addr`` is called from ``log_message`` too, so a
+        malformed request line used to raise ``AttributeError`` while the server
+        was already answering 400 — one traceback per junk request, and the
+        visitor's 400 became a dropped connection.
+        """
+        with _live_site(tmp_path, clock, site_kwargs={"trusted_proxy": True}) as (_site, base):
+            host, port = base.split("//", 1)[1].split(":")
+            with socket.create_connection((host, int(port)), timeout=5) as sock:
+                sock.sendall(b"GARBAGE-REQUEST-LINE\r\n\r\n")
+                reply = sock.recv(200)
+            assert b"400" in reply, reply
+            status, _h, _b = _get(base, "/")
+            assert status == 200  # the server survived the junk
+        assert "AttributeError" not in capfd.readouterr().err
+
+
 

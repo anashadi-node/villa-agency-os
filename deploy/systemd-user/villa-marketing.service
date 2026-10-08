@@ -1,13 +1,47 @@
 [Unit]
 Description=Villa Agency OS — Public Marketing Website (127.0.0.1:8090)
+Documentation=file:///home/anashadi/villa-agency-os/docs/DEPLOYMENT.md
 After=network.target
 
 [Service]
 Type=simple
 WorkingDirectory=/home/anashadi/villa-agency-os
-ExecStart=/usr/bin/python3 /home/anashadi/villa-agency-os/src/marketing_site.py --db /home/anashadi/villa-agency-os/data/villa.db --port 8090
+# The port stays on loopback: TLS, the public name and the rate-limit identity are the
+# reverse proxy's job (docs/DEPLOYMENT.md §4.2). --trusted-proxy is only correct because
+# that proxy runs on this host and overwrites X-Forwarded-For ($remote_addr); the CLI
+# refuses to combine it with --allow-remote, so a directly exposed socket can never
+# accept a visitor-supplied address (ADR-0067).
+ExecStart=/usr/bin/python3 /home/anashadi/villa-agency-os/src/marketing_site.py \
+          --db /home/anashadi/villa-agency-os/data/villa.db \
+          --host 127.0.0.1 --port 8090 --trusted-proxy
 Restart=on-failure
 RestartSec=3
+
+# Hardening: the site reads templates and one SQLite file and writes only to that
+# database. Everything below assumes that, and it should be re-read if the program
+# ever needs a new path or a privileged port.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/anashadi/villa-agency-os/data
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+# Two hardening lines are deliberately absent, both verified against this host on
+# 2026-10-08 rather than assumed:
+#   * PrivateDevices=true and ProtectKernelModules=true make a *user* unit die with
+#     status=218/CAPABILITIES ("Failed to drop capabilities: Operation not
+#     permitted") — the user manager cannot drop what it never held. They belong in
+#     a system unit (docs/DEPLOYMENT.md §4.2), not here.
+#   * CapabilityBoundingSet=/AmbientCapabilities= fail for the same reason. The port
+#     is unprivileged and the service runs as the user; there is nothing to drop.
+UMask=0077
 
 [Install]
 WantedBy=default.target
