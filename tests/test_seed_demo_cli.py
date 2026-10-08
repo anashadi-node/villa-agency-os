@@ -15,11 +15,13 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from approvals import _payload_digest
+from marketing_site import PublicReadModel
 from schema_loader import connect_sqlite
 
 REPO = Path(__file__).resolve().parent.parent
@@ -91,6 +93,45 @@ def test_seeding_twice_refuses_and_leaves_the_first_dataset_untouched(seeded: Pa
     assert second.returncode == 1
     assert "demo dataset" in second.stderr
     assert _count(seeded, "properties") == before
+
+
+def _scalar(conn, sql: str, *params) -> int:
+    return int(conn.execute(sql, params).fetchone()[0])
+
+
+def test_the_demo_can_never_rot_into_hiding_a_working_feature(seeded: Path):
+    """The demo is anchored at seed time, so its time-sensitive rows are still live.
+
+    A frozen calendar anchor rots in the quiet direction: expired availability evidence
+    sends the public availability hint to its neutral fallback (a shipped feature then
+    reads as "not built"), an expired approval empties the approval queue, and a past
+    quote due date paints the SLA as breached on arrival. Asserted against the real
+    clock, which is what a buyer's browser uses.
+    """
+    conn = connect_sqlite(str(seeded))
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        assert _scalar(
+            conn, "SELECT COUNT(*) FROM availability_evidence WHERE valid_until > ?", now
+        ) > 0, "every availability evidence row is already expired"
+        assert _scalar(
+            conn, "SELECT COUNT(*) FROM approval_requests"
+            " WHERE status = 'PENDING' AND expires_at > ?", now
+        ) > 0, "the pending decision has already expired"
+        assert _scalar(
+            conn, "SELECT COUNT(*) FROM cases WHERE quote_due_at > ?", now
+        ) > 0, "every case is already past its quote due date"
+
+        model = PublicReadModel(conn, "agency_default")
+        villas = model.sellable_villas()
+        assert villas, "the demo has no sellable villa to show"
+        hints = [model.availability_hint(villa["property_id"], now) for villa in villas]
+        assert any("not published here" not in hint for hint in hints), (
+            "every demo villa falls back to the neutral availability sentence, so the "
+            f"hint feature is invisible in the demo: {hints}"
+        )
+    finally:
+        conn.close()
 
 
 def test_a_database_holding_real_rows_is_refused(seeded: Path):

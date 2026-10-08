@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -41,11 +42,38 @@ DEMO_PREFIX = "demo_"
 #: The pending decision the demo shows. Hashed for real below: a placeholder digest makes the
 #: approval unapprovable and makes ``scheduler.py`` refuse the whole tick.
 DEMO_APPROVAL_PAYLOAD = {"discount_pct": 8}
-NOW = "2026-09-21T08:00:00+00:00"
-DAY = "2026-09-22T08:00:00+00:00"
-YESTERDAY = "2026-09-20T08:00:00+00:00"
-LAST_WEEK = "2026-09-14T08:00:00+00:00"
-NEXT_WEEK = "2026-09-28T08:00:00+00:00"
+
+#: The demo is anchored at SEED TIME, never at a frozen calendar date. A fixed anchor rots in
+#: the quiet direction and hides working features: an expired ``availability_evidence.valid_until``
+#: sends the public availability hint back to its neutral sentence, an expired
+#: ``approval_requests.expires_at`` empties the approval queue, and a past ``cases.quote_due_at``
+#: paints the SLA as breached the moment the demo opens. The narrative offsets are unchanged —
+#: last week, yesterday, tomorrow, next week, a hold expiring in six hours, a stay three weeks out.
+#: ``tests/test_seed_demo_cli.py`` reads the seeded rows against the real clock to keep it that way.
+ANCHOR = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+
+
+def _at(days: int = 0, hours: int = 0) -> str:
+    """ISO-8601 UTC stamp offset from the anchor (``hours`` for sub-day deadlines)."""
+    return (ANCHOR + timedelta(days=days, hours=hours)).isoformat()
+
+
+def _day(days: int = 0) -> str:
+    """Calendar date offset from the anchor, for the DATE columns (stays, due dates)."""
+    return (ANCHOR + timedelta(days=days)).date().isoformat()
+
+
+NOW = _at()
+DAY = _at(1)
+YESTERDAY = _at(-1)
+LAST_WEEK = _at(-7)
+NEXT_WEEK = _at(7)
+
+#: A hold that expires in six hours: the dashboard shows it under "expiring".
+HOLD_EXPIRES_AT = _at(hours=6)
+#: The two three-night stays the demo narrates: held, and booked.
+HOLD_STAY_IN, HOLD_STAY_OUT = _day(21), _day(24)
+BOOK_STAY_IN, BOOK_STAY_OUT = _day(29), _day(32)
 
 COUNTED_TABLES = (
     "properties", "units", "policy_versions", "availability_evidence",
@@ -159,15 +187,15 @@ class DemoSeeder:
     def cases(self) -> None:
         thread = (
             ("case_rahma", "website", "guest_rahma", "TRIAGED", "HIGH",
-             "Halo, kami keluarga 4 orang mau menginap di Ubud 12-15 Oktober 2026, "
+             "Halo, kami keluarga 4 orang mau menginap di Ubud minggu depan, "
              "budget sekitar Rp 2.500.000 per malam. Ada kolam dan sarapan?",
              "P2"),
             ("case_marco", "email", "guest_marco", "QUOTED", "NORMAL",
-             "Hi, looking for a 2-bedroom place in Canggu for 3 nights from 2026-10-20. "
+             f"Hi, looking for a 2-bedroom place in Canggu for 3 nights from {BOOK_STAY_IN}. "
              "Family of 4, need parking.",
              "P2"),
             ("case_sari", "whatsapp_business", "guest_sari", "AWAITING_EVIDENCE", "NORMAL",
-             "Mas, villa Prawiro tanggal 5-7 November masih ada? Untuk 2 orang.",
+             "Mas, villa Prawiro bulan depan masih ada? Untuk 2 orang.",
              "P2"),
         )
         for key, channel, guest, status, priority, body, klass in thread:
@@ -217,20 +245,20 @@ class DemoSeeder:
         # A hold that expires in six hours: the dashboard shows it under "expiring".
         self.insert(
             "holds", hold_id=f"{DEMO_PREFIX}hold_1", unit_id=f"{DEMO_PREFIX}unit_ubud_1",
-            property_id=f"{DEMO_PREFIX}prop_ubud", check_in="2026-10-12",
-            check_out="2026-10-15", nights=3, status="CONFIRMED", guest_ref="guest_rahma",
+            property_id=f"{DEMO_PREFIX}prop_ubud", check_in=HOLD_STAY_IN,
+            check_out=HOLD_STAY_OUT, nights=3, status="CONFIRMED", guest_ref="guest_rahma",
             policy_version_id=f"{DEMO_PREFIX}policy_unit_ubud_1",
             evidence_id=f"{DEMO_PREFIX}ev_unit_ubud_1",
             idempotency_key=f"{DEMO_PREFIX}idem_hold_1", created_at=LAST_WEEK,
-            expires_at="2026-09-21T14:00:00+00:00",
+            expires_at=HOLD_EXPIRES_AT,
             expires_timezone="Asia/Makassar",
         )
 
         # A confirmed booking with a paid invoice and a receipt.
         self.insert(
             "bookings", booking_id=f"{DEMO_PREFIX}book_1", property_id=f"{DEMO_PREFIX}prop_canggu",
-            unit_id=f"{DEMO_PREFIX}unit_canggu_1", check_in="2026-10-20",
-            check_out="2026-10-23", nights=3, status="CONFIRMED", guest_ref="guest_marco",
+            unit_id=f"{DEMO_PREFIX}unit_canggu_1", check_in=BOOK_STAY_IN,
+            check_out=BOOK_STAY_OUT, nights=3, status="CONFIRMED", guest_ref="guest_marco",
             adults=4, children=0, infants=0, currency="IDR",
             policy_version_id=f"{DEMO_PREFIX}policy_unit_canggu_1",
             policy_fingerprint="d" * 64, total_minor=9_000_000,
@@ -297,7 +325,7 @@ class DemoSeeder:
         self.insert(
             "reconciliation_cases", recon_id=f"{DEMO_PREFIX}recon_1", kind="UNMATCHED_PAYMENT",
             payment_event_id=f"{DEMO_PREFIX}pevent_2", detected_at=YESTERDAY,
-            due_at="2026-09-22T08:00:00+00:00", status="OPEN", details="nominal 1.500.000 tanpa invoice",
+            due_at=DAY, status="OPEN", details="nominal 1.500.000 tanpa invoice",
             created_at=YESTERDAY,
         )
 
@@ -313,7 +341,7 @@ class DemoSeeder:
         self.insert(
             "ops_tasks", task_id=f"{DEMO_PREFIX}task_2", kind="CHECKIN_PREP",
             booking_id=f"{DEMO_PREFIX}book_1", unit_id=f"{DEMO_PREFIX}unit_canggu_1",
-            due_at="2026-10-19T08:00:00+00:00", priority="NORMAL", status="OPEN",
+            due_at=_at(28), priority="NORMAL", status="OPEN",
             checklist=json.dumps(["kirim panduan tamu", "siapkan kunci"]),
             idempotency_key=f"{DEMO_PREFIX}idem_task_2", created_at=LAST_WEEK,
             updated_at=LAST_WEEK,

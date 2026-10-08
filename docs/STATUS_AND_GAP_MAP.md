@@ -28,7 +28,7 @@ Satu hal yang saya tegaskan di depan, karena ini akar semua yang di bawah: **pad
 
 | Area | Status | Bukti ringkas |
 |---|---|---|
-| Domain: booking, hold, pembayaran, policy, bukti, identitas | ✅ **kuat** | 65 ADR, 3.735 tes hijau (+4.008 subtes), gerbang PASS, katalog policy 25/25 |
+| Domain: booking, hold, pembayaran, policy, bukti, identitas | ✅ **kuat** | 66 ADR, 3.736 tes hijau (+4.008 subtes), gerbang PASS, katalog policy 25/25 |
 | Lapisan **AI Workforce** (6 komponen dok Anda + 1 tambahan owner 2026-10-02) | 🟡 **5 dari 7 ada** | Control Tower, Reservation, Finance Admin, Operations, **Revenue & BI (slice 1, 2026-10-07)** ada di kode; belum: Commercial, Security & Privacy Warden |
 | Infrastruktur non-agent | ✅ **6 ada, 1 belum** | Policy/Approval/Identity/Audit ada; **Outbox + Exception Engine ada (2026-10-02)**; sisa: DLP |
 | Organisasi & peran (D3) | ✅ **DECIDED, kosakata sudah satu rumah** | ADR-0035 (§5 "3 kosakata hidup bersamaan") direkonsiliasi 2026-10-02 lewat `src/roles.py` + amendment ADR-0035: `approvals.ROLE_RANK` **adalah** `roles.ROLE_RANK`, nama lama tetap resolvable untuk baris historis, dan `gm` masuk tangga (rank 4). **`gm` juga sudah punya halaman** (Command Center/Approvals/Finance/Cases/Properties) dan **wajib MFA** — policy `security.mfa.required_roles` v2 = owner, finance, gm (keputusan owner 2026-10-02). |
@@ -42,8 +42,8 @@ Satu hal yang saya tegaskan di depan, karena ini akar semua yang di bawah: **pad
 
 | # | Yang sudah OK | Bukti |
 |---|---|---|
-| 1 | **65 ADR — 65 Accepted (ADR-0061 ✓ opsi B; ADR-0062 ✓ presisi detektor identifier; ADR-0063 ✓ id tidak berbentuk identitas; ADR-0064 ✓ nama kanonik RBI-W01…W12 + denominator okupansi resmi — keputusan owner 2026-10-07; ADR-0065 ✓ copy villa publik menggambarkan wilayah, bukan properti — kalimat disclosure disetujui owner 2026-10-08); semua status terbaca** | 65 berkas `docs/adr/`; penjaga `tests/test_adr_status.py` |
-| 2 | **Suite tes hijau penuh** | `3735 passed, 4 skipped, 4008 subtests passed` (snapshot gerbang terakhir, 2026-10-08 — `make check`: PRE-DEPLOY GATE PASS) |
+| 1 | **66 ADR — 66 Accepted (ADR-0061 ✓ opsi B; ADR-0062 ✓ presisi detektor identifier; ADR-0063 ✓ id tidak berbentuk identitas; ADR-0064 ✓ nama kanonik RBI-W01…W12 + denominator okupansi resmi — keputusan owner 2026-10-07; ADR-0065 ✓ copy villa publik menggambarkan wilayah, bukan properti — kalimat disclosure disetujui owner 2026-10-08; ADR-0066 ✓ dataset demo di-anchor saat seed); semua status terbaca** | 66 berkas `docs/adr/`; penjaga `tests/test_adr_status.py` |
+| 2 | **Suite tes hijau penuh** | `3736 passed, 4 skipped, 4008 subtests passed` (snapshot gerbang terakhir, 2026-10-08 — `make check`: PRE-DEPLOY GATE PASS) |
 | 3 | **Gerbang pre-deploy bersih** | `SECRET-SCAN: PASS (0 findings, 337 files)`, `UNSAFE-SCAN: PASS (0 findings, 337 files)`, PG twin cocok |
 | 4 | **Katalog policy lengkap & fail-closed** | **25 dari 25 key terbit**; key tanpa revisi **ditolak**, bukan diberi nilai karangan |
 | 5 | **Invariant inti ditegakkan kode** | `HOLD_REQUESTED != HOLD_CONFIRMED` (`hold_states.py`, `reservation_kernel.py`) · `AI_EXTRACTED != VERIFIED` (`supplier_route.py`) · `SOURCE_UNAVAILABLE != NOT_AVAILABLE` (`crm.py`, `evidence.py`) |
@@ -252,7 +252,7 @@ Yang **tidak** saya usulkan sekarang: membangun Commercial AI sebelum reservatio
 
 | Klaim | Perintah |
 |---|---|
-| 65 ADR & statusnya | `for f in docs/adr/*.md; do grep -m1 -iE '^\- ?\*?\*?Status' "$f"; done` |
+| 66 ADR & statusnya | `for f in docs/adr/*.md; do grep -m1 -iE '^\- ?\*?\*?Status' "$f"; done` |
 | 2 dari 7 komponen AI belum ada (Commercial, Security Warden); Revenue & BI **slice 1 sudah ada** | `ls src/commercial_ai.py src/security_warden.py` → No such file; `ls src/revenue_bi_agent.py` → ada (`tests/test_revenue_bi_agent.py`, 28 tes) |
 | ADR-0012 belum dibangun | `grep -c "method_category" src/payments.py` → 0 |
 | Outbox belum ada | `grep -in outbox src/schema/001_initial.sql` → kosong |
@@ -261,4 +261,4 @@ Yang **tidak** saya usulkan sekarang: membangun Commercial AI sebelum reservatio
 
 ---
 
-**Kesimpulan satu paragraf.** Sistem domainnya **sehat dan bisa dipercaya** — 65 ADR, 3.735 tes hijau, katalog policy penuh, invariant ditegakkan kode. Yang **sudah** ada: inti 5 dari 7 komponen AI workforce (Control Tower, Reservation, Finance Admin, Operations, Revenue & BI slice 1 — ADR & baris traceability). Yang **belum** adalah 2 komponen penuh sisanya (Commercial, Security & Privacy Warden), empat slice lanjutan Revenue & BI (M4/M5/M7/M12/M13 · M14/M16 · M15 · M10/M11) dan tiga infrastruktur penopangnya (outbox, exception engine, DLP), plus dua ADR pembayaran yang sudah diterima tapi belum dieksekusi. Yang **menahan go-live** bukan software, tapi 1 keputusan bisnis (kesiapan tenant, D17). Dan **pendapat saya soal dokumen Anda: setuju, dokumen itu memang acuan yang tepat** — ia satu-satunya sumber yang memisahkan *agent*, *worker*, dan *manusia* dengan tegas, dan itu persis pembedaan yang mencegah sistem ini tumbuh jadi kumpulan chatbot yang saling mengklaim wewenang. Yang perlu ditambahkan hanya satu: dokumen itu harus **tersambung ke traceability repo** supaya jadi acuan proyek, bukan acuan percakapan.
+**Kesimpulan satu paragraf.** Sistem domainnya **sehat dan bisa dipercaya** — 66 ADR, 3.736 tes hijau, katalog policy penuh, invariant ditegakkan kode. Yang **sudah** ada: inti 5 dari 7 komponen AI workforce (Control Tower, Reservation, Finance Admin, Operations, Revenue & BI slice 1 — ADR & baris traceability). Yang **belum** adalah 2 komponen penuh sisanya (Commercial, Security & Privacy Warden), empat slice lanjutan Revenue & BI (M4/M5/M7/M12/M13 · M14/M16 · M15 · M10/M11) dan tiga infrastruktur penopangnya (outbox, exception engine, DLP), plus dua ADR pembayaran yang sudah diterima tapi belum dieksekusi. Yang **menahan go-live** bukan software, tapi 1 keputusan bisnis (kesiapan tenant, D17). Dan **pendapat saya soal dokumen Anda: setuju, dokumen itu memang acuan yang tepat** — ia satu-satunya sumber yang memisahkan *agent*, *worker*, dan *manusia* dengan tegas, dan itu persis pembedaan yang mencegah sistem ini tumbuh jadi kumpulan chatbot yang saling mengklaim wewenang. Yang perlu ditambahkan hanya satu: dokumen itu harus **tersambung ke traceability repo** supaya jadi acuan proyek, bukan acuan percakapan.
