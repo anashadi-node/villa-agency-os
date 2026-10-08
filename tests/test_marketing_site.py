@@ -689,3 +689,71 @@ class TestVillaPhotos:
         assert "Illustrative resort imagery" in html
         # The label must state the strip is NOT the property being sold.
         assert "not this villa" in html
+
+
+class TestVillaShowcasePage:
+    """The villa page carries per-villa copy that never overclaims the property."""
+
+    def test_matched_villa_page_shows_area_note_style_and_disclosure(self, clock):
+        _conn, site = _make_site(clock)
+        html = site.villa_html("prop-2")  # "Joglo Merapi Private Pool" -> joglo stem
+        assert html is not None
+        assert "About this villa" in html
+        assert "slopes of Mount Merapi" in html
+        assert "private villa, let as a whole or by unit" in html
+        assert "not verified features of this villa" in html
+
+    def test_unmatched_villa_page_falls_back_without_claiming_features(self, clock):
+        _conn, site = _make_site(clock)
+        html = site.villa_html("prop-1")  # name carries an XSS payload, no photo keyword
+        assert html is not None
+        assert "This villa is in Ubud, Bali." in html
+        assert "not verified features of this villa" in html
+
+    def test_highlights_report_only_stored_numbers(self, clock):
+        _conn, site = _make_site(clock)
+        html = site.villa_html("prop-1")
+        assert html is not None
+        # unit-1 (3 bedrooms, max 8) + unit-2 (1 bedroom, max 2); unit-3 is MAINTENANCE.
+        assert "2 units in this villa" in html
+        assert "1\u20133 bedrooms per unit" in html
+        assert "Sleeps up to 8" in html
+        assert "3 units" not in html
+
+    def test_page_carries_no_external_url(self, clock):
+        _conn, site = _make_site(clock)
+        html = site.villa_html("prop-2")
+        assert html is not None
+        assert "http://" not in html and "https://" not in html
+
+    def test_lede_and_copy_drop_a_region_repeated_inside_its_province(self, clock):
+        """Operator free text can repeat the province inside the region — prose must not."""
+        conn, site = _make_site(clock)
+        conn.execute(
+            "INSERT INTO properties (property_id, agency_id, name, property_type, region,"
+            " province, timezone, status, contract_pack_status, created_at, updated_at)"
+            " VALUES ('prop-5', 'agency_default', 'Unlisted Highland Stay', 'villa',"
+            " 'yogyakarta', 'DI Yogyakarta', 'Asia/Jakarta', 'SELLABLE', 'ACTIVATED', ?, ?)",
+            ("2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
+        )
+        html = site.villa_html("prop-5")
+        assert html is not None
+        assert "This villa is in DI Yogyakarta." in html
+        assert "yogyakarta, DI Yogyakarta" not in html
+        assert "<p class=\"lede\">DI Yogyakarta · villa</p>" in html
+
+    def test_story_block_escapes_hostile_copy(self):
+        """The copy is plain text from a data source; the render step must escape it."""
+        hostile = M.Showcase.VillaShowcase(
+            photo_stem=None,
+            area_note="<script>alert('xss')</script>",
+            style_note="ok",
+            highlights=("<img src=x onerror=alert(1)>",),
+        )
+        story = str(M._villa_story_html(hostile))
+        highlights = str(M._highlights_html(hostile))
+        assert "<script>" not in story
+        assert "&lt;script&gt;" in story
+        assert "<img" not in highlights
+        assert "&lt;img" in highlights
+

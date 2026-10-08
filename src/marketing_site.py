@@ -53,6 +53,7 @@ from typing import Any, Mapping, Optional
 from urllib.parse import parse_qsl, urlsplit
 
 import fx as FX
+import villa_showcase as Showcase
 
 from cases import CaseService, SLA_POLICIES
 from crm import CrmService, DuplicateGuest, CrmError
@@ -77,14 +78,9 @@ MAX_FORM_BYTES = 32 * 1024
 #: real photos of the listed properties. Matched to a villa by a keyword found
 #: in its name; unmatched villas fall back to the CSS "Photo coming soon" card
 #: (see ``.card .photo.placeholder`` in ``templates/marketing/base.html``).
+#: The keyword table and the per-villa area/style copy live in
+#: :mod:`villa_showcase`, so the binding has one owner.
 PHOTOS_DIR = REPO_ROOT / "assets" / "photos"
-_VILLA_PHOTO_KEYWORDS: tuple[tuple[str, str], ...] = (
-    ("canggu", "canggu"),
-    ("jatiluwih", "jatiluwih"),
-    ("uluwatu", "uluwatu"),
-    ("joglo", "joglo"),
-    ("merapi", "joglo"),
-)
 HERO_PHOTO_FILE = "hero_bali_pool.jpg"
 
 #: Ambience strip on the villa detail page — illustrative resort shots, same
@@ -109,11 +105,10 @@ def _photo_data_uri(relative: str) -> Optional[str]:
 
 def _villa_photo_uri(villa_name: str, size: str = "card") -> Optional[str]:
     """Photo URI for a villa by name keyword; ``size`` picks the card or detail set."""
-    lowered = villa_name.lower()
-    for keyword, stem in _VILLA_PHOTO_KEYWORDS:
-        if keyword in lowered:
-            return _photo_data_uri(f"{size}/{stem}.jpg")
-    return None
+    stem = Showcase.photo_stem_for(villa_name)
+    if stem is None:
+        return None
+    return _photo_data_uri(f"{size}/{stem}.jpg")
 
 
 def _gallery_html() -> Markup:
@@ -431,7 +426,7 @@ def _card_html(villa: Mapping[str, Any]) -> Markup:
         f'<article class="card">'
         f'{photo_div}'
         f'<div class="body">'
-        f'<div class="card-region">{escape_value(villa["province"])} · {escape_value(villa["region"])}</div>'
+        f'<div class="card-region">{escape_value(Showcase.display_place(villa["province"], villa["region"]))} · {escape_value(Showcase.display_place(villa["region"], villa["province"]))}</div>'
         f'<h3><a href="{href}">{escape_value(villa["name"])}</a></h3>'
         f'<p class="card-facts">{escape_value(villa["property_type"].replace("_", " "))} — {escape_value(fact_line)}</p>'
         f'<a class="card-link" href="{href}">View villa &rarr;</a>'
@@ -460,6 +455,26 @@ def _units_table(units: list[Mapping[str, Any]]) -> Markup:
         "<th>Bathrooms</th><th>Sleeps</th></tr></thead>"
         f"<tbody>{rows}</tbody></table>"
     )
+
+
+def _villa_story_html(showcase: Showcase.VillaShowcase) -> Markup:
+    """Area/style prose for one villa, plus the scope that prose does not cover.
+
+    The copy comes from :mod:`villa_showcase` as plain text and is escaped here —
+    a villa name or region that carries markup must not reach the page as markup.
+    """
+    return Markup(
+        "<h2>About this villa</h2>"
+        f"<p>{escape_value(showcase.area_note)}</p>"
+        f"<p>{escape_value(showcase.style_note)}</p>"
+        f'<p class="note">{escape_value(showcase.disclosure)}</p>'
+    )
+
+
+def _highlights_html(showcase: Showcase.VillaShowcase) -> Markup:
+    """Factual bullets (units, bedrooms, capacity) built from stored values only."""
+    items = "".join(f"<li>{escape_value(line)}</li>" for line in showcase.highlights)
+    return Markup(f'<ul class="highlights">{items}</ul>')
 
 
 def _sla_text() -> str:
@@ -612,6 +627,7 @@ class MarketingSite:
             return None
         units = self.read_model.active_units(property_id)
         availability_hint = self.read_model.availability_hint(property_id, to_iso(self.clock.now()))
+        showcase = Showcase.showcase_for(villa, units)
         photo_uri = _villa_photo_uri(str(villa["name"]), size="detail")
         if photo_uri:
             villa_photo = Markup(
@@ -625,8 +641,16 @@ class MarketingSite:
             {
                 "page_title": f"{villa['name']} — Villa Agency",
                 "villa_name": escape_value(villa["name"]),
-                "villa_meta": escape_value(f"{villa['province']} · {villa['region']} · {villa['property_type'].replace('_', ' ')}"),
+                "villa_meta": escape_value(" · ".join([
+                    part for part in (
+                        Showcase.display_place(str(villa["province"]), str(villa["region"])),
+                        Showcase.display_place(str(villa["region"]), str(villa["province"])),
+                        str(villa["property_type"]).replace("_", " "),
+                    ) if part
+                ])),
                 "villa_photo": villa_photo,
+                "villa_story": _villa_story_html(showcase),
+                "villa_highlights": _highlights_html(showcase),
                 "villa_gallery": _gallery_html(),
                 "units_table": _units_table(units),
                 "property_ref": escape_value(property_id),
