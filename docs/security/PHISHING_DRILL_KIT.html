@@ -1,0 +1,570 @@
+<!doctype html>
+<html lang="id"><head><meta charset="utf-8">
+<title>PHISHING_DRILL_KIT</title>
+<style>
+@page { size: A4; margin: 18mm 16mm 16mm; }
+body { font-family: "DejaVu Sans", Arial, sans-serif; font-size: 10.5pt; line-height: 1.5; color: #111; }
+h1 { font-size: 20pt; border-bottom: 2px solid #111; padding-bottom: 4mm; margin-bottom: 6mm; }
+h2 { font-size: 14pt; margin-top: 8mm; border-bottom: 1px solid #bbb; padding-bottom: 1.5mm; page-break-after: avoid; }
+h3 { font-size: 11.5pt; margin-top: 6mm; color: #1a3d6d; page-break-after: avoid; }
+table { border-collapse: collapse; width: 100%; margin: 3mm 0; font-size: 9pt; page-break-inside: avoid; }
+th, td { border: 1px solid #999; padding: 1.6mm 2mm; vertical-align: top; text-align: left; }
+th { background: #eee; }
+code { background: #f4f4f4; padding: 0 1mm; font-family: "DejaVu Sans Mono", monospace; font-size: 9pt; }
+pre { background: #f7f7f7; border-left: 3px solid #999; padding: 3mm; font-size: 8.5pt; white-space: pre-wrap; page-break-inside: avoid; }
+blockquote { margin: 3mm 0; padding: 2mm 4mm; border-left: 3px solid #1a3d6d; background: #f6f8fb; }
+nav.toc { page-break-after: always; }
+nav.toc h2 { border: none; }
+nav.toc ol { list-style: none; padding-left: 0; }
+nav.toc li.lvl2 { padding-left: 5mm; font-size: 9.5pt; }
+nav.toc li.lvl3 { padding-left: 10mm; font-size: 9pt; color: #444; }
+nav.toc a { color: #111; text-decoration: none; }
+li { margin-bottom: 1mm; }
+</style></head>
+<body>
+<nav class="toc"><h2>Daftar Isi</h2><ol><li class="lvl1"><a href="#paket-latihan-phishing-internal-villa-agency-os">Paket Latihan Phishing Internal — Villa Agency OS</a></li>
+<li class="lvl2"><a href="#0-ringkasan-30-detik">0. Ringkasan 30 detik</a></li>
+<li class="lvl2"><a href="#1-batas-yang-tidak-boleh-dilewati">1. Batas yang tidak boleh dilewati</a></li>
+<li class="lvl2"><a href="#2-prasyarat-teknis-periksa-dulu-jangan-lewati">2. Prasyarat teknis (periksa dulu, jangan lewati)</a></li>
+<li class="lvl2"><a href="#3-jangkar-anti-phishing-ciri-pesan-asli-villa">3. Jangkar anti-phishing: ciri pesan asli villa</a></li>
+<li class="lvl2"><a href="#4-tiga-simulasi">4. Tiga simulasi</a></li>
+<li class="lvl3"><a href="#41-booking_palsu-tamu-minta-refund-ke-rekening-lain">4.1 booking_palsu — "tamu minta refund ke rekening lain"</a></li>
+<li class="lvl3"><a href="#42-payment_failed-kartu-ditolak-klik-untuk-memperbarui">4.2 payment_failed — "kartu ditolak, klik untuk memperbarui"</a></li>
+<li class="lvl3"><a href="#43-invoice_vendor-tagihan-vendor-lampiran-html">4.3 invoice_vendor — "tagihan vendor, lampiran .html"</a></li>
+<li class="lvl2"><a href="#5-infrastruktur-minimal-atau-nol-infrastruktur">5. Infrastruktur minimal (atau nol infrastruktur)</a></li>
+<li class="lvl2"><a href="#6-jadwal-6-minggu">6. Jadwal 6 minggu</a></li>
+<li class="lvl2"><a href="#7-ambang-putusan">7. Ambang & putusan</a></li>
+<li class="lvl2"><a href="#8-checklist-hari-h">8. Checklist hari-H</a></li>
+<li class="lvl2"><a href="#9-pasca-latihan">9. Pasca-latihan</a></li>
+<li class="lvl2"><a href="#10-format-csv">10. Format CSV</a></li>
+<li class="lvl2"><a href="#11-menjalankan-skrip">11. Menjalankan skrip</a></li>
+<li class="lvl2"><a href="#12-yang-belum-dicakup-jujur">12. Yang belum dicakup (jujur)</a></li>
+<li class="lvl2"><a href="#13-sisi-tamu-satu-pesan-resmi-untuk-pelapor">13. Sisi tamu: satu pesan resmi untuk pelapor</a></li></ol></nav>
+<h1 id="paket-latihan-phishing-internal-villa-agency-os">Paket Latihan Phishing Internal — Villa Agency OS</h1>
+
+<p><strong>Untuk:</strong> owner, manager operasional, dan staf yang menerima email/WhatsApp masuk
+<strong>Status:</strong> siap dijalankan <strong>setelah</strong> persetujuan tertulis owner (§1.5)
+<strong>Edisi:</strong> 2026-10-25 · <strong>Skrip penilai:</strong> <code>scripts/phishing_drill_score.py</code>
+<strong>Dasar:</strong> <code>docs/SECURITY_TRIAGE_2026-10.md</code> prioritas #4 · <code>docs/MESSAGE_TEMPLATES.md</code> (pesan resmi)</p>
+<hr />
+<h2 id="0-ringkasan-30-detik">0. Ringkasan 30 detik</h2>
+
+<table>
+<thead>
+<tr>
+<th>Pertanyaan</th>
+<th>Jawaban</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Siapa yang diuji?</td>
+<td><strong>Staf internal.</strong> Tamu nyata <strong>tidak pernah</strong> menerima simulasi.</td>
+</tr>
+<tr>
+<td>Berapa lama?</td>
+<td>6 minggu: 2 minggu baseline → 1 sesi latihan → 2 minggu retest → 1 minggu laporan</td>
+</tr>
+<tr>
+<td>Berapa email?</td>
+<td>3 skenario × 1 email per orang per gelombang</td>
+</tr>
+<tr>
+<td>Ukuran keberhasilan</td>
+<td>Kredensial terkirim <strong>0</strong>, klik <strong>≤ 10%</strong>, lapor <strong>≥ 50%</strong>, kohort <strong>≥ 5</strong></td>
+</tr>
+<tr>
+<td>Siapa yang melihat nama?</td>
+<td>Hanya orangnya + manager langsung. Laporan ke owner <strong>agregat</strong>.</td>
+</tr>
+<tr>
+<td>Kalau gagal?</td>
+<td>Bukan hukuman — coaching 15 menit, lalu ukur ulang.</td>
+</tr>
+</tbody>
+</table>
+<p>Latihan ini mengukur <strong>satu hal</strong>: apakah staf berhenti dan memverifikasi sebelum bertindak.
+Bukan mengukur kerajinan, bukan loyalitas, bukan kecerdasan.</p>
+<hr />
+<h2 id="1-batas-yang-tidak-boleh-dilewati">1. Batas yang tidak boleh dilewati</h2>
+
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Aturan</th>
+<th>Alasan</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1.1</td>
+<td><strong>Jangan kirim ke tamu nyata</strong>, termasuk tamu yang sedang menginap</td>
+<td>Mereka bukan karyawan; tidak ada consent, dan insiden nyata bisa merusak reputasi</td>
+</tr>
+<tr>
+<td>1.2</td>
+<td>Domain pengirim wajib berakhiran <strong><code>.invalid</code></strong> (mis. <code>latihan@drill.invalid</code>)</td>
+<td>RFC 2606: TLD ini tidak bisa didaftarkan siapa pun, jadi simulasi tidak mungkin berubah jadi phishing sungguhan</td>
+</tr>
+<tr>
+<td>1.3</td>
+<td><strong>Jangan meniru bank, OJK, atau instansi pemerintah</strong></td>
+<td>Di luar kewenangan kita, dan bisa masuk ranah pidana</td>
+</tr>
+<tr>
+<td>1.4</td>
+<td>Form simulasi <strong>tidak boleh</strong> punya kolom kata sandi, kartu, atau KTP; input tidak dikirim ke mana pun</td>
+<td>Yang diukur adalah klik, bukan isi. Tidak ada data sensitif yang boleh terbentuk</td>
+</tr>
+<tr>
+<td>1.5</td>
+<td><strong>Consent tertulis owner</strong> + pemberitahuan ke manager sebelum gelombang pertama</td>
+<td>UU PDP 27/2022: pemantauan perilaku karyawan butuh dasar yang jelas dan proporsional</td>
+</tr>
+<tr>
+<td>1.6</td>
+<td><strong>Tanpa mempermalukan</strong>: tidak ada pengumuman "siapa yang klik"</td>
+<td>Rasa malu membuat orang menyembunyikan klik berikutnya — metrik jadi palsu</td>
+</tr>
+<tr>
+<td>1.7</td>
+<td>Data mentah dihapus <strong>90 hari</strong> setelah laporan</td>
+<td>Minimalisasi data; yang disimpan hanya agregat</td>
+</tr>
+<tr>
+<td>1.8</td>
+<td><strong>Kill switch</strong>: satu perintah/telepon menghentikan kampanye</td>
+<td>Kalau ada insiden nyata bersamaan, latihan harus bisa dihentikan seketika</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="2-prasyarat-teknis-periksa-dulu-jangan-lewati">2. Prasyarat teknis (periksa dulu, jangan lewati)</h2>
+
+<p>Latihan phishing di domain yang belum punya autentikasi email hanya mengukur separuh hal.</p>
+<table>
+<thead>
+<tr>
+<th>Prasyarat</th>
+<th>Cara periksa</th>
+<th>Syarat lulus</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SPF</td>
+<td><code>dig TXT &lt;domain&gt; +short</code></td>
+<td>ada record, <code>-all</code> atau <code>~all</code></td>
+</tr>
+<tr>
+<td>DKIM</td>
+<td>header <code>DKIM-Signature</code> pada email keluar</td>
+<td>ada dan <code>pass</code></td>
+</tr>
+<tr>
+<td>DMARC</td>
+<td><code>dig TXT _dmarc.&lt;domain&gt; +short</code></td>
+<td><code>p=reject</code> (minimal <code>quarantine</code>), ada <code>rua=</code></td>
+</tr>
+<tr>
+<td>Header drill</td>
+<td>email simulasi diberi <code>X-Drill: true</code></td>
+<td>admin bisa membedakan tanpa membuka isi</td>
+</tr>
+</tbody>
+</table>
+<p>Bila DMARC masih <code>p=none</code>, <strong>perbaiki dulu</strong>: tanpa itu, email palsu atas nama domain villa
+memang bisa lolos ke tamu, dan latihan staf tidak menutup lubang itu.</p>
+<hr />
+<h2 id="3-jangkar-anti-phishing-ciri-pesan-asli-villa">3. Jangkar anti-phishing: ciri pesan asli villa</h2>
+
+<p>Staf tidak perlu hafal teori. Mereka perlu hafal <strong>enam ciri pesan asli</strong> (diturunkan dari
+<code>docs/MESSAGE_TEMPLATES.md</code>, tempat seluruh kalimat resmi dipin):</p>
+<table>
+<thead>
+<tr>
+<th>Ciri</th>
+<th>Pesan asli</th>
+<th>Tiruan</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Nomor rujukan</td>
+<td><code>booking_ref</code> / <code>invoice_ref</code> <strong>cocok</strong> dengan dashboard</td>
+<td>nomor karangan, atau tidak ada</td>
+</tr>
+<tr>
+<td>Rekening</td>
+<td>hanya rekening <strong>atas nama perusahaan</strong> yang tercetak di invoice</td>
+<td>rekening pribadi / "rekening baru"</td>
+</tr>
+<tr>
+<td>Data sensitif</td>
+<td><strong>tidak pernah</strong> minta kartu, KTP, atau kata sandi lewat email/chat</td>
+<td>meminta "verifikasi kartu"</td>
+</tr>
+<tr>
+<td>Kanal</td>
+<td>satu nomor WhatsApp bisnis resmi + email domain resmi</td>
+<td>nomor baru, <code>Reply-To</code> beda domain</td>
+</tr>
+<tr>
+<td>Lampiran</td>
+<td>PDF invoice dari sistem</td>
+<td><code>.zip</code>, <code>.html</code>, <code>.htm</code>, atau tautan "login"</td>
+</tr>
+<tr>
+<td>Tekanan waktu</td>
+<td>tidak mengancam dalam hitungan menit</td>
+<td>"dalam 2 jam akun ditutup"</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Aturan satu kalimat untuk staf:</strong> <em>kalau pesan meminta uang, data, atau klik — berhenti,
+buka dashboard sendiri, jangan lewat tautan di pesan itu.</em></p>
+<hr />
+<h2 id="4-tiga-simulasi">4. Tiga simulasi</h2>
+
+<p>Setiap simulasi punya satu tujuan pengukuran. Jangan gabungkan dua tujuan dalam satu email.</p>
+<h3 id="41-booking_palsu-tamu-minta-refund-ke-rekening-lain">4.1 booking_palsu — "tamu minta refund ke rekening lain"</h3>
+
+<p><strong>Tujuan:</strong> mengukur apakah staf memverifikasi perubahan rekening lewat kanal resmi.</p>
+<pre><code>Subjek: Permintaan pembatalan — {booking_ref}
+Dari:    reservations@drill.invalid
+Reply-To: refund@drill.invalid
+
+Selamat siang,
+
+Saya {nama} yang memesan unit {unit_code} untuk {check_in}.
+Karena ada perubahan rencana, mohon pembatalan diproses hari ini.
+Karena kartu saya bermasalah, mohon refund dikirim ke rekening berikut:
+Bank {bank} — {nomor} — a.n. {nama}.
+
+Mohon konfirmasi sebelum pukul 17.00 agar dana tidak tertahan.
+Terima kasih.
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Tanda bahaya</th>
+<th>Respons benar</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Rekening berbeda dari data booking</td>
+<td>Buka dashboard, cek <code>booking_ref</code> — apakah ada?</td>
+</tr>
+<tr>
+<td><code>Reply-To</code> beda domain</td>
+<td>Balas <strong>hanya</strong> ke kanal yang tercatat di booking, bukan <code>Reply-To</code></td>
+</tr>
+<tr>
+<td>Tenggat "hari ini"</td>
+<td>Refund <strong>tidak pernah</strong> diproses dari email; butuh approval di sistem</td>
+</tr>
+<tr>
+<td>Nama bank/nomor diformat aneh</td>
+<td>Laporkan ke manager + <code>security@</code> sebelum menjawab</td>
+</tr>
+</tbody>
+</table>
+<h3 id="42-payment_failed-kartu-ditolak-klik-untuk-memperbarui">4.2 payment_failed — "kartu ditolak, klik untuk memperbarui"</h3>
+
+<p><strong>Tujuan:</strong> mengukur apakah staf mengeklik tautan "login" dari email.</p>
+<pre><code>Subjek: Pembayaran gagal — pesanan {booking_ref}
+Dari:    billing@drill.invalid
+
+Kami tidak dapat memproses pembayaran untuk pesanan {booking_ref}.
+Perbarui metode pembayaran dalam 2 jam agar unit tidak dilepas:
+https://drill.invalid/perbarui?r={recipient_id}
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Tanda bahaya</th>
+<th>Respons benar</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tautan berisi ID penerima (personal)</td>
+<td>Jangan klik; buka dashboard dan cari pesanan sendiri</td>
+</tr>
+<tr>
+<td>Ancaman waktu 2 jam</td>
+<td>Semua tenggat nyata tercatat di invoice, bukan di email</td>
+</tr>
+<tr>
+<td>Tidak ada <code>invoice_ref</code></td>
+<td>Pesan resmi selalu membawa rujukan yang bisa dicari</td>
+</tr>
+<tr>
+<td>Pengirim bukan domain resmi</td>
+<td>Laporkan sebagai phishing (satu klik di klien email)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="43-invoice_vendor-tagihan-vendor-lampiran-html">4.3 invoice_vendor — "tagihan vendor, lampiran .html"</h3>
+
+<p><strong>Tujuan:</strong> mengukur kepatuhan pada aturan "tidak membuka lampiran aktif".</p>
+<pre><code>Subjek: Invoice {vendor} — jatuh tempo {due_date}
+Dari:    finance@{vendor}.drill.invalid
+Lampiran: invoice_{vendor}.html
+
+Mohon periksa tagihan bulan ini. Cetak, tanda tangani, dan kirim balik.
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Tanda bahaya</th>
+<th>Respons benar</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Lampiran <code>.html</code>/<code>.htm</code>/<code>.zip</code></td>
+<td>Jangan dibuka; vendor sah mengirim PDF</td>
+</tr>
+<tr>
+<td>Nominal tidak cocok PO</td>
+<td>Cocokkan ke PO di sistem, bukan ke lampiran</td>
+</tr>
+<tr>
+<td>Permintaan "tanda tangan dan kirim balik"</td>
+<td>Approval pembayaran lewat alur internal, bukan email</td>
+</tr>
+<tr>
+<td>Domain vendor mirip tapi bukan</td>
+<td>Cek daftar vendor di sistem</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="5-infrastruktur-minimal-atau-nol-infrastruktur">5. Infrastruktur minimal (atau nol infrastruktur)</h2>
+
+<p><strong>Opsi A — tanpa server (disarankan untuk mulai):</strong>
+Kirim email simulasi yang meminta staf <strong>membalas "LAPOR"</strong> bila mencurigakan. Yang diukur
+adalah <em>report rate</em> dan <em>click-by-reply</em>, tanpa halaman palsu, tanpa data apa pun yang terbentuk.</p>
+<p><strong>Opsi B — halaman statis:</strong>
+- Satu halaman HTML statis di hosting internal (bukan domain publik).
+- Hanya mencatat <code>recipient_id</code> + timestamp kedatangan.
+- <strong>Tanpa</strong> <code>&lt;input type="password"&gt;</code>, tanpa form POST.
+- Tidak ada JavaScript yang membaca isi halaman.
+- Halaman langsung menampilkan: <em>"Ini latihan. Tidak ada data yang dikirim. Kembali ke pekerjaan Anda."</em></p>
+<p><strong>Opsi C — platform pihak ketiga:</strong> boleh, asalkan (a) data tinggal di wilayah yang disetujui,
+(b) kontrak menghapus data ≤ 90 hari, (c) tanpa simulasi yang meminta kata sandi.</p>
+<hr />
+<h2 id="6-jadwal-6-minggu">6. Jadwal 6 minggu</h2>
+
+<table>
+<thead>
+<tr>
+<th>Minggu</th>
+<th>Aktivitas</th>
+<th>Keluaran</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Baseline: <code>booking_palsu</code></td>
+<td>CSV gelombang 1</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Baseline: <code>payment_failed</code></td>
+<td>CSV gelombang 1b</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Sesi 30 menit: 6 ciri pesan asli + 1 latihan berkelompok</td>
+<td>daftar hadir, bukan nilai</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Retest: <code>invoice_vendor</code></td>
+<td>CSV gelombang 2</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Coaching 15 menit untuk yang klik (sukarela, tanpa catatan disiplin)</td>
+<td>catatan coaching</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Laporan agregat + keputusan: ulangi / naikkan level</td>
+<td>laporan 1 halaman</td>
+</tr>
+</tbody>
+</table>
+<p>Gelombang berikutnya <strong>tidak</strong> memakai template yang sama. Kalau template diulang, angka
+membaik karena hafalan, bukan karena kewaspadaan.</p>
+<hr />
+<h2 id="7-ambang-putusan">7. Ambang & putusan</h2>
+
+<table>
+<thead>
+<tr>
+<th>Metrik</th>
+<th>Ambang</th>
+<th>Alasan angka ini</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Kredensial terkirim</td>
+<td><strong>0</strong></td>
+<td>Satu saja = kegagalan kritis, apa pun angka lainnya</td>
+</tr>
+<tr>
+<td>Klik</td>
+<td><strong>≤ 10%</strong></td>
+<td>Di atas itu, kontrol proses (approval, verifikasi) yang menahan, bukan orang</td>
+</tr>
+<tr>
+<td>Lapor</td>
+<td><strong>≥ 50%</strong></td>
+<td>Lapor adalah perilaku yang ingin dibentuk, bukan menghindari klik</td>
+</tr>
+<tr>
+<td>Kohort terkirim</td>
+<td><strong>≥ 5</strong></td>
+<td>Di bawah 5, angka tidak bisa disimpulkan (lihat §12)</td>
+</tr>
+</tbody>
+</table>
+<p>Skrip menerjemahkan ini jadi exit code supaya bisa dipakai di CI/laporan otomatis:</p>
+<table>
+<thead>
+<tr>
+<th>Exit</th>
+<th>Arti</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>0</code></td>
+<td>Ambang terpenuhi</td>
+</tr>
+<tr>
+<td><code>2</code></td>
+<td>Ambang dilanggar (detail di stderr)</td>
+</tr>
+<tr>
+<td><code>3</code></td>
+<td>Data tidak cukup — <strong>bukan</strong> lulus</td>
+</tr>
+<tr>
+<td><code>1</code></td>
+<td>Berkas ditolak (kolom hilang, flag bukan 0/1, ID duplikat)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="8-checklist-hari-h">8. Checklist hari-H</h2>
+
+<ol>
+<li>[ ] Consent owner tertulis (tanggal, nama, cakupan) tersimpan.</li>
+<li>[ ] Manager tahu jam kirim dan punya nomor kill switch.</li>
+<li>[ ] Daftar penerima final (staf aktif, bukan tamu, bukan vendor).</li>
+<li>[ ] Domain <code>.invalid</code> + <code>X-Drill: true</code> terpasang.</li>
+<li>[ ] Tidak ada kolom sensitif di halaman (kalau Opsi B).</li>
+<li>[ ] Kotak <code>security@</code> siap menerima laporan; ada yang memantau.</li>
+<li>[ ] Tidak ada kampanye lain/insiden nyata di hari yang sama.</li>
+<li>[ ] CSV kosong berheader sudah disiapkan untuk pengisian.</li>
+</ol>
+<hr />
+<h2 id="9-pasca-latihan">9. Pasca-latihan</h2>
+
+<table>
+<thead>
+<tr>
+<th>Langkah</th>
+<th>Aturan</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Umpan balik</td>
+<td>Kirim ke <strong>semua</strong> penerima dalam 24 jam: "Itu latihan. Ini 6 ciri yang bisa dipakai."</td>
+</tr>
+<tr>
+<td>Coaching</td>
+<td>Hanya untuk yang klik; 15 menit; fokus pada <em>apa yang membuat ragu</em>, bukan kesalahan</td>
+</tr>
+<tr>
+<td>Laporan</td>
+<td>Agregat per template; nama hanya di lampiran terpisah untuk manager langsung</td>
+</tr>
+<tr>
+<td>Retensi</td>
+<td>Data mentah dihapus ≤ 90 hari; simpan agregat + tanggal</td>
+</tr>
+<tr>
+<td>Keputusan</td>
+<td>Lulus → ulangi 6 bulan lagi dengan template baru. Gagal → perbaiki <strong>proses</strong> dulu (approval, verifikasi dua orang), lalu ulangi</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="10-format-csv">10. Format CSV</h2>
+
+<p>Satu baris per penerima per gelombang. Semua flag <strong>wajib</strong> <code>0</code> atau <code>1</code> — nilai lain
+membuat berkas ditolak (gagal tertutup), bukan dianggap <code>0</code>.</p>
+<pre><code class="language-csv">recipient_id,template,delivered,clicked,submitted_credentials,reported
+staff-01,booking_palsu,1,0,0,1
+staff-02,booking_palsu,1,1,0,0
+staff-03,payment_failed,1,0,0,1
+</code></pre>
+<p>Aturan validasi:</p>
+<ul>
+<li><code>recipient_id</code> unik (duplikat = ditolak, karena bisa menggelembungkan penyebut).</li>
+<li><code>clicked=1</code> mustahil tanpa <code>delivered=1</code>.</li>
+<li><code>submitted_credentials=1</code> mustahil tanpa <code>clicked=1</code>.</li>
+<li><code>reported=1</code> hanya untuk pesan yang terkirim.</li>
+</ul>
+<p><code>recipient_id</code> sebaiknya pseudonim (<code>staff-01</code>), bukan nama. Petakan ke nama di berkas
+terpisah yang dihapus setelah coaching.</p>
+<hr />
+<h2 id="11-menjalankan-skrip">11. Menjalankan skrip</h2>
+
+<pre><code class="language-bash">/usr/bin/python3 scripts/phishing_drill_score.py data/drill_2026-11.csv
+</code></pre>
+<p>Contoh keluaran:</p>
+<pre><code>template                 terkirim   klik   klik%  kredensial  lapor%
+---------------------------------------------------------------
+booking_palsu                   6      1   16.7%           0   66.7%
+---------------------------------------------------------------
+TOTAL                           6      1   16.7%           0   66.7%
+- booking_palsu: klik 16.7% melebihi batas 10%
+PUTUSAN: AMBANG DILANGGAR
+</code></pre>
+<p>Skrip ini <strong>tidak</strong> mengirim email, tidak menyimpan data, dan tidak butuh jaringan.</p>
+<hr />
+<h2 id="12-yang-belum-dicakup-jujur">12. Yang belum dicakup (jujur)</h2>
+
+<ul>
+<li><strong>Vishing &amp; WhatsApp</strong> — kanal paling sering dipakai untuk menipu villa; butuh skrip terpisah.</li>
+<li><strong>Spear-phishing yang sangat personal</strong> (nama anak, jadwal liburan) — sulit dibuat etis dan
+  sulit diukur ulang.</li>
+<li><strong>Deepfake suara/video</strong> — belum ada kontrol yang terbukti; jangan klaim terlindungi.</li>
+<li><strong>Kerentanan teknis</strong> (SPF/DKIM/DMARC, kebocoran kredensial) diukur terpisah di §2, bukan di sini.</li>
+<li><strong>Angka ambang 10%/50%</strong> adalah titik mulai yang wajar untuk tim kecil, <strong>bukan</strong> hasil
+  penelitian. Setelah 2 gelombang, ganti dengan baseline tim sendiri — itulah angka yang bermakna.</li>
+</ul>
+<hr />
+<h2 id="13-sisi-tamu-satu-pesan-resmi-untuk-pelapor">13. Sisi tamu: satu pesan resmi untuk pelapor</h2>
+
+<p>Kalau tamu melaporkan pesan mencurigakan, balas dengan kalimat pendek ini (tanpa angka yang
+diketik, sesuai aturan template):</p>
+<blockquote>
+<p>Terima kasih telah memberi tahu kami. Kami tidak pernah meminta data kartu atau kata sandi
+lewat email atau chat, dan pembayaran hanya ke rekening yang tercantum di invoice resmi Anda.
+Mohon jangan membalas pesan tersebut; tim kami akan menghubungi Anda melalui kanal yang
+tertera di pesanan Anda.</p>
+</blockquote>
+<p>Simpan salinan pesan yang dilaporkan (header lengkap) — itu bukti untuk blokir domain pengirim.</p>
+</body></html>

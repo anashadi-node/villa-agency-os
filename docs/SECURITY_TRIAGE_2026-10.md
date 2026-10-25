@@ -242,8 +242,10 @@ keluar (channel/connector). Artinya:
    menumbuhkan memori tanpa batas. *Usaha: kecil.*
 3. **Uji penetrasi eksternal** sebelum go-live publik — A01 tidak bisa dibuktikan dari dalam.
    *Usaha: besar.*
-4. **Latihan phishing tamu** + template pesan resmi yang tidak pernah meminta data kartu.
-   *Usaha: kecil, dampak bisnis tinggi.*
+4. **Latihan phishing** (staf, bukan tamu) + template pesan resmi yang tidak pernah meminta
+   data kartu. **Paket siap pakai:** `docs/security/PHISHING_DRILL_KIT.md` (6 minggu, 3 skenario,
+   prasyarat SPF/DKIM/DMARC, batas etika/UU PDP) + `scripts/phishing_drill_score.py` (fail-closed,
+   7 tes). Sisa: consent tertulis owner sebelum gelombang pertama. *Usaha: kecil, dampak bisnis tinggi.*
 5. **Pin metadata tool** sebelum modul AI memakai MCP. *Usaha: sedang, hanya bila relevan.*
 
 ---
