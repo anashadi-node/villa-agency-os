@@ -169,7 +169,53 @@ Batas yang tetap terbuka pada audit ini (jujur): suite **PostgreSQL hidup** tida
 (butuh server PostgreSQL; hasil 2026-10-03 tetap yang terakhir: 75 lulus untuk skema, seluruh suite
 keluar 0), dan pemasangan produksi belum dieksekusi.
 
-## 7. Cara memverifikasi ulang (10 menit)
+## 7. Audit keamanan & skalabilitas (2026-10-25)
+
+**Premis diuji lebih dulu: repo ini tidak punya PHP, Node, atau Laravel.** Census: 0 berkas
+`.php`/`.js`/`.ts`/Blade, 0 `composer.json`/`package.json`, 0 dependency runtime (57 modul
+`src/` = stdlib murni). Kelas kerentanan PHP/Laravel/Node karena itu **tidak berlaku** — bukan
+karena sudah ditambal, tetapi karena kodenya tidak ada. Yang benar-benar diaudit: dua server
+HTTP stdlib, lapisan data, kripto webhook/TOTP, penanganan berkas, dan rantai pasok.
+
+Temuan & perbaikan:
+
+1. **DoS satu socket (SEDANG → ditutup).** Kedua server single-threaded **tanpa batas baca**
+   (`timeout=None`). Satu klien yang mengirim setengah permintaan memegang satu-satunya slot
+   layanan selamanya — tanpa kredensial. Diperbaiki: `CONNECTION_TIMEOUT_SECONDS = 20`. Bukti
+   dua arah: dengan `None` socket tetap terbuka setelah 1 dtk; dengan timeout, server menutup
+   dan langsung melayani klien berikutnya (`tests/test_server_hardening.py`).
+2. **Antrean listen terlalu dangkal (SEDANG → ditutup).** `request_queue_size` bawaan 5 → SYN
+   dibuang kernel, klien mengulang 1 dtk kemudian. 20 pengunjung serentak: **1.248,2 ms → 74,3 ms
+   (16,8×)**, throughput 16,0 → **269,3 req/s**, klien terlambat 1.000 ms → 63,7 ms.
+3. **Dashboard bisa di-iframe (RENDAH → ditutup).** `default-src 'none'` tidak mengatur frame;
+   ditambah `X-Frame-Options: DENY` + `frame-ancestors 'none'; base-uri 'none'`.
+
+Pengukuran (`data/villa.db`, 3 properti): `/` median **3,42 ms**, `/villas` **0,77 ms**, plafon
+aritmetika `1/latency` ≈ **292 req/s**. Hambatan berikutnya: penulis tunggal SQLite — pindah ke
+PostgreSQL bila utilisasi penulis >0,9 (jalur sudah diuji, seluruh suite lulus di PG).
+
+Scan: `semgrep` (p/python + p/secrets) **0 temuan**; `trivy fs` **0 secret, 0 misconfig**
+(catatan jujur: tanpa lockfile/IaC hasilnya nyaris kosong *by construction* — bukan bukti kuat);
+secret-scan internal 0 temuan / 279 berkas.
+
+Upgrade: **57/57 modul `src/` diimpor di Python 3.14.7**; suite penuh lulus di 3.11.16 dan
+3.12.3. Runtime stdlib → tanpa treadmill CVE pihak ketiga.
+
+Rincian, tangga scaling, dan checklist go-live: `docs/SCALING_AND_UPGRADE.md`.
+Ukur ulang sendiri: `python3 scripts/perf_probe.py --db data/villa.db`.
+
+Batas jujur: tidak ada uji beban di atas 20 konkuren; TLS tetap tugas reverse proxy (bukan kode
+ini); tidak ada uji penetrasi eksternal; Python 3.14 belum menjalankan suite (pytest tidak
+terpasang untuk interpreter itu).
+
+**Di luar keamanan: gerbang rilisnya sendiri sedang merah.** `make check` di HEAD `0b5f0a3` gagal
+pada `tests/test_reservation_kpi_cli.py`: kasus uji dipaku ke `NOW` (21-Sep) sedangkan perintah KPI
+memakai jam nyata dengan jendela 28 hari — pada 25-Okt kasus itu berumur 34 hari, bundle mencetak
+`inquiries 0`, tes gagal. Bukan bug produk (jendela 28 hari memang benar); tesnya yang kedaluwarsa.
+Fixture kini menempatkan baris relatif terhadap jam nyata dan memenuhi `ck_cases_sla_window`.
+Status *pre-existing* dibuktikan dengan `git stash`: tes gagal juga tanpa perubahan audit ini.
+
+## 8. Cara memverifikasi ulang (10 menit)
 
 ```bash
 cd ~/villa-agency-os

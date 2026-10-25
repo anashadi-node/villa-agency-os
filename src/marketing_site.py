@@ -74,6 +74,13 @@ MAX_NAME_CHARS = 100
 MAX_MESSAGE_CHARS = 5_000
 MAX_FORM_BYTES = 32 * 1024
 
+# A single stalled socket must not own the process. ``http.server`` is
+# single-threaded here, so without a read timeout a client that sends half a
+# request and then goes quiet blocks *every* visitor indefinitely — one
+# connection, total outage, no credentials needed. Twenty seconds is far more
+# than any real request needs and far less than an attacker would like.
+CONNECTION_TIMEOUT_SECONDS = 20
+
 #: Villa photo placeholders — CC BY-SA / public-domain stock from Wikimedia
 #: Commons (credits + source links: ``docs/PHOTO_CREDITS_2026-10-06.md``), NOT
 #: real photos of the listed properties. Matched to a villa by a keyword found
@@ -814,6 +821,9 @@ class _MarketingRequestHandler(BaseHTTPRequestHandler):
     """Public request handler: no auth, no sessions, read model + one form."""
 
     server_version = "VillaMarketing/1.0"
+    #: Bounded read: ``StreamRequestHandler.setup`` applies this to the socket,
+    #: so a half-sent request dies instead of holding the single serving thread.
+    timeout = CONNECTION_TIMEOUT_SECONDS
     site: MarketingSite
 
     # -- helpers ------------------------------------------------------------ #

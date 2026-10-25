@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -58,13 +59,22 @@ def _fresh_db(tmp_path: Path) -> Path:
         "monthly_discount_pct": str(rc.monthly_discount_pct),
         "source_doc_ref": rc.source_doc_ref, "approved_by": rc.approved_by, "created_at": NOW,
     })
+    # One hour ago, on the same clock the CLI subprocess will read.
+    created = datetime.now(UTC) - timedelta(hours=1)
+    recent = created.isoformat()
+    first_due = (created + timedelta(hours=1)).isoformat()
+    quote_due = (created + timedelta(hours=4)).isoformat()
     kernel.conn.execute(
         "INSERT INTO cases (case_id, agency_id, guest_ref, channel, status, priority,"
         " sla_policy, first_response_due_at, quote_due_at, idempotency_key, created_at, updated_at)"
         " VALUES ('case_cli_1', 'agency_default', 'guest_cli', 'website', 'NEW', 'NORMAL',"
-        " 'default', '2026-09-21T01:00:00+00:00', '2026-09-21T04:00:00+00:00',"
-        " 'idem-case-cli-1', ?, ?)",
-        (NOW, NOW),
+        " 'default', ?, ?, 'idem-case-cli-1', ?, ?)",
+        # The CLI is an operator command: it anchors its window on the *real*
+        # clock, not the kernel's frozen one. So this row must be placed relative
+        # to that clock — pinning it to the fixture's NOW made the test expire the
+        # moment the calendar moved past NOW + 28 days (it went red on 2026-10-25,
+        # 34 days after NOW).
+        (first_due, quote_due, recent, recent),
     )
     kernel.conn.commit()
     return db
