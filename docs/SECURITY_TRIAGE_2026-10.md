@@ -132,6 +132,19 @@ yang salah akan salah menarif semua booking yang memakainya. Guard sekarang hany
 | `/inquiry?ref=<script>…` → 200 | `ref` **tidak dipantulkan** ke HTML |
 | Header `Server` situs publik | sebelumnya `BaseHTTP/0.6 Python/3.12.3` → sekarang tanpa versi interpreter |
 
+### 4b. Limiter formulir — diuji hidup, bukan diasumsikan
+
+| Uji | Hasil |
+|---|---|
+| 7× POST `/inquiry` ke server nyata, DB **salinan** di `/tmp` (produksi tidak disentuh) | `400,400,400,400,400,429,429` |
+| Arti | batas 5/600 s ditegakkan **sebelum** validasi — form tidak valid pun tidak membeli kuota |
+| Kunci | hop terakhir `X-Forwarded-For`, hanya bila `--trusted-proxy`; dinormalisasi `ipaddress` |
+| Sudah ditutup tes | `test_post_rate_limit_429`, "rotating the header buys no extra quota", batas 5→429 |
+
+> Koreksi: draf pertama dokumen ini dan rekomendasi lisan saya menyebut "server stdlib tidak
+> punya limiter". Itu salah — saya menyimpulkan sebelum membaca `marketing_site.py`. Kontrol
+> sudah ada, benar, dan teruji; yang tersisa hanya tiga hal kecil di §6 butir 2.
+
 ---
 
 ## 5. Lanskap ancaman yang sedang marak — dan relevansinya di sini
@@ -212,8 +225,12 @@ keluar (channel/connector). Artinya:
 1. **Naikkan patch interpreter** ke rilis yang memuat perbaikan `CVE-2026-0865`
    (3.12.13+ / 3.14.3+) atau pastikan distro membackport. Mitigasi kode sudah ada; ini
    menghilangkan akar masalah untuk kode masa depan. *Usaha: sedang (uji ulang `make check`).*
-2. **Rate limit di lapisan proxy** untuk `/inquiry` — server stdlib tidak punya limiter, dan
-   formulir publik adalah satu-satunya jalur tulis tanpa autentikasi. *Usaha: kecil (nginx).*
+2. ~~Rate limit `/inquiry`~~ — **sudah ada dan terbukti bekerja.** `SlidingWindowRateLimiter`
+   (5 event / 600 s) memakai hop **terakhir** `X-Forwarded-For` hanya bila `--trusted-proxy`,
+   dinormalisasi lewat `ipaddress` (IPv4-mapped IPv6 = satu kunci). Probe hidup di DB salinan:
+   5×400 lalu **429 pada request ke-6**. Sisa kecil: (a) hitungan per proses — beberapa worker
+   mengalikan kuota; (b) 429 belum mengirim `Retry-After`; (c) peta kunci tidak pernah
+   dipangkas, jadi memori tumbuh bila penyerang memutar alamat. *Usaha: kecil.*
 3. **Uji penetrasi eksternal** sebelum go-live publik — A01 tidak bisa dibuktikan dari dalam.
    *Usaha: besar.*
 4. **Latihan phishing tamu** + template pesan resmi yang tidak pernah meminta data kartu.
