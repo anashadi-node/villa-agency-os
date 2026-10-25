@@ -14,7 +14,8 @@ Periode data: 2026-08-26 → 2026-10-23. Tanggal audit: 2026-10-25.
 |---|---|---|---|
 | 1 | `CVE-2026-0865` (header injection `http.server`) **hidup** di interpreter kita; tidak terjangkau karena semua header literal | MEDIUM (laten) | **Ditutup berlapis** — `SafeHeaderMixin` fail-closed + 3 tes |
 | 2 | `Server:` membocorkan `Python/3.12.3` di situs publik | LOW | **Ditutup** — `sys_version = ""` |
-| 3 | 38 temuan semgrep "SQLAlchemy raw query" | — | **0 dapat dieksploitasi** (triase di §3) |
+| 3 | 47 temuan semgrep (38 SQLAlchemy + 5 formatted-SQL + 4 urllib) | — | **0 dapat dieksploitasi** (triase §3) |
+| 3b | Feed FX menerima `http://` padahal docstring menjanjikan HTTPS → kurs bisa diubah di transit, harga semua booking ikut salah | LOW (dampak uang) | **Ditutup** — `https://` + `file://` saja (2 tes) |
 | 4 | Reflected XSS lewat path/query | — | **Tidak ada** (diuji, §4) |
 | 5 | `trivy` melaporkan 0 — tetapi **tidak memindai apa pun** | — | Dicatat jujur: bukan bukti |
 
@@ -25,7 +26,7 @@ Periode data: 2026-08-26 → 2026-10-23. Tanggal audit: 2026-10-25.
 | Alat | Perintah | Hasil |
 |---|---|---|
 | semgrep `p/python` + `p/secrets` | `--severity ERROR` | **0 temuan** (rc=0) |
-| semgrep `p/default` + `p/owasp-top-ten` + `p/secrets` | JSON | **38 temuan** (semua 1 aturan: SQLAlchemy raw query), 0 error pemindaian |
+| semgrep `p/default` + `p/owasp-top-ten` + `p/secrets` | JSON | **47 temuan**: 38 SQLAlchemy raw-query (ERROR), 5 formatted-SQL (WARN), 4 dynamic-urllib (WARN); 0 error pemindaian |
 | trivy `fs` (misconfig, secret) | — | tabel kosong: **semua target "Not scanned"** (tak ada lockfile/IaC) |
 | CISA KEV (data primer) | `known_exploited_vulnerabilities.json` | katalog **2026.10.23**, 1.756 entri, **80** ditambahkan sejak 2026-08-26 |
 | Probe CRLF header | server mini, interpreter produksi | **rentan**: `X-Probe: safe` + `Injected: yes` jadi dua header |
@@ -101,6 +102,24 @@ tabel di luar `READINESS_FILTERS`.
 **Kesimpulan falsifiable:** bila ada injeksi, sebuah string berisi `' OR 1=1 --` harus bisa
 mengubah hasil query. Tidak ada jalur yang meneruskan nilai ke teks query, sehingga tidak ada
 yang bisa diuji lebih jauh tanpa mengubah arsitektur.
+
+### 3b. Sembilan temuan sisanya (bukan SQLAlchemy)
+
+| Aturan | Lokasi | Verdict |
+|---|---|---|
+| `formatted-sql-query` ×5 | `audit.py` ×2, `policy_engine.py`, `go_live_smoke.py`, `seed_demo.py` | Sama kelasnya dengan §3: nama tabel konstanta modul atau argumen skrip ops, nilai ter-bind. **Aman** |
+| `dynamic-urllib-use-detected` ×4 | `preflight.py` ×2, `perf_probe.py`, `refresh_fx_rate.py` | Tiga yang pertama menyusun URL dari `http://127.0.0.1:{int}` — skema tidak bisa diubah pemanggil, `file://` mustahil; diberi `nosemgrep` + alasan tertulis. Yang keempat **temuan nyata** dan sudah ditutup (§3b-1) |
+
+**3b-1. Feed FX menerima `http://`.** Docstring menjanjikan HTTPS, tetapi `fetch_json()` tidak
+memeriksa skema. Dampaknya bukan pembacaan file lokal (isi tetap harus lolos parser payload),
+melainkan **integritas kurs**: jawaban `http://` bisa ditulis ulang di transit, dan satu kurs
+yang salah akan salah menarif semua booking yang memakainya. Guard sekarang hanya menerima
+`https://` dan `file://` (jalur kutipan tersimpan yang memang dipakai CLI dan harness);
+`http://` dan `ftp://` ditolak sebelum ada request. Dua tes: penolakan + bukti `file://` tetap jalan.
+
+> Catatan metode: laporan pertama saya menyebut "38 temuan" karena hanya menghitung aturan yang
+> saya triase. Total sebenarnya **47**. Angka yang tidak dihitung bukan angka nol — begitulah
+> celah triase terlihat.
 
 ---
 

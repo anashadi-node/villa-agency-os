@@ -446,7 +446,9 @@ HONEYPOT_FIELD = "company"
 
 
 def _get(port: int, path: str = "/") -> Any:
-    return urllib.request.urlopen(
+    # Scheme, host and port are built here from an int and a literal; ``path`` cannot
+    # change the scheme, so ``file://`` is unreachable (rule 11: measure the real path).
+    return urllib.request.urlopen(  # nosemgrep: dynamic-urllib-use-detected - fixed http://127.0.0.1 prefix
         f"http://127.0.0.1:{port}{path}", timeout=PROBE_TIMEOUT_SECONDS
     )
 
@@ -457,7 +459,7 @@ def _post(port: int, path: str, fields: dict[str, str]) -> Any:
         data=urllib.parse.urlencode(fields).encode(),
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
-    return urllib.request.urlopen(request, timeout=PROBE_TIMEOUT_SECONDS)
+    return urllib.request.urlopen(request, timeout=PROBE_TIMEOUT_SECONDS)  # nosemgrep: dynamic-urllib-use-detected - fixed http://127.0.0.1 prefix
 
 
 def _primary_route_address() -> Optional[str]:

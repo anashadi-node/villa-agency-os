@@ -459,3 +459,28 @@ def test_a_second_run_on_the_same_day_publishes_nothing_new(db, tmp_path):
     assert again.returncode == 0, again.stderr
     assert "UNCHANGED" in again.stdout
     assert _revisions(db) == 1
+
+
+# -- scheme boundary ---------------------------------------------------------- #
+
+
+def test_a_plain_http_feed_is_refused_before_any_request():
+    """A rewritten http:// FX answer would mis-price every booking; https is required."""
+    for bad in ("http://provider.example/v6/latest/USD", "ftp://provider.example/x"):
+        with pytest.raises(R.FeedError) as refused:
+            R.fetch_json(bad, timeout=0.1)
+        assert "only https" in str(refused.value)
+        assert bad in str(refused.value)
+
+
+def test_a_saved_local_quote_is_still_readable(db, tmp_path):
+    # file:// is the CLI's saved-quote path (and the test harness); it must survive the
+    # scheme guard, or every operator with a downloaded quote loses the tool.
+    done = _run(
+        db, "--url", _quote_file(tmp_path, rate="17123"), "--approved-by", "owner_anas",
+        "--effective-from", FROZEN_DAY,
+    )
+    assert done.returncode == 0, done.stderr
+    published = _effective(db)
+    assert published is not None
+    assert published.as_json() == {"USD/IDR": "17123"}

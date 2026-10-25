@@ -58,7 +58,9 @@ def start(db: str) -> tuple[Any, str]:
 def get(base: str, path: str) -> float:
     started = time.perf_counter()
     try:
-        with urllib.request.urlopen(base + path, timeout=20) as resp:
+        # ``base`` is built from an int port above, so the scheme is http by
+        # construction; ``path`` only appends to it.
+        with urllib.request.urlopen(base + path, timeout=20) as resp:  # nosemgrep: dynamic-urllib-use-detected - fixed http://127.0.0.1 prefix
             resp.read()
     except urllib.error.HTTPError as exc:  # a 404 is still a measured round trip
         exc.read()

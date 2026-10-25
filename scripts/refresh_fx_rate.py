@@ -186,11 +186,18 @@ def _exact_rate(value: Any, *, pair: str, url: str) -> Decimal:
 
 def fetch_json(url: str, *, timeout: float = 20.0) -> Any:
     """Read the provider over HTTPS. No retries: a cron run will try again tomorrow."""
+    # The docstring promises HTTPS, so a plain-http feed is refused: an http:// URL can
+    # be rewritten in transit, and a rewritten FX rate mis-prices every booking. The
+    # local ``file://`` form stays allowed because the CLI and its tests read a saved
+    # quote from disk — content the operator could already read, and it still has to
+    # parse as a provider payload before it can publish anything.
+    if not url.lower().startswith(("https://", "file://")):
+        raise FeedError(f"{url}: only https feeds are accepted")
     request = urllib.request.Request(
         url, headers={"User-Agent": "villa-agency-os/refresh_fx_rate", "Accept": "application/json"}
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as raw:
+        with urllib.request.urlopen(request, timeout=timeout) as raw:  # nosemgrep: dynamic-urllib-use-detected - scheme asserted above
             body = raw.read().decode("utf-8")
     except (urllib.error.URLError, TimeoutError, OSError) as unreachable:
         raise FeedError(f"{url}: not reachable ({unreachable})") from unreachable
