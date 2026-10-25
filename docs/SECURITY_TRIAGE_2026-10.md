@@ -222,9 +222,16 @@ keluar (channel/connector). Artinya:
 
 ## 6. Prioritas berikutnya (berurut dampak ÷ usaha)
 
-1. **Naikkan patch interpreter** ke rilis yang memuat perbaikan `CVE-2026-0865`
-   (3.12.13+ / 3.14.3+) atau pastikan distro membackport. Mitigasi kode sudah ada; ini
-   menghilangkan akar masalah untuk kode masa depan. *Usaha: sedang (uji ulang `make check`).*
+1. ~~Naikkan patch interpreter untuk `CVE-2026-0865`~~ — **sudah tertutup oleh backport distro.**
+   Terpasang `python3.12 3.12.3-1ubuntu0.17`; `changelog.Debian.gz` mencantumkan
+   `debian/patches/CVE-2026-0865.patch` (+ `-2`, "Permit HTAB in header values"). Probe perilaku
+   pada interpreter produksi: CR, LF, dan CRLF ditandai ilegal, **TAB diizinkan** (sesuai patch),
+   dan `putheader("X-Test", "a\r\nInjected: 1")` → `ValueError: Invalid header value`.
+   *Tidak perlu naik versi; cukup jaga `apt upgrade`.* Catatan kecil: NUL (`\x00`) tidak
+   ditandai oleh regex `_is_illegal_header_value` — di luar cakupan CVE ini, tetapi jangan
+   pernah meneruskan input pengguna mentah ke header.
+   *Koreksi: draf sebelumnya menyebut "3.12.13+ / 3.14.3+" tanpa memeriksa changelog Debian —
+   Ubuntu membackport, jadi syarat versi itu tidak berlaku di mesin ini.*
 2. ~~Rate limit `/inquiry`~~ — **sudah ada dan terbukti bekerja.** `SlidingWindowRateLimiter`
    (5 event / 600 s) memakai hop **terakhir** `X-Forwarded-For` hanya bila `--trusted-proxy`,
    dinormalisasi lewat `ipaddress` (IPv4-mapped IPv6 = satu kunci). Probe hidup di DB salinan:
