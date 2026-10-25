@@ -247,7 +247,32 @@ class SlidingWindowRateLimiter:
         if len(window) >= self.max_events:
             return False
         window.append(now)
+        if len(self._events) > self.MAX_TRACKED_CLIENTS:
+            self._evict(now)
         return True
+
+    #: Ceiling on the number of distinct clients held in memory. Without it a caller
+    #: that rotates addresses (an IPv6 /64 is free) grows the map forever: each new
+    #: key is a deque that never expires, because nothing sweeps the map itself.
+    MAX_TRACKED_CLIENTS = 4096
+
+    def tracked_clients(self) -> int:
+        """How many client keys the limiter currently holds (observability + tests)."""
+        return len(self._events)
+
+    def _evict(self, now: float) -> None:
+        """Drop expired windows first, then the least recently seen clients."""
+        for key in [k for k, w in self._events.items() if not w or now - w[-1] > self.window_seconds]:
+            del self._events[key]
+        overflow = len(self._events) - self.MAX_TRACKED_CLIENTS
+        if overflow <= 0:
+            return
+        oldest = sorted(
+            self._events.items(),
+            key=lambda item: item[1][-1] if item[1] else float("-inf"),
+        )[:overflow]
+        for key, _window in oldest:
+            del self._events[key]
 
 
 class PublicReadModel:
@@ -830,7 +855,14 @@ class _MarketingRequestHandler(SafeHeaderMixin, BaseHTTPRequestHandler):
     site: MarketingSite
 
     # -- helpers ------------------------------------------------------------ #
-    def _send_html(self, html: str, status: int = 200, *, no_store: bool = False) -> None:
+    def _send_html(
+        self,
+        html: str,
+        status: int = 200,
+        *,
+        no_store: bool = False,
+        extra_headers: Optional[Mapping[str, str]] = None,
+    ) -> None:
         payload = html.encode("utf-8")
         cache = "no-store" if no_store else "public, max-age=300"
         self.send_response(status)
@@ -843,11 +875,20 @@ class _MarketingRequestHandler(SafeHeaderMixin, BaseHTTPRequestHandler):
         self.send_header("Content-Security-Policy", CONTENT_SECURITY_POLICY)
         if no_store:
             self.send_header("X-Robots-Tag", "noindex")
+        # Names and values go through SafeHeaderMixin like every other header: a
+        # caller cannot smuggle a second header through this door either.
+        for name, value in (extra_headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(payload)
 
-    def _error(self, status: int, message: str) -> None:
-        self._send_html(self.site.error_html(status, message), status, no_store=True)
+    def _error(
+        self, status: int, message: str, *, retry_after: Optional[int] = None
+    ) -> None:
+        extra = {"Retry-After": str(int(retry_after))} if retry_after is not None else None
+        self._send_html(
+            self.site.error_html(status, message), status, no_store=True, extra_headers=extra
+        )
 
     def _remote_addr(self) -> str:
         """The address that identifies this visitor to the rate limiter.
@@ -951,7 +992,7 @@ class _MarketingRequestHandler(SafeHeaderMixin, BaseHTTPRequestHandler):
                 country_hint=self.headers.get("CF-IPCountry"),
             )
         except RateLimited as exc:
-            self._error(429, str(exc.message))
+            self._error(429, str(exc.message), retry_after=RATE_LIMIT_WINDOW_SECONDS)
             return
         except (FormInvalid, SpamRejected) as exc:
             self._error(400, str(exc.message))

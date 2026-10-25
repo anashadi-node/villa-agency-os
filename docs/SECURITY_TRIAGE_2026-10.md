@@ -228,9 +228,11 @@ keluar (channel/connector). Artinya:
 2. ~~Rate limit `/inquiry`~~ — **sudah ada dan terbukti bekerja.** `SlidingWindowRateLimiter`
    (5 event / 600 s) memakai hop **terakhir** `X-Forwarded-For` hanya bila `--trusted-proxy`,
    dinormalisasi lewat `ipaddress` (IPv4-mapped IPv6 = satu kunci). Probe hidup di DB salinan:
-   5×400 lalu **429 pada request ke-6**. Sisa kecil: (a) hitungan per proses — beberapa worker
-   mengalikan kuota; (b) 429 belum mengirim `Retry-After`; (c) peta kunci tidak pernah
-   dipangkas, jadi memori tumbuh bila penyerang memutar alamat. *Usaha: kecil.*
+   5×400 lalu **429 pada request ke-6**. Sisa: (a) hitungan per proses — beberapa worker
+   mengalikan kuota, jadi scale-out butuh limiter di proxy. Ditutup 2026-10-25:
+   (b) 429 kini mengirim `Retry-After: 600`; (c) peta kunci dibatasi
+   `MAX_TRACKED_CLIENTS = 4096` dengan eviksi — klien yang memutar alamat tidak lagi
+   menumbuhkan memori tanpa batas. *Usaha: kecil.*
 3. **Uji penetrasi eksternal** sebelum go-live publik — A01 tidak bisa dibuktikan dari dalam.
    *Usaha: besar.*
 4. **Latihan phishing tamu** + template pesan resmi yang tidak pernah meminta data kartu.

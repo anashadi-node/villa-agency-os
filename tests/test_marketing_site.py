@@ -380,6 +380,17 @@ class TestIntake:
         )
         assert row["body_sha256"] == sha256_hex(raw)
 
+    def test_the_limiter_map_does_not_grow_without_bound(self, clock):
+        """A caller rotating addresses must not grow the dict forever."""
+        limiter = M.SlidingWindowRateLimiter(clock, max_events=5, window_seconds=600)
+        cap = M.SlidingWindowRateLimiter.MAX_TRACKED_CLIENTS
+        for i in range(cap + 50):
+            assert limiter.allow(f"2001:db8::{i:x}") is True
+        assert limiter.tracked_clients() <= cap
+        # A brand-new client still gets its own bucket, not a stranger's leftovers.
+        assert limiter.allow("198.51.100.7") is True
+        assert limiter.allow("198.51.100.7") is True
+
     def test_duplicate_email_reuses_guest(self, clock):
         conn, site = _make_site(clock)
         limiter = M.SlidingWindowRateLimiter(clock, max_events=10, window_seconds=600)
@@ -590,6 +601,7 @@ class TestServedSite:
                 base, "/inquiry", _valid_fields(email="rl5@example.com")
             )
             assert status == 429
+            assert _h.get("Retry-After") == str(M.RATE_LIMIT_WINDOW_SECONDS)
             reader = M.connect_sqlite(_seeded_db(tmp_path, clock))
             cases = reader.execute("SELECT COUNT(*) AS n FROM cases").fetchone()["n"]
             reader.close()
