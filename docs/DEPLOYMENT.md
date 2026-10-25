@@ -188,6 +188,18 @@ server {
     server_name ops.example.com;
     ssl_certificate     /etc/letsencrypt/live/ops.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/ops.example.com/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    server_tokens       off;
+
+    # HSTS dipasang DI SINI, bukan di aplikasi: upstream berjalan HTTP dan header
+    # HSTS yang datang lewat HTTP diabaikan peramban. `always` ikut mengirim pada
+    # respons galat. Jangan tambahkan `preload` sebelum semua subdomain memang
+    # HTTPS permanen — daftar preload sulit ditarik kembali.
+    #
+    # Catatan nginx: `add_header` di dalam blok `location` MENGGANTIKAN seluruh
+    # add_header selevel `server`, bukan menambah. Kalau kelak menambah header di
+    # location, ulangi HSTS di sana atau warisi dengan sadar.
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 
     # Batasi ke kantor/VPN. Dashboard tidak dirancang untuk internet terbuka.
     allow 203.0.113.10;
@@ -218,6 +230,13 @@ server {
     server_name villa.example.com;
     ssl_certificate     /etc/letsencrypt/live/villa.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/villa.example.com/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    server_tokens       off;
+
+    # HSTS: lihat catatan di §4.1 — wajib di proxy, tidak bisa dari aplikasi.
+    # Situs publik adalah tempat paling penting untuk header ini: pengunjung baru
+    # yang mengetik "villa.example.com" harus langsung dipaksa HTTPS.
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 
     location / {
         proxy_pass http://127.0.0.1:8090;
@@ -294,6 +313,27 @@ antaranya adalah satu gambar berbentuk data URI di dalam HTML. Setiap tampilan
 halaman mengunduh ulang gambar itu, tanpa cache berkas gambar yang terpisah.
 Cukup untuk pilot, tetapi rute `/media/` dengan header cache panjang adalah
 langkah berikutnya sebelum trafik membesar.
+
+### 4.3 Siapa memasang header apa
+
+Audit 2026-10-25 mengukur header pada respons nyata. Pembagiannya sengaja, dan
+mengubahnya tanpa memahami alasan ini akan menurunkan keamanan:
+
+| Header | Dipasang oleh | Alasan |
+|---|---|---|
+| `Content-Security-Policy` | **aplikasi** | Kebijakan bergantung pada isi halaman; hanya aplikasi yang tahu apa yang dimuat |
+| `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy` | **aplikasi** | Berlaku sama untuk semua jalur; sudah diuji per respons (termasuk 401/404) |
+| `Cache-Control` | **aplikasi** | Hanya aplikasi yang tahu halaman mana boleh di-cache (`no-store` untuk dashboard dan 404) |
+| `Strict-Transport-Security` | **proxy** | Aplikasi melayani HTTP; HSTS lewat HTTP diabaikan peramban |
+| `ssl_protocols`, `server_tokens` | **proxy** | Milik lapisan TLS/nginx |
+| `Permissions-Policy`, `COOP`, `CORP` | belum dipasang | Tidak ada fitur yang membutuhkannya hari ini; dicatat, bukan diklaim selesai |
+
+Uji cepat setelah deploy:
+
+```bash
+curl -sSI https://villa.example.com/ | grep -i strict-transport-security
+curl -sSI https://ops.example.com/    | grep -iE "strict-transport|content-security"
+```
 
 ## 5. Backup & pemulihan (diuji, bukan diasumsikan)
 

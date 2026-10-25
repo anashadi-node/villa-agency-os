@@ -241,7 +241,9 @@ keluar (channel/connector). Artinya:
    `MAX_TRACKED_CLIENTS = 4096` dengan eviksi — klien yang memutar alamat tidak lagi
    menumbuhkan memori tanpa batas. *Usaha: kecil.*
 3. **Uji penetrasi eksternal** sebelum go-live publik — A01 tidak bisa dibuktikan dari dalam.
-   *Usaha: besar.*
+   *Usaha: besar.* Sebagian sudah dikerjakan dari dalam: **audit header live + matriks akses
+   per peran** (`docs/security/HEADERS_AND_ACCESS_AUDIT_2026-10-25.md`, 72 sel, 0 menyimpang,
+   kontrol negatif 401/401/403) — itu bukti kontrol aplikasi, **bukan** pengganti pentest.
 4. **Latihan phishing** (staf, bukan tamu) + template pesan resmi yang tidak pernah meminta
    data kartu. **Paket siap pakai:** `docs/security/PHISHING_DRILL_KIT.md` (6 minggu, 3 skenario,
    prasyarat SPF/DKIM/DMARC, batas etika/UU PDP) + `scripts/phishing_drill_score.py` (fail-closed,
