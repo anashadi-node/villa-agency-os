@@ -2844,7 +2844,29 @@ def _invert_tokens(registry: Mapping[str, Principal]) -> dict[str, str]:
 # --------------------------------------------------------------------------- #
 # HTTP handler
 # --------------------------------------------------------------------------- #
-class DashboardRequestHandler(BaseHTTPRequestHandler):
+class SafeHeaderMixin:
+    """Refuse a header name or value that would split into a second header.
+
+    CVE-2026-0865 (CPython): ``send_header`` assumes sanitised input and does not
+    reject CR/LF. The interpreter this project ships on (3.12.3 /
+    ``3.12.3-1ubuntu0.17``) is inside the affected range (``< 3.12.13``) and, measured
+    on 2026-10-25, still emitted ``X-Probe: safe`` + ``Injected: yes`` as two headers.
+    Today every header in this codebase is a literal, so the flaw is unreachable —
+    this guard is what keeps it unreachable when someone later writes
+    ``send_header("Location", request_path)``. Upstream's fix raises; so do we
+    (fail-closed, never silently strip).
+    """
+
+    def send_header(self, keyword: str, value: object) -> None:
+        name = str(keyword)
+        text = str(value)
+        for candidate in (name, text):
+            if any(ch in candidate for ch in "\r\n\x00"):
+                raise ValueError("header name or value contains a control character")
+        super().send_header(name, text)  # type: ignore[attr-defined]
+
+
+class DashboardRequestHandler(SafeHeaderMixin, BaseHTTPRequestHandler):
     """One request → one rendered page. Never writes except through the queue."""
 
     protocol_version = "HTTP/1.1"

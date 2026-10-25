@@ -198,6 +198,14 @@ Scan: `semgrep` (p/python + p/secrets) **0 temuan**; `trivy fs` **0 secret, 0 mi
 (catatan jujur: tanpa lockfile/IaC hasilnya nyaris kosong *by construction* — bukan bukti kuat);
 secret-scan internal 0 temuan / 279 berkas.
 
+CVE yang menyentuh langsung: **CVE-2026-0865** (header injection `http.server`). Runtime kita
+(3.12.3, paket `3.12.3-1ubuntu0.17`) masih di rentang terdampak dan **terbukti masih menyisipkan
+header kedua** saat diuji langsung; tidak terjangkau hari ini karena 19 `send_header` memakai
+nama dan nilai literal, dan kini dikunci `SafeHeaderMixin` (fail-closed, 3 tes). `CVE-2026-3644`
+(cookie) tidak berlaku — repo tidak memakai cookie. Triase 38 temuan semgrep: **0 dapat
+dieksploitasi** (semua identifier literal/allowlist, semua nilai ter-bind). Lanskap ancaman
+Oktober 2026 + pemetaan OWASP Top 10:2025: `docs/SECURITY_TRIAGE_2026-10.md`.
+
 Upgrade: **57/57 modul `src/` diimpor di Python 3.14.7**; suite penuh lulus di 3.11.16 dan
 3.12.3. Runtime stdlib → tanpa treadmill CVE pihak ketiga.
 

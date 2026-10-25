@@ -58,7 +58,7 @@ import villa_showcase as Showcase
 
 from cases import CaseService, SLA_POLICIES
 from crm import CrmService, DuplicateGuest, CrmError
-from dashboard import Markup, escape_value, render_page, serve
+from dashboard import Markup, SafeHeaderMixin, escape_value, render_page, serve
 from primitives import DomainError, IdFactory, SystemClock, require_ref, resolve_agency_id, to_iso
 from schema_loader import connect_sqlite
 
@@ -817,10 +817,13 @@ class MarketingSite:
         return build_handler(self)
 
 
-class _MarketingRequestHandler(BaseHTTPRequestHandler):
+class _MarketingRequestHandler(SafeHeaderMixin, BaseHTTPRequestHandler):
     """Public request handler: no auth, no sessions, read model + one form."""
 
     server_version = "VillaMarketing/1.0"
+    #: Do not advertise the interpreter patch level: it tells an attacker which
+    #: stdlib CVEs still apply (the dashboard already blanks this).
+    sys_version = ""
     #: Bounded read: ``StreamRequestHandler.setup`` applies this to the socket,
     #: so a half-sent request dies instead of holding the single serving thread.
     timeout = CONNECTION_TIMEOUT_SECONDS

@@ -1,0 +1,49 @@
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET /villas HTTP/1.1" 200 -
+127.0.0.1 - "GET /villas HTTP/1.1" 200 -
+127.0.0.1 - "GET /villas HTTP/1.1" 200 -
+127.0.0.1 - "GET /villas HTTP/1.1" 200 -
+127.0.0.1 - "GET /villas HTTP/1.1" 200 -
+127.0.0.1 - "GET /villas HTTP/1.1" 200 -
+127.0.0.1 - "GET /villas HTTP/1.1" 200 -
+127.0.0.1 - "GET /villas HTTP/1.1" 200 -
+127.0.0.1 - "GET /villas HTTP/1.1" 200 -
+127.0.0.1 - "GET /villas HTTP/1.1" 200 -
+127.0.0.1 - "GET /villas HTTP/1.1" 200 -
+127.0.0.1 - "GET /villas HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+127.0.0.1 - "GET / HTTP/1.1" 200 -
+/              median    3.28 ms   min    2.98   max    4.04
+/villas        median    0.73 ms   min    0.67   max    0.81
+
+20 simultaneous GET / : wall    70.0 ms  ->  285.6 req/s   slowest client 62.3 ms
+implied ceiling (1 / median latency):  304.7 req/s

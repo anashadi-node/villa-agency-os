@@ -241,6 +241,49 @@ def test_a_burst_of_connections_is_not_dropped_and_retried():
     )
 
 
+# -- header injection (CVE-2026-0865) ---------------------------------------- #
+
+
+def test_a_header_value_cannot_smuggle_a_second_header():
+    """The interpreter we ship on still splits on CRLF; our guard must trip first.
+
+    Proven in the same session: ``send_header("X-Probe", "safe\\r\\nInjected: yes")``
+    on 3.12.3 produced two headers. Every header in this codebase is a literal, so
+    the flaw is unreachable today — this test is what keeps it that way.
+    """
+
+    class _Recorder:
+        def __init__(self) -> None:
+            self.seen: list[tuple[str, str]] = []
+
+        def send_header(self, keyword: str, value: str) -> None:
+            self.seen.append((keyword, value))
+
+    probe = type("_Probe", (D.SafeHeaderMixin, _Recorder), {})()
+    probe.send_header("Cache-Control", "no-store")
+    assert probe.seen == [("Cache-Control", "no-store")]
+
+    for bad in ("safe\r\nInjected: yes", "safe\nInjected: yes", "x\x00y"):
+        with pytest.raises(ValueError):
+            probe.send_header("X-Probe", bad)
+    with pytest.raises(ValueError):
+        probe.send_header("X-Bad\r\nInjected", "value")
+    assert len(probe.seen) == 1, "a refused header must not reach the wire"
+
+
+def test_both_handlers_inherit_the_header_guard():
+    assert issubclass(D.DashboardRequestHandler, D.SafeHeaderMixin)
+    assert issubclass(M._MarketingRequestHandler, D.SafeHeaderMixin)
+
+
+def test_the_public_site_does_not_advertise_the_interpreter_version():
+    # "Python/3.12.3" in a Server header tells an attacker which stdlib CVEs apply.
+    # BaseHTTPRequestHandler.version_string() is literally server_version + " " + sys_version.
+    handler = M._MarketingRequestHandler
+    assert handler.sys_version == ""
+    assert "Python/" not in f"{handler.server_version} {handler.sys_version}"
+
+
 # -- framing protection ------------------------------------------------------- #
 
 
