@@ -169,11 +169,12 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
-        "--effective-to", default=OWNER_DECISION_EFFECTIVE_TO,
+        "--effective-to", default=None,
         help=(
             "last day the value applies (default: "
-            f"{OWNER_DECISION_EFFECTIVE_TO}). The window bounds the exposure: once it "
-            "passes, the machine path refuses again with no one having to remember"
+            f"{OWNER_DECISION_EFFECTIVE_TO}, stretched to the withdrawal day when that day "
+            "is already past). The window bounds the exposure: once it passes, the machine "
+            "path refuses again with no one having to remember"
         ),
     )
     args = parser.parse_args(argv)
@@ -187,6 +188,17 @@ def main(argv: list[str] | None = None) -> int:
             if args.command == "withdraw"
             else OWNER_DECISION_EFFECTIVE_FROM
         )
+    if args.effective_to is None:
+        args.effective_to = OWNER_DECISION_EFFECTIVE_TO
+        if args.command == "withdraw":
+            # A withdrawal must be able to close a window that has already run out — and to
+            # start on a date the operator names. Both leave ``effective_from`` later than
+            # the owner-decision end date, which the store refuses as an inverted window.
+            # Stretching the end date to the later of the two keeps the revision valid
+            # without reopening anything: the tool list is empty either way.
+            args.effective_to = max(
+                args.effective_to, args.effective_from, SystemClock().today().isoformat()
+            )
 
     db_path = _settings()
     if not db_path.exists():

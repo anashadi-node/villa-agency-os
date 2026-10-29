@@ -161,6 +161,28 @@ def test_publish_says_which_database_it_wrote_to(db: Path):
     assert f"target database: {db}" in result.stdout
 
 
+def test_withdraw_can_close_a_window_that_already_ended(db: Path):
+    """The owner-decision end date is a fixed calendar date, so it eventually passes.
+
+    A plain ``withdraw`` then asked for a revision that started today and ended on that
+    past date: the store refused it as an inverted window and the machine path stayed
+    open until someone thought to pass ``--effective-to`` by hand. A withdrawal must
+    always be able to close the path, so the end date is stretched to the withdrawal day
+    (the tool list is empty either way).
+    """
+    past_from = (TODAY - datetime.timedelta(days=12)).isoformat()
+    past_to = (TODAY - datetime.timedelta(days=6)).isoformat()
+    assert _run(
+        db, "publish", "--approved-by", "owner_anas",
+        "--effective-from", past_from, "--effective-to", past_to,
+    ).returncode == 0
+
+    withdrawn = _run(db, "withdraw", "--approved-by", "owner_anas")
+
+    assert withdrawn.returncode == 0, withdrawn.stderr
+    assert "published and empty" in _run(db, "status").stdout
+
+
 def test_withdraw_can_name_a_date_for_a_revision_that_starts_in_the_future(db: Path):
     """The documented withdrawal names its date.
 
