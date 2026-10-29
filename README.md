@@ -303,6 +303,7 @@ diambil — karena itu preflight menolak jalan.
 Prosedur pemasangan, systemd unit, backup, dan rollback: `docs/DEPLOYMENT.md`.
 Ritme harian dan cara menangani tiap antrean: `docs/OPERATIONS_RUNBOOK.md`.
 Ringkasan produk untuk calon pembeli: `docs/SALES_PACKAGE.md`.
+Panduan alur kerja untuk orang non-teknis: `docs/Villa_Agency_OS_Panduan_Alur_Kerja_2026-10-29.md` (versi HTML/PDF di folder yang sama).
 
 ## Dokumen wajib baca sebelum mengubah kode
 

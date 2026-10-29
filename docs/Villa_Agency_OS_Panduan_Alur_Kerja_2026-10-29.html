@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="id"><head><meta charset="utf-8">
+<title>Villa Agency OS — Panduan Alur Kerja</title><style>
+@page { size: A4; margin: 18mm 14mm 16mm; }
+* { box-sizing: border-box; }
+body { font-family: "DejaVu Sans", Arial, sans-serif; font-size: 9.6pt; line-height: 1.45;
+       color: #1b1b1b; margin: 0; }
+.wrap { max-width: 100%; }
+h1 { font-size: 19pt; margin: 0 0 4mm; color: #0f2a44; border-bottom: 2px solid #0f2a44;
+     padding-bottom: 2mm; }
+h2 { font-size: 13pt; margin: 7mm 0 2mm; color: #0f2a44; page-break-after: avoid; }
+h3 { font-size: 10.8pt; margin: 5mm 0 1.5mm; color: #14395c; page-break-after: avoid; }
+p, li { margin: 1.2mm 0; }
+ul, ol { margin: 1.5mm 0 2mm 5mm; padding-left: 4mm; }
+table { border-collapse: collapse; width: 100%; margin: 2mm 0 3mm; font-size: 8.2pt;
+        page-break-inside: auto; }
+th, td { border: 0.4pt solid #9aa7b4; padding: 1.1mm 1.4mm; text-align: left;
+         vertical-align: top; }
+th { background: #eef3f8; font-weight: 600; }
+tr { page-break-inside: avoid; }
+code { font-family: "DejaVu Sans Mono", monospace; font-size: 8.4pt; background: #f3f4f6;
+       padding: 0 0.6mm; border-radius: 1mm; }
+pre { background: #f6f7f9; border-left: 2.5pt solid #0f2a44; padding: 2mm 3mm; overflow-wrap: anywhere;
+      white-space: pre-wrap; page-break-inside: avoid; }
+pre code { background: none; padding: 0; }
+blockquote { margin: 2mm 0; padding: 1.5mm 3mm; border-left: 2.5pt solid #c9a227;
+             background: #fdf9ec; }
+hr { border: none; border-top: 0.5pt solid #c5ccd4; margin: 5mm 0; }
+a { color: #14395c; text-decoration: none; }
+.toc { background: #f7f9fb; border: 0.5pt solid #d5dde5; padding: 3mm 4mm; margin: 0 0 6mm; }
+.toc-title { font-weight: 700; margin-bottom: 1.5mm; color: #0f2a44; }
+.toc ul { list-style: none; margin: 0; padding-left: 3mm; }
+.toc > ul { padding-left: 0; }
+.toc li { margin: 0.6mm 0; font-size: 8.8pt; }
+.toc .toctitle { display: none; }
+.hero .sub { color: #55636f; font-size: 8.6pt; margin: -2mm 0 6mm; }
+</style></head>
+<body><div class="wrap">
+<div class="toc"><div class="toc-title">Daftar Isi</div><div class="toc">
+<ul>
+<li><a href="#1-satu-paragraf-ini-sistem-apa">1. Satu paragraf: ini sistem apa?</a></li>
+<li><a href="#2-apa-yang-sistem-ini-tidak-lakukan">2. Apa yang sistem ini TIDAK lakukan</a></li>
+<li><a href="#3-tiga-pintu-masuk-ke-sistem">3. Tiga pintu masuk ke sistem</a></li>
+<li><a href="#4-perjalanan-satu-booking-langkah-demi-langkah">4. Perjalanan satu booking, langkah demi langkah</a><ul>
+<li><a href="#langkah-1-pertanyaan-masuk-inquiry">Langkah 1 — Pertanyaan masuk (INQUIRY)</a></li>
+<li><a href="#langkah-2-pertanyaan-disaring-qualified">Langkah 2 — Pertanyaan disaring (QUALIFIED)</a></li>
+<li><a href="#langkah-3-cek-ketersediaan-availability_pending-confirmed-unavailable">Langkah 3 — Cek ketersediaan (AVAILABILITY_PENDING → CONFIRMED / UNAVAILABLE)</a></li>
+<li><a href="#langkah-4-penawaran-harga-quote_drafted-quote_sent">Langkah 4 — Penawaran harga (QUOTE_DRAFTED → QUOTE_SENT)</a></li>
+<li><a href="#langkah-5-menahan-tanggal-tiga-tahap-hold">Langkah 5 — Menahan tanggal (tiga tahap hold)</a></li>
+<li><a href="#langkah-6-uang-masuk-payment_pending-deposit_paid-paid_in_full">Langkah 6 — Uang masuk (PAYMENT_PENDING → DEPOSIT_PAID / PAID_IN_FULL)</a></li>
+<li><a href="#langkah-7-konfirmasi-booking-confirmed">Langkah 7 — Konfirmasi booking (CONFIRMED)</a></li>
+<li><a href="#langkah-8-sebelum-tamu-datang-pre_arrival">Langkah 8 — Sebelum tamu datang (PRE_ARRIVAL)</a></li>
+<li><a href="#langkah-9-tamu-menginap-in_stay">Langkah 9 — Tamu menginap (IN_STAY)</a></li>
+<li><a href="#langkah-10-selesai-completed-closed">Langkah 10 — Selesai (COMPLETED → CLOSED)</a></li>
+<li><a href="#kalau-batal-di-tengah-jalan">Kalau batal di tengah jalan</a></li>
+</ul>
+</li>
+<li><a href="#5-tiga-tahap-hold-dijelaskan-dengan-analogi">5. Tiga tahap hold, dijelaskan dengan analogi</a></li>
+<li><a href="#6-alur-uang-dari-penawaran-sampai-setoran-ke-pemilik-villa">6. Alur uang: dari penawaran sampai setoran ke pemilik villa</a></li>
+<li><a href="#7-antrean-yang-harus-dikosongkan-setiap-hari">7. Antrean yang harus dikosongkan setiap hari</a></li>
+<li><a href="#8-siapa-boleh-apa-enam-peran-dan-dua-belas-halaman">8. Siapa boleh apa: enam peran dan dua belas halaman</a></li>
+<li><a href="#9-peran-ai-apa-yang-boleh-dan-tidak-boleh">9. Peran AI: apa yang boleh dan tidak boleh</a></li>
+<li><a href="#10-bukti-mengapa-setiap-tindakan-meninggalkan-jejak">10. Bukti: mengapa setiap tindakan meninggalkan jejak</a></li>
+<li><a href="#11-kalau-ada-yang-salah-perilaku-sistem-saat-gagal">11. Kalau ada yang salah: perilaku sistem saat gagal</a></li>
+<li><a href="#12-satu-hari-di-agensi-cerita-utuh">12. Satu hari di agensi: cerita utuh</a></li>
+<li><a href="#13-peta-teknis-singkat-untuk-yang-ingin-melihat-isi-mesin">13. Peta teknis singkat (untuk yang ingin melihat isi mesin)</a></li>
+<li><a href="#14-batas-hari-ini-jujur-bukan-jualan">14. Batas hari ini (jujur, bukan jualan)</a></li>
+<li><a href="#15-glosarium">15. Glosarium</a></li>
+<li><a href="#16-satu-halaman-ringkasan-untuk-dinding-kantor">16. Satu halaman ringkasan untuk dinding kantor</a></li>
+</ul>
+</div>
+</div>
+<h1 id="villa-agency-os-panduan-lengkap-alur-kerja">Villa Agency OS — Panduan Lengkap Alur Kerja</h1>
+<p><strong>Untuk siapa dokumen ini:</strong> pemilik agensi, staf baru, calon pembeli lisensi, dan siapa pun yang perlu paham cara kerja sistem <strong>tanpa</strong> latar belakang teknis.
+<strong>Tanggal:</strong> 29 Oktober 2026 · <strong>Versi sistem:</strong> Phase 0–4 (kernel operasi + dashboard internal + situs publik)
+<strong>Berkas rujukan teknis:</strong> <code>README.md</code>, <code>docs/BOOKING_STATE_MACHINE.md</code>, <code>docs/OPERATIONS_RUNBOOK.md</code>, <code>docs/POLICY_MATRIX.md</code></p>
+<hr />
+<h2 id="1-satu-paragraf-ini-sistem-apa">1. Satu paragraf: ini sistem apa?</h2>
+<p>Villa Agency OS adalah <strong>sistem operasi untuk agensi villa</strong> — bukan aplikasi booking biasa. Ia mencatat dan mengurus tiga hal yang paling sering menimbulkan kerugian di bisnis villa:</p>
+<ol>
+<li><strong>Tanggal villa</strong> — siapa memakai unit mana, kapan, dan apakah benar-benar masih kosong.</li>
+<li><strong>Uang</strong> — berapa yang harus ditagih, sudah masuk berapa, cocok dengan invoice mana.</li>
+<li><strong>Bukti</strong> — siapa memutuskan apa, kapan, atas dasar data apa.</li>
+</ol>
+<p>Semua yang berbau angka, tanggal, status, dan uang dikerjakan oleh bagian sistem yang <strong>deterministik</strong> (hasilnya selalu sama untuk input yang sama, bisa dihitung ulang). Bahasa manusia dan AI masuk <strong>paling akhir</strong>, dan hanya untuk merangkai fakta yang sudah tercatat — bukan untuk mengarang fakta baru.</p>
+<p><strong>Analogi:</strong> anggap sistem ini sebagai <strong>buku besar + papan jadwal + lemari arsip</strong> yang dijaga ketat, lalu di depannya ada petugas (manusia/AI) yang boleh menulis surat, tapi tidak boleh mengubah angka di buku besar.</p>
+<hr />
+<h2 id="2-apa-yang-sistem-ini-tidak-lakukan">2. Apa yang sistem ini TIDAK lakukan</h2>
+<p>Penting disebut lebih dulu supaya tidak ada salah harap:</p>
+<table>
+<thead>
+<tr>
+<th>Tidak dilakukan</th>
+<th>Kenapa</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Menerima pembayaran langsung dari kartu tamu</td>
+<td>Pembayaran masuk lewat penyedia (payment gateway) / transfer bank; sistem hanya <strong>mencocokkan</strong> bukti yang masuk</td>
+</tr>
+<tr>
+<td>Mengubah status booking karena ada orang mengetik "sudah dibayar" di chat</td>
+<td>Status hanya berubah lewat perintah tervalidasi (state machine), bukan teks bebas</td>
+</tr>
+<tr>
+<td>Menjanjikan villa tersedia kalau data ketersediaan belum terbukti</td>
+<td>Aturan <strong>fail-closed</strong>: data hilang, basi, atau timeout = <code>UNKNOWN</code>, bukan "tersedia"</td>
+</tr>
+<tr>
+<td>Membiarkan AI menghitung harga atau memastikan ketersediaan</td>
+<td>AI tidak punya kewenangan angka; ia menyusun kalimat dari fakta ber-ID</td>
+</tr>
+<tr>
+<td>Membuka dashboard ke internet begitu saja</td>
+<td>Dashboard internal hanya untuk loopback/VPN; membuka ke publik butuh lapisan login tambahan yang <strong>belum</strong> dibangun</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="3-tiga-pintu-masuk-ke-sistem">3. Tiga pintu masuk ke sistem</h2>
+<p>Setiap permintaan tamu masuk lewat salah satu dari tiga pintu, dan semuanya bermuara ke tempat yang sama: <strong>kasus (case)</strong>.</p>
+<pre><code>(1) Situs publik  ──┐
+    villa &amp; inquiry │
+                    ├──►  KASUS  ──►  alur reservasi  ──►  uang  ──►  operasi
+(2) Kanal pesan  ───┤     (case)        (hold, quote,      (invoice,   (tugas,
+    WhatsApp/IG/email│                   booking)           pembayaran) insiden)
+                    │
+(3) Operator      ──┘
+    mengetik manual
+</code></pre>
+<p><strong>Pintu 1 — Situs publik.</strong> <code>src/marketing_site.py</code> melayani tujuh rute: beranda, katalog villa, detail villa, destinasi Bali, destinasi Yogyakarta, halaman pemilik, dan formulir <em>inquiry</em>. Situs ini <strong>hanya membaca</strong> data publik (villa, foto, harga tampil) dan mengirim pertanyaan ke sistem sebagai kasus baru. Ia tidak pernah menulis harga, tidak pernah mengunci tanggal.</p>
+<p><strong>Pintu 2 — Kanal pesan.</strong> Pesan dari WhatsApp/Instagram/email masuk lewat <em>connector</em> (penghubung). Setiap pesan disimpan dengan ID unik agar tidak diproses dua kali (idempoten) — pesan yang terkirim ulang oleh penyedia tidak membuat dua kasus.</p>
+<p><strong>Pintu 3 — Operator.</strong> Staf reservasi boleh membuat kasus manual untuk tamu yang menelepon atau datang langsung. Semua isian tetap melewati validasi yang sama.</p>
+<p><strong>Yang menyatukan ketiganya:</strong> <code>intake</code>. Di sini pertanyaan mentah ("ada villa 3 kamar dekat Seminyak tanggal 20?") diubah menjadi <strong>syarat terstruktur</strong>: jumlah tamu, tanggal masuk/keluar, area, anggaran, kebutuhan khusus. Hasilnya bisa berupa <em>proposal</em> yang harus <strong>disetujui manusia</strong> sebelum menjadi kasus resmi — AI boleh mengusulkan isian, tidak boleh menetapkannya.</p>
+<hr />
+<h2 id="4-perjalanan-satu-booking-langkah-demi-langkah">4. Perjalanan satu booking, langkah demi langkah</h2>
+<p>Bagian ini adalah inti dokumen. Contoh: <strong>Ibu Sari</strong> mengirim pesan 12 Oktober untuk villa 3 kamar di Seminyak, 20–24 November, 6 tamu.</p>
+<p>Setiap langkah ditulis dengan tiga hal: <strong>siapa yang bergerak</strong>, <strong>apa yang dicatat sistem</strong>, dan <strong>apa yang bisa gagal</strong>.</p>
+<h3 id="langkah-1-pertanyaan-masuk-inquiry">Langkah 1 — Pertanyaan masuk (INQUIRY)</h3>
+<ul>
+<li><strong>Siapa:</strong> tamu (lewat situs/kanal) atau staf reservasi.</li>
+<li><strong>Yang dicatat:</strong> kasus baru dengan nomor, sumber (situs/WhatsApp/telepon), isi pesan asli, waktu masuk, dan status <code>INQUIRY</code>.</li>
+<li><strong>Yang bisa gagal:</strong> pesan ganda dari penyedia. Ditangani oleh kunci idempotensi — pesan kedua dengan ID sama tidak membuat kasus baru.</li>
+</ul>
+<h3 id="langkah-2-pertanyaan-disaring-qualified">Langkah 2 — Pertanyaan disaring (QUALIFIED)</h3>
+<ul>
+<li><strong>Siapa:</strong> staf reservasi (dibantu usulan AI).</li>
+<li><strong>Yang dicatat:</strong> tanggal, jumlah tamu, area, anggaran, kebutuhan (bayi/kolam/aksesibilitas). Status naik ke <code>QUALIFIED</code> hanya jika syarat minimum terisi.</li>
+<li><strong>Yang bisa gagal:</strong> tamu belum jelas tanggalnya. Kasus tetap <code>INQUIRY</code>; sistem tidak memaksa menebak.</li>
+</ul>
+<h3 id="langkah-3-cek-ketersediaan-availability_pending-confirmed-unavailable">Langkah 3 — Cek ketersediaan (AVAILABILITY_PENDING → CONFIRMED / UNAVAILABLE)</h3>
+<ul>
+<li><strong>Siapa:</strong> sistem, memakai data ketersediaan yang <strong>bertanggal</strong> (bukan ingatan orang).</li>
+<li><strong>Yang dicatat:</strong> <code>availability_checks</code> + <code>availability_evidence</code> — kapan dicek, dari sumber mana, berlaku sampai kapan.</li>
+<li><strong>Aturan keras:</strong> kalau bukti hilang, terlalu tua, atau pemeriksaan timeout, hasilnya <strong>UNKNOWN</strong> dan status tetap menunggu. Sistem menolak menjawab "tersedia" tanpa bukti.</li>
+<li><strong>Yang bisa gagal:</strong> villa baru saja diambil orang lain. Karena itu hasil cek punya masa berlaku; cek kedaluwarsa tidak boleh dipakai untuk konfirmasi.</li>
+</ul>
+<h3 id="langkah-4-penawaran-harga-quote_drafted-quote_sent">Langkah 4 — Penawaran harga (QUOTE_DRAFTED → QUOTE_SENT)</h3>
+<ul>
+<li><strong>Siapa:</strong> staf reservasi menyusun penawaran; sistem menghitung angka.</li>
+<li><strong>Yang dicatat:</strong> <code>quotes</code> + <code>quotation_snapshots</code>. Harga dihitung dari <strong>rate card</strong> dan <strong>policy</strong> yang berlaku, lalu <strong>disimpan sebagai potret</strong> (snapshot) — bukan tautan ke harga hari ini yang bisa berubah besok.</li>
+<li><strong>Mengapa snapshot:</strong> kalau tarif berubah minggu depan, penawaran yang sudah dikirim tetap bisa dipertanggungjawabkan angkanya.</li>
+<li><strong>Yang bisa gagal:</strong> penawaran kedaluwarsa (<code>QUOTE_EXPIRED</code>). Tamu yang kembali setelah masa berlaku harus diberi penawaran baru.</li>
+</ul>
+<h3 id="langkah-5-menahan-tanggal-tiga-tahap-hold">Langkah 5 — Menahan tanggal (tiga tahap hold)</h3>
+<p>Ini bagian yang paling sering disalahpahami, jadi ditulis terpisah di §5. Ringkasnya:</p>
+<table>
+<thead>
+<tr>
+<th>Bahasa tim</th>
+<th>Arti sebenarnya</th>
+<th>Uang boleh masuk?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Tentative Holding</strong></td>
+<td>Unit diminta ditahan, villa <strong>belum</strong> menjawab</td>
+<td>Tidak</td>
+</tr>
+<tr>
+<td><strong>Request Hold</strong></td>
+<td>Villa <strong>sudah</strong> mengonfirmasi tahan</td>
+<td>Ya, setelah konfirmasi</td>
+</tr>
+<tr>
+<td><strong>Holding Booking Confirmed</strong></td>
+<td>Dana terverifikasi + bukti blok dari villa</td>
+<td>Ya, dan tanggal terkunci</td>
+</tr>
+</tbody>
+</table>
+<h3 id="langkah-6-uang-masuk-payment_pending-deposit_paid-paid_in_full">Langkah 6 — Uang masuk (PAYMENT_PENDING → DEPOSIT_PAID / PAID_IN_FULL)</h3>
+<ul>
+<li><strong>Siapa:</strong> tamu membayar lewat kanal resmi; sistem menerima <strong>bukti</strong> (webhook penyedia atau mutasi yang diunggah).</li>
+<li><strong>Yang dicatat:</strong> <code>payments</code>, <code>payment_events</code>, <code>ledger_entries</code>, <code>invoices</code>, <code>invoice_lines</code>.</li>
+<li><strong>Aturan:</strong> semua nominal adalah <strong>bilangan bulat dalam satuan terkecil</strong> (rupiah utuh, sen untuk USD). Tidak ada pecahan mengambang yang bisa membuat selisih satu sen hilang.</li>
+<li><strong>Yang bisa gagal:</strong> pembayaran masuk tanpa invoice yang cocok → <code>PAYMENT_UNMATCHED</code>. Ini <strong>bukan</strong> error; ini antrean kerja untuk bagian keuangan (§7).</li>
+</ul>
+<h3 id="langkah-7-konfirmasi-booking-confirmed">Langkah 7 — Konfirmasi booking (CONFIRMED)</h3>
+<ul>
+<li><strong>Siapa:</strong> staf reservasi, setelah dana terverifikasi <strong>dan</strong> bukti blok villa diterima.</li>
+<li><strong>Yang dicatat:</strong> transisi status + alasan + bukti, di <code>booking_state_events</code> (jurnal yang tidak bisa dihapus).</li>
+<li><strong>Penting:</strong> "uang sudah masuk" ≠ "villa sudah dikonfirmasi". Status <code>DEPOSIT_PAID</code> berarti uang masuk; status <code>CONFIRMED</code> berarti villa sudah memblokir tanggal. Laporan yang mencampur keduanya akan salah hitung.</li>
+</ul>
+<h3 id="langkah-8-sebelum-tamu-datang-pre_arrival">Langkah 8 — Sebelum tamu datang (PRE_ARRIVAL)</h3>
+<ul>
+<li><strong>Siapa:</strong> tim operasi.</li>
+<li><strong>Yang dicatat:</strong> <code>ops_tasks</code> — kebersihan, check-in, transport, permintaan khusus; masing-masing punya tenggat dan bukti penyelesaian.</li>
+<li><strong>Yang bisa gagal:</strong> tugas lewat tenggat. Sistem menandai SLA terlampaui dan menaikkannya ke antrean perhatian.</li>
+</ul>
+<h3 id="langkah-9-tamu-menginap-in_stay">Langkah 9 — Tamu menginap (IN_STAY)</h3>
+<ul>
+<li><strong>Siapa:</strong> tim operasi.</li>
+<li><strong>Yang dicatat:</strong> insiden (kalau ada), permintaan tambahan, perubahan tanggal (kalau ada), dan bukti penyelesaian.</li>
+<li><strong>Aturan:</strong> keluhan tamu <strong>tidak</strong> mengubah status booking secara otomatis; ia menjadi insiden dengan langkah penanganan sendiri. Dua hal berbeda tidak dicampur.</li>
+</ul>
+<h3 id="langkah-10-selesai-completed-closed">Langkah 10 — Selesai (COMPLETED → CLOSED)</h3>
+<ul>
+<li><strong>Siapa:</strong> tim operasi menutup layanan; keuangan menutup tagihan; sistem menutup kasus.</li>
+<li><strong>Yang dicatat:</strong> ringkasan, bukti, dan status akhir. <code>CLOSED</code> bersifat terminal — tidak ada jalan kembali; koreksi dilakukan dengan kasus baru yang merujuk kasus lama, bukan dengan mengubah sejarah.</li>
+</ul>
+<h3 id="kalau-batal-di-tengah-jalan">Kalau batal di tengah jalan</h3>
+<p>Pembatalan punya jalurnya sendiri: <code>CANCELLATION_REQUESTED → CANCELLATION_REVIEW → CANCELLED → REFUND_PENDING → REFUNDED</code>. Selama masih dalam peninjauan, tanggal <strong>tetap tertahan</strong> — sengaja: lebih baik unit tertahan beberapa jam daripada dua tamu datang ke villa yang sama.</p>
+<hr />
+<h2 id="5-tiga-tahap-hold-dijelaskan-dengan-analogi">5. Tiga tahap hold, dijelaskan dengan analogi</h2>
+<p>Bayangkan kursi di bioskop:</p>
+<ol>
+<li><strong>Tentative Holding</strong> = Anda bilang ke kasir "tolong tahan dulu kursi ini, saya tanya teman saya". Kasir <strong>belum</strong> menekan tombol. Kursi belum resmi milik Anda, dan kasir boleh melepasnya kapan saja.</li>
+<li><strong>Request Hold</strong> = kasir menekan tombol tahan. Kursi terkunci untuk Anda selama beberapa jam, tapi tiket belum dibayar.</li>
+<li><strong>Holding Booking Confirmed</strong> = Anda sudah bayar, tiket tercetak, dan pintu bioskop mencatat kursi itu milik Anda.</li>
+</ol>
+<p>Kesalahan yang mahal: menyebut tahap 3 sebagai "sudah confirmed" padahal yang dimaksud baru "uang masuk". Di sistem ini keduanya <strong>status berbeda</strong>, dan laporan keuangan memakai status uang, sedangkan laporan operasional memakai status blok villa.</p>
+<hr />
+<h2 id="6-alur-uang-dari-penawaran-sampai-setoran-ke-pemilik-villa">6. Alur uang: dari penawaran sampai setoran ke pemilik villa</h2>
+<pre><code>Penawaran (quote, snapshot harga)
+      │  tamu setuju
+      ▼
+Invoice (rincian: malam, pajak, layanan, diskon)
+      │  tamu bayar lewat kanal resmi
+      ▼
+Bukti pembayaran masuk  ──►  Rekonsiliasi: cocokkan nominal + tanggal + referensi
+      │                                   │
+      │ cocok                             │ tidak cocok
+      ▼                                   ▼
+PAID / DEPOSIT_PAID                 PAYMENT_UNMATCHED (antrean keuangan, SLA 48 jam)
+      │
+      ▼
+Kewajiban ke pemilik villa (supplier settlement)
+      │  butuh persetujuan (uang keluar)
+      ▼
+Pembayaran ke pemilik  ──►  bukti transfer dicatat  ──►  selesai
+</code></pre>
+<p>Empat penjaga di jalur uang:</p>
+<ol>
+<li><strong>Tidak ada angka pecahan mengambang.</strong> Semua uang bilangan bulat satuan terkecil.</li>
+<li><strong>Tidak ada tagihan tanpa asal.</strong> Setiap baris invoice harus bisa ditelusuri ke rate card/policy bertanggal atau ke biaya yang disetujui.</li>
+<li><strong>Uang keluar butuh dua tanda tangan.</strong> Refund, payout ke pemilik villa, dan perubahan rekening bank wajib <strong>dua penyetuju berbeda</strong> — dan <strong>pemohon tidak boleh menyetujui permintaannya sendiri</strong>.</li>
+<li><strong>Kurs punya masa berlaku.</strong> Untuk booking dalam USD (Bali) atau IDR (Yogyakarta), konversi memakai kurs harian yang disetujui. Kurs lebih tua dari 48 jam <strong>ditolak</strong> (<code>FX_RATE_STALE</code>), bukan dipakai diam-diam.</li>
+</ol>
+<p><strong>Yang tidak dilakukan sistem:</strong> ia tidak "memindahkan uang". Ia mencatat, mencocokkan, dan meminta persetujuan; eksekusi transfer tetap di rekening bank/penyedia pembayaran.</p>
+<hr />
+<h2 id="7-antrean-yang-harus-dikosongkan-setiap-hari">7. Antrean yang harus dikosongkan setiap hari</h2>
+<p>Sistem ini sengaja menampilkan <strong>pekerjaan yang belum selesai</strong> sebagai antrean, bukan menyembunyikannya di laporan.</p>
+<table>
+<thead>
+<tr>
+<th>Antrean</th>
+<th>Isi</th>
+<th>Kenapa mahal kalau menumpuk</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Approval</strong></td>
+<td>permintaan yang menunggu tanda tangan</td>
+<td>uang keluar tertahan, tamu menunggu refund</td>
+</tr>
+<tr>
+<td><strong>Rekonsiliasi</strong></td>
+<td>pembayaran yang belum cocok dengan invoice</td>
+<td>pemasukan tidak terlihat, tagihan salah kirim</td>
+</tr>
+<tr>
+<td><strong>Hold kedaluwarsa</strong></td>
+<td>tanggal tertahan yang waktunya habis</td>
+<td>villa tidak bisa dijual padahal tidak ada tamu</td>
+</tr>
+<tr>
+<td><strong>SLA kasus</strong></td>
+<td>kasus yang lama tidak bergerak</td>
+<td>tamu kabur ke agensi lain</td>
+</tr>
+<tr>
+<td><strong>SLA tugas</strong></td>
+<td>tugas operasi lewat tenggat</td>
+<td>tamu datang ke villa yang belum siap</td>
+</tr>
+<tr>
+<td><strong>Insiden</strong></td>
+<td>masalah yang belum ditutup</td>
+<td>keluhan berulang, reputasi turun</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Ritme yang disarankan</strong> (dari runbook operasi, sudah disederhanakan):</p>
+<ul>
+<li><strong>Pagi (±30 menit):</strong> cek kesehatan sistem → buka Command Center → kosongkan approval &amp; rekonsiliasi → perbarui kurs harian.</li>
+<li><strong>Sepanjang hari:</strong> heartbeat otomatis tiap 5 menit menagih hold kedaluwarsa, approval lewat waktu, SLA kasus/tugas, dan rekonsiliasi. Manusia hanya perlu menindaklanjuti yang muncul.</li>
+<li><strong>Mingguan:</strong> tinjauan angka (okupansi, margin, pembatalan), pemeriksaan bukti, dan penutupan kasus lama.</li>
+<li><strong>Bulanan:</strong> audit sampel, rotasi kredensial, dan tinjauan policy.</li>
+</ul>
+<hr />
+<h2 id="8-siapa-boleh-apa-enam-peran-dan-dua-belas-halaman">8. Siapa boleh apa: enam peran dan dua belas halaman</h2>
+<p>Dashboard internal punya <strong>6 peran</strong> dan <strong>12 halaman</strong>. Aturannya bukan "sekadar tampilan" — server menolak permintaan yang tidak sesuai peran, dan ini sudah diuji lewat HTTP nyata (72 kombinasi peran × halaman, 0 penyimpangan).</p>
+<table>
+<thead>
+<tr>
+<th>Halaman</th>
+<th>Isi</th>
+<th style="text-align: center;">reservation</th>
+<th style="text-align: center;">finance</th>
+<th style="text-align: center;">operations</th>
+<th style="text-align: center;">owner</th>
+<th style="text-align: center;">auditor</th>
+<th style="text-align: center;">gm</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Command Center</td>
+<td>ringkasan semua antrean</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+</tr>
+<tr>
+<td>Cases</td>
+<td>kasus &amp; pesan tamu</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">–</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+</tr>
+<tr>
+<td>Inventory</td>
+<td>unit &amp; ketersediaan</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">–</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">–</td>
+<td style="text-align: center;">–</td>
+</tr>
+<tr>
+<td>Finance</td>
+<td>invoice, pembayaran, rekonsiliasi</td>
+<td style="text-align: center;">–</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">–</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">–</td>
+<td style="text-align: center;">✓</td>
+</tr>
+<tr>
+<td>Operations</td>
+<td>tugas &amp; insiden</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">–</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">–</td>
+<td style="text-align: center;">–</td>
+</tr>
+<tr>
+<td>Approvals</td>
+<td>antrean persetujuan</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+</tr>
+<tr>
+<td>Properties</td>
+<td>data villa &amp; kontrak</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">–</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+</tr>
+<tr>
+<td>Marketing</td>
+<td>katalog &amp; inquiry situs</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">–</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">–</td>
+<td style="text-align: center;">–</td>
+</tr>
+<tr>
+<td>Channels</td>
+<td>kanal pesan &amp; pengiriman</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">–</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">–</td>
+</tr>
+<tr>
+<td>Shadow Eval</td>
+<td>perbandingan keputusan AI vs manusia</td>
+<td style="text-align: center;">–</td>
+<td style="text-align: center;">–</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">–</td>
+</tr>
+<tr>
+<td>Outbox</td>
+<td>pesan keluar &amp; status kirim</td>
+<td style="text-align: center;">–</td>
+<td style="text-align: center;">–</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">–</td>
+</tr>
+<tr>
+<td>Audit</td>
+<td>jejak audit (baca saja)</td>
+<td style="text-align: center;">–</td>
+<td style="text-align: center;">–</td>
+<td style="text-align: center;">–</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">✓</td>
+<td style="text-align: center;">–</td>
+</tr>
+</tbody>
+</table>
+<p>Dua aturan tambahan yang tidak terlihat di tabel:</p>
+<ul>
+<li><strong>Pemohon ≠ penyetuju.</strong> Orang yang mengajukan refund tidak boleh menjadi salah satu penandatangannya.</li>
+<li><strong>Uang keluar = dua orang.</strong> Refund, payout, dan perubahan rekening butuh dua persetujuan berbeda; sistem menolak permintaan yang hanya meminta satu.</li>
+</ul>
+<p><strong>Cara masuk (sejak 29 Oktober 2026):</strong> ada dua jenis kredensial — <em>token mesin</em> untuk skrip/cron, dan <em>sesi operator</em> untuk manusia. Sesi operator menyebut <strong>siapa</strong> yang masuk, berlaku 30 menit tanpa aktivitas (maksimal 12 jam), dan bisa dicabut seketika. Peran owner, finance, dan GM wajib kode TOTP saat membuka sesi. Panduan langkahnya: <code>docs/security/SESSION_AUTH.md</code>.</p>
+<hr />
+<h2 id="9-peran-ai-apa-yang-boleh-dan-tidak-boleh">9. Peran AI: apa yang boleh dan tidak boleh</h2>
+<p>AI di sistem ini bekerja seperti <strong>asisten yang sangat cepat membaca, tetapi tidak memegang kasir</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Boleh</th>
+<th>Tidak boleh</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Merangkum percakapan tamu</td>
+<td>Menghitung harga atau mengubah nominal</td>
+</tr>
+<tr>
+<td>Mengusulkan isian intake (tanggal, jumlah tamu) — untuk disetujui manusia</td>
+<td>Menetapkan ketersediaan villa</td>
+</tr>
+<tr>
+<td>Menyusun draft balasan dari template + fakta ber-ID</td>
+<td>Mengubah status booking</td>
+</tr>
+<tr>
+<td>Menandai kasus yang perlu perhatian</td>
+<td>Menyetujui uang keluar</td>
+</tr>
+<tr>
+<td>Menjawab pertanyaan berdasarkan dokumen yang ada</td>
+<td>Mengarang fakta yang tidak ada di sistem</td>
+</tr>
+</tbody>
+</table>
+<p>Tiga pengaman:</p>
+<ol>
+<li><strong>Daftar larangan (deny registry) berasal dari policy</strong>, bukan dari percakapan. Instruksi dalam chat tidak pernah menambah kewenangan AI.</li>
+<li><strong>Kewenangan datang dari identitas &amp; alat yang terdaftar</strong>, bukan dari teks permintaan. Kalimat "anggap saya owner" tidak mengubah apa pun.</li>
+<li><strong>Setiap keputusan AI punya jejak</strong>: apa yang diusulkan, apa yang diputuskan manusia, dan apakah keduanya berbeda (halaman <em>Shadow Eval</em>).</li>
+</ol>
+<hr />
+<h2 id="10-bukti-mengapa-setiap-tindakan-meninggalkan-jejak">10. Bukti: mengapa setiap tindakan meninggalkan jejak</h2>
+<p>Prinsipnya satu: <strong>kalau tidak ada bukti di sistem, tindakan itu belum selesai.</strong></p>
+<table>
+<thead>
+<tr>
+<th>Jenis bukti</th>
+<th>Isi</th>
+<th>Sifat</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Jurnal status booking</td>
+<td>dari status apa ke apa, oleh siapa, kapan, alasan</td>
+<td>tidak bisa diubah/dihapus</td>
+</tr>
+<tr>
+<td>Jurnal audit</td>
+<td>setiap aksi penting, dirantai dengan hash</td>
+<td>bila satu baris diubah, rantai putus dan terdeteksi</td>
+</tr>
+<tr>
+<td>Bukti ketersediaan</td>
+<td>sumber, waktu cek, masa berlaku</td>
+<td>kedaluwarsa = tidak dipakai</td>
+</tr>
+<tr>
+<td>Bukti pembayaran</td>
+<td>referensi, nominal, tanggal, pencocokan</td>
+<td>harus cocok dengan invoice</td>
+</tr>
+<tr>
+<td>Bukti persetujuan</td>
+<td>siapa menyetujui, atas payload apa</td>
+<td>status diturunkan dari keputusan, bukan dari kolom</td>
+</tr>
+<tr>
+<td>Idempotency key</td>
+<td>kunci unik per perintah</td>
+<td>perintah ganda tidak menggandakan efek</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Analogi:</strong> ini seperti buku kas yang setiap halamannya diberi nomor seri dan stempel waktu. Bisa saja seseorang memotret halaman lalu mengubah fotonya, tetapi buku aslinya akan langsung terlihat tidak nyambung.</p>
+<hr />
+<h2 id="11-kalau-ada-yang-salah-perilaku-sistem-saat-gagal">11. Kalau ada yang salah: perilaku sistem saat gagal</h2>
+<p>Sistem ini memilih <strong>berhenti dan bertanya</strong> daripada melanjutkan dengan tebakan.</p>
+<table>
+<thead>
+<tr>
+<th>Situasi</th>
+<th>Perilaku</th>
+<th>Yang harus dilakukan manusia</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Data ketersediaan hilang/basi</td>
+<td>status <code>UNKNOWN</code>, tidak bisa konfirmasi</td>
+<td>cek ulang ke villa, unggah bukti baru</td>
+</tr>
+<tr>
+<td>Pembayaran tidak cocok</td>
+<td><code>PAYMENT_UNMATCHED</code></td>
+<td>cocokkan manual, jangan paksa "sudah bayar"</td>
+</tr>
+<tr>
+<td>Kurs lebih tua dari 48 jam</td>
+<td>transaksi konversi ditolak</td>
+<td>perbarui kurs dengan persetujuan owner</td>
+</tr>
+<tr>
+<td>Dua permintaan menyentuh tanggal sama</td>
+<td>yang kedua ditolak oleh penguncian database</td>
+<td>tawarkan alternatif/unit lain</td>
+</tr>
+<tr>
+<td>Pesan terkirim dua kali</td>
+<td>yang kedua diabaikan (idempotensi)</td>
+<td>tidak perlu tindakan</td>
+</tr>
+<tr>
+<td>Antrean pesan keluar gagal kirim</td>
+<td>dicoba ulang, lalu ditandai gagal</td>
+<td>periksa kanal, kirim ulang dari Outbox</td>
+</tr>
+<tr>
+<td>Rantai audit tidak valid</td>
+<td>sistem melaporkan CRITICAL dan berhenti mempercayai laporan</td>
+<td>hentikan perubahan, panggil penanggung jawab teknis</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Bukan</strong> perilaku sistem: menebak, "kira-kira tersedia", memakai kurs lama, atau menandai lunas tanpa bukti.</p>
+<hr />
+<h2 id="12-satu-hari-di-agensi-cerita-utuh">12. Satu hari di agensi: cerita utuh</h2>
+<p><strong>07:50</strong> — Staf operasi membuka Command Center. Tiga approval menunggu, satu invoice lewat jatuh tempo, dua hold akan kedaluwarsa siang ini.</p>
+<p><strong>08:10</strong> — Kasus Bu Sari (Seminyak, 20–24 Nov) masuk dari situs. Intake mengusulkan tanggal dan jumlah tamu; staf reservasi menyetujui usulan itu (bukan AI yang menetapkan).</p>
+<p><strong>08:25</strong> — Sistem mengecek ketersediaan. Bukti dari villa berumur 3 jam → masih berlaku → <code>AVAILABILITY_CONFIRMED</code>.</p>
+<p><strong>08:40</strong> — Penawaran dihitung dari rate card November dan dikirim. Angkanya tersimpan sebagai snapshot.</p>
+<p><strong>11:05</strong> — Tamu setuju. Hold diminta; villa mengonfirmasi tahan pukul 11:20. Status <code>HOLD_ACTIVE</code>.</p>
+<p><strong>13:30</strong> — Transfer DP masuk. Keuangan mencocokkan dengan invoice: nominal dan referensi cocok → <code>DEPOSIT_PAID</code>.</p>
+<p><strong>14:00</strong> — Bukti blok dari villa diterima → <code>CONFIRMED</code>. Tanggal kini terkunci; tidak ada agensi lain yang bisa menjual unit itu.</p>
+<p><strong>Sore</strong> — Tiga tugas pra-kedatangan dibuat: kebersihan, check-in, transport. Masing-masing bertenggat dan menunggu bukti.</p>
+<p><strong>Malam</strong> — Pemilik villa mengajukan payout. Sistem menuntut dua persetujuan; pemohon tidak bisa menyetujui sendiri. Owner menyetujui, finance manager menyetujui, baru transfer dicatat.</p>
+<p>Semua langkah di atas bisa ditelusuri ulang minggu depan, bulan depan, atau saat audit — dari satu nomor kasus.</p>
+<hr />
+<h2 id="13-peta-teknis-singkat-untuk-yang-ingin-melihat-isi-mesin">13. Peta teknis singkat (untuk yang ingin melihat isi mesin)</h2>
+<table>
+<thead>
+<tr>
+<th>Bagian</th>
+<th>Isi</th>
+<th>Angka</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Modul inti</td>
+<td><code>src/*.py</code></td>
+<td>57 modul</td>
+</tr>
+<tr>
+<td>Tabel database</td>
+<td><code>src/schema/001_initial.sql</code> + migrasi</td>
+<td>72 tabel di skema awal; 73 di database berjalan</td>
+</tr>
+<tr>
+<td>Status booking</td>
+<td>state machine tunggal</td>
+<td>32 status, 116 transisi sah dari 1.024 pasangan</td>
+</tr>
+<tr>
+<td>Halaman dashboard</td>
+<td><code>PAGE_ROLES</code></td>
+<td>12 halaman, 6 peran</td>
+</tr>
+<tr>
+<td>Rute situs publik</td>
+<td><code>marketing_site.py</code></td>
+<td>7: beranda, katalog, detail villa, destinasi Bali, destinasi Yogyakarta, pemilik, inquiry</td>
+</tr>
+<tr>
+<td>Tes otomatis</td>
+<td><code>tests/</code></td>
+<td>3.802 tes (lihat <code>make check</code>)</td>
+</tr>
+<tr>
+<td>Bahasa</td>
+<td>Python stdlib-only</td>
+<td>tanpa dependensi eksternal di <code>src/</code></td>
+</tr>
+</tbody>
+</table>
+<p>Arsitektur satu arah: <strong>situs publik → kasus → reservasi → uang → operasi → bukti</strong>, dengan satu penulis per tabel dan satu jurnal audit.</p>
+<hr />
+<h2 id="14-batas-hari-ini-jujur-bukan-jualan">14. Batas hari ini (jujur, bukan jualan)</h2>
+<table>
+<thead>
+<tr>
+<th>Sudah jalan</th>
+<th>Belum</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Kernel reservasi, uang, dokumen, kanal, bukti</td>
+<td>Login berlapis untuk dashboard yang dibuka ke internet (kata sandi + TOTP untuk semua peran)</td>
+</tr>
+<tr>
+<td>Situs publik 7 rute (loopback, di belakang proxy)</td>
+<td><code>robots.txt</code> &amp; <code>sitemap.xml</code> (SEO)</td>
+</tr>
+<tr>
+<td>Sesi operator + MFA untuk owner/finance/GM</td>
+<td>Uji penetrasi eksternal independen</td>
+</tr>
+<tr>
+<td>Rekonsiliasi, approval dual-control, audit hash-chain</td>
+<td>Integrasi payment gateway produksi (tergantung penyedia per agensi)</td>
+</tr>
+<tr>
+<td>3.802 tes otomatis + pre-deploy gate</td>
+<td>Rotasi kredensial terjadwal otomatis (saat ini dijalankan manual tiap 90 hari)</td>
+</tr>
+</tbody>
+</table>
+<p>Cara membaca tabel ini: kolom kiri adalah yang <strong>sudah dibuktikan dengan tes/uji nyata</strong>; kolom kanan adalah pekerjaan yang diketahui dan <strong>tidak disembunyikan</strong>.</p>
+<hr />
+<h2 id="15-glosarium">15. Glosarium</h2>
+<table>
+<thead>
+<tr>
+<th>Istilah</th>
+<th>Arti sederhana</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Kasus (case)</strong></td>
+<td>Satu percakapan/permintaan tamu, dari pertanyaan sampai selesai</td>
+</tr>
+<tr>
+<td><strong>Hold</strong></td>
+<td>Tanggal ditahan sementara agar tidak dijual ke orang lain</td>
+</tr>
+<tr>
+<td><strong>Quote</strong></td>
+<td>Penawaran harga resmi, disimpan sebagai potret</td>
+</tr>
+<tr>
+<td><strong>Invoice</strong></td>
+<td>Tagihan rinci yang harus dibayar tamu</td>
+</tr>
+<tr>
+<td><strong>Rekonsiliasi</strong></td>
+<td>Mencocokkan uang yang masuk dengan tagihan yang dikirim</td>
+</tr>
+<tr>
+<td><strong>Settlement</strong></td>
+<td>Pembayaran dari agensi ke pemilik villa</td>
+</tr>
+<tr>
+<td><strong>Approval</strong></td>
+<td>Persetujuan manusia sebelum aksi berisiko (uang keluar, refund, ganti rekening)</td>
+</tr>
+<tr>
+<td><strong>Fail-closed</strong></td>
+<td>Kalau ragu, tolak/berhenti — bukan lanjut dengan tebakan</td>
+</tr>
+<tr>
+<td><strong>Idempoten</strong></td>
+<td>Perintah yang sama dijalankan dua kali tetap memberi hasil satu kali</td>
+</tr>
+<tr>
+<td><strong>Snapshot</strong></td>
+<td>Salinan nilai pada saat itu, tidak ikut berubah bila sumber berubah</td>
+</tr>
+<tr>
+<td><strong>Audit chain</strong></td>
+<td>Jurnal yang setiap barisnya dikunci dengan hash baris sebelumnya</td>
+</tr>
+<tr>
+<td><strong>Shadow Eval</strong></td>
+<td>Membandingkan usulan AI dengan keputusan manusia, untuk mengukur kualitas AI</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="16-satu-halaman-ringkasan-untuk-dinding-kantor">16. Satu halaman ringkasan untuk dinding kantor</h2>
+<ol>
+<li><strong>Tanggal</strong> hanya bisa dikunci lewat hold yang dikonfirmasi villa.</li>
+<li><strong>Uang</strong> selalu bilangan bulat; tidak ada tagihan tanpa asal.</li>
+<li><strong>Uang keluar</strong> butuh dua tanda tangan; pemohon tidak boleh menyetujui sendiri.</li>
+<li><strong>Status</strong> hanya berubah lewat perintah tervalidasi — bukan karena chat.</li>
+<li><strong>Data hilang/basi</strong> = <code>UNKNOWN</code>, bukan "tersedia".</li>
+<li><strong>AI</strong> menyusun kalimat, bukan angka/status/kepastian.</li>
+<li><strong>Setiap tindakan</strong> meninggalkan bukti yang tidak bisa dihapus.</li>
+<li><strong>Kalau ragu</strong>, berhenti dan tanya — sistem dirancang untuk itu.</li>
+</ol>
+</div></body></html>
