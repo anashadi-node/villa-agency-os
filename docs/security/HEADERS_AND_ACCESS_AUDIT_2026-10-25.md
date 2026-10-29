@@ -11,7 +11,7 @@
 | # | Temuan | Tingkat | Status setelah audit |
 |---|---|---|---|
 | F1 | **HSTS tidak ada** di kedua contoh konfigurasi nginx | sedang | **diperbaiki** di `docs/DEPLOYMENT.md` §4.1/§4.2 |
-| F2 | **`identity.py` (MFA wajib untuk owner/finance/gm) tidak diimpor siapa pun**; permukaan nyata memakai token bearer statis tanpa MFA dan tanpa kedaluwarsa | sedang | dicatat sebagai utang go-live (§6) |
+| F2 | **`identity.py` (MFA wajib untuk owner/finance/gm) tidak diimpor siapa pun**; permukaan nyata memakai token bearer statis tanpa MFA dan tanpa kedaluwarsa | sedang | **diperbaiki (A+B)**: sesi operator per orang + TTL + pencabutan + audit; token mesin tetap, dengan jadwal rotasi 90 hari — sisa risiko di §6 F2 |
 | F3 | `Permissions-Policy`, `COOP`, `CORP` tidak dikirim | rendah | diterima; CSP sudah menutup skrip dan framing |
 | F4 | Halaman form `/inquiry` di-cache publik 300 s | rendah | diterima; diverifikasi tidak ada token/data per pengguna di halaman itu |
 | F5 | `/robots.txt` dan `/sitemap.xml` → 404 | rendah (SEO, bukan keamanan) | dicatat |
@@ -169,17 +169,36 @@ HSTS **tidak** bisa dipasang di aplikasi: upstream berjalan HTTP, dan header HST
 
 ### F2 — Kebijakan MFA tidak tersambung ke permukaan yang berjalan (sedang)
 
-`src/identity.py` menyatakan “MFA wajib untuk OWNER dan FINANCE”, mendefinisikan `MFA_REQUIRED_ROLES`, sesi, dan faktor kedua. Namun:
+`src/identity.py` menyatakan “MFA wajib untuk OWNER dan FINANCE”, mendefinisikan `MFA_REQUIRED_ROLES`, sesi, dan faktor kedua. Saat audit itu **tidak dipakai** oleh kode mana pun:
 
 ```
-grep -rn "import identity" src/ scripts/   → 0 hasil
+grep -rn "import identity" src/ scripts/   → 0 hasil (saat audit)
 ```
 
-Dashboard tidak memakai modul itu. Autentikasinya adalah token bearer statis per peran (`secrets.token_urlsafe(24)` = 192 bit, dibandingkan dengan `secrets.compare_digest`), tanpa login, tanpa MFA, tanpa kedaluwarsa, tanpa pencabutan per pengguna.
+**Perbaikan (A+B, 2026-10-29):**
 
-Dampak sekarang **terkendali**: dashboard hanya loopback, di belakang proxy dengan `allow`/`deny` kantor/VPN, dan token 192 bit tidak bisa ditebak. Dampaknya berubah menjadi tinggi bila dashboard dipakai dari internet atau bila jumlah operator bertambah dan token harus dibagikan.
+- `dashboard.py` sekarang menerima **sesi operator** di samping token mesin. Token sesi
+  diselesaikan oleh `identity.SessionService`: identitas dan peran dibaca dari baris sesi,
+  bukan dari header. Peran kanonik dipetakan ke enam peran halaman lewat
+  `PAGE_ROLE_BY_CANONICAL`; peran tanpa halaman (`system_admin`) **ditolak**, tidak diperluas.
+- `scripts/session_token.py` menjadi alat resmi: `enroll`, `confirm`, `login`, `list`,
+  `revoke`, `rotate`. Login menulis `auth_events` (LOGIN/ACCESS_DENIED/SESSION_REFUSED).
+- Batas waktu berlaku: idle 30 menit, absolut 12 jam (dari `identity`), dan pencabutan
+  berlaku pada permintaan berikutnya (diuji: 401 seketika).
+- Token mesin statis tetap ada untuk cron/integrasi, kini dengan **jadwal rotasi 90 hari**
+  yang ditulis di `docs/security/SESSION_AUTH.md` §4.
 
-Rekomendasi (belum dikerjakan, sengaja): sambungkan `identity.py` ke dashboard (login + MFA untuk owner/finance/gm + sesi berumur pendek), atau nyatakan tertulis bahwa token adalah kredensial mesin, bukan manusia — dan rotasi 90 hari.
+Bukti: `tests/test_dashboard_sessions.py` — 11 tes (pemetaan peran, MFA wajib untuk owner,
+sesi dicabut, idle, absolut, peran tanpa halaman, token statis tetap jalan, token asing,
+jejak `auth_events`). Uji HTTP nyata: sesi owner → `/finance` 200, sesi auditor → `/audit` 200
+dan `/finance` 403, setelah `revoke` → 401.
+
+**Sisa risiko yang tidak disembunyikan:** platform tidak punya faktor kata sandi. Sesi dibuka
+dengan menyatakan identitas + kode TOTP; siapa pun yang bisa menjalankan CLI sudah bisa membaca
+database. Yang ditambahkan adalah akuntabilitas, kedaluwarsa, dan pencabutan — bukan pertahanan
+terhadap penyerang lokal. Dashboard tetap hanya untuk loopback/VPN. Bila kelak dibuka ke
+internet, login berlapis (kata sandi + TOTP untuk **semua** peran) menjadi syarat baru, bukan
+peningkatan opsional.
 
 ### F3 — `Permissions-Policy` / `COOP` / `CORP` tidak ada (rendah)
 

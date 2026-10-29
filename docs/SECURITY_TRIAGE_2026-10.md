@@ -199,7 +199,9 @@ keluar (channel/connector). Artinya:
 1. Kompromi dashboard/DB = bahan mentah phishing bermutu tinggi, bukan sekadar "data bocor".
 2. Pengambilalihan kanal keluar = pesan penipuan dikirim dari nomor/akun agensi sendiri —
    reputasi yang sulit dipulihkan.
-3. Kontrol yang sudah ada dan harus tetap hidup: MFA dashboard (ADR-0005), audit hash-chain,
+3. Kontrol yang sudah ada dan harus tetap hidup: MFA dashboard (ADR-0005 — kini tersambung
+   lewat sesi operator: owner/finance/gm wajib kode TOTP, sesi idle 30 menit / absolut 12 jam,
+   dapat dicabut), audit hash-chain,
    scoping `agency_id`, allowlist unggahan, redaksi PII di log.
 4. Aturan produk yang layak ditambahkan: **tidak pernah** meminta data kartu lewat tautan;
    tautan "verifikasi" selalu membawa token sekali-pakai dan domain tetap.

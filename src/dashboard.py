@@ -43,6 +43,7 @@ import html
 import json
 import re
 import secrets
+import sqlite3
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -54,6 +55,8 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 import anchors as anchors_module
 import gates as gates_module
+import identity as identity_module
+import roles as roles_module
 import shadow_eval as shadow_eval_module
 from approvals import (
     MIN_IDEMPOTENCY_KEY_LENGTH,
@@ -137,6 +140,23 @@ APPROVAL_ROLE_BY_ROLE: Mapping[str, str] = MappingProxyType(
         "finance": "finance_manager",
         "owner": "owner",
         "gm": "gm",
+    }
+)
+
+#: The inverse: a session carries a canonical role (ADR-0035), and the dashboard
+#: needs the page role before it can ask ``PAGE_ROLES`` anything. One canonical
+#: authority maps to exactly one page set — ``auditor`` is here because the page
+#: role exists even though it never approves anything. Canonical roles with no
+#: page set (``system_admin``, ``commercial_manager``, …) get **no** dashboard
+#: access rather than a guess.
+PAGE_ROLE_BY_CANONICAL: Mapping[str, str] = MappingProxyType(
+    {
+        "owner": "owner",
+        "gm": "gm",
+        "finance_manager": "finance",
+        "reservation_manager": "operations",
+        "reservation_agent": "reservation",
+        "auditor": "auditor",
     }
 )
 
@@ -978,6 +998,7 @@ class Dashboard:
         approvals: Optional[ApprovalService] = None,
         enforce_append_only: bool = True,
         agency_id: str = "agency_default",
+        sessions: Optional[Any] = None,
     ) -> None:
         if clock is None or not hasattr(clock, "now"):
             raise InvalidInput("clock wajib disuntik (Clock/FrozenClock)")
@@ -1001,6 +1022,13 @@ class Dashboard:
         self.page_roles = {name: tuple(roles) for name, roles in (page_roles or PAGE_ROLES).items()}
         self.tokens = _token_registry(self.actor, self.actor_role, tokens, self.agency_id)
         self.token_by_role = _invert_tokens(self.tokens)
+        # Sessions minted by ``scripts/session_token.py`` (ADR-0005) are accepted
+        # beside the static machine tokens. The service is built on first use so a
+        # database without the auth tables (older fixtures) still opens, and the
+        # app keeps its read-only character for token callers: only a *session*
+        # token touches the row that records last-seen.
+        self._sessions_given = sessions
+        self._sessions: Optional[Any] = sessions
         # The approval queue is the only writer this app ever talks to; building
         # it fails closed when the audit guards are missing.
         self.approvals = (
@@ -1044,6 +1072,36 @@ class Dashboard:
     def token_for_role(self, role: str) -> Optional[str]:
         return self.token_by_role.get(_validate_role(role))
 
+    def _session_service(self) -> Any:
+        if self._sessions is None:
+            self._sessions = identity_module.SessionService(
+                self.conn, clock=self.clock, agency_id=self.agency_id
+            )
+        return self._sessions
+
+    def _principal_from_session(self, candidate: str) -> Optional[Principal]:
+        """A live session token → the page role its canonical role maps to.
+
+        Refusals are the identity module's job (expired, revoked, MFA missing)
+        and it writes the evidence row itself; here they all collapse to "not a
+        usable token" so the response stays a plain 401. A canonical role with no
+        page set (``system_admin``) is refused rather than widened.
+        """
+        try:
+            session = self._session_service().authenticate(candidate)
+        except identity_module.IdentityError:
+            return None
+        except sqlite3.OperationalError:
+            # Fixture without the auth tables: no session can exist there.
+            return None
+        canonical = roles_module.canonical_role(session.role)
+        page_role = PAGE_ROLE_BY_CANONICAL.get(canonical or "")
+        if page_role is None or session.agency_id != self.agency_id:
+            return None
+        return Principal(
+            identity=session.identity, role=page_role, agency_id=session.agency_id
+        )
+
     def authenticate(self, headers: Any) -> Principal:
         """Identity **and** role come from the token; nothing else is trusted."""
         supplied = headers.get("X-Dashboard-Token") or _bearer(headers.get("Authorization"))
@@ -1053,6 +1111,9 @@ class Dashboard:
         for token, principal in self.tokens.items():
             if secrets.compare_digest(token, candidate):
                 return principal
+        principal = self._principal_from_session(candidate)
+        if principal is not None:
+            return principal
         raise Unauthenticated("token dashboard tidak dikenal")
 
     def page_allowed(self, page: str, role: str) -> bool:

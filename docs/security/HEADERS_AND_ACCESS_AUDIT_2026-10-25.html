@@ -1,59 +1,77 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="id"><head><meta charset="utf-8">
-<title>HEADERS_AND_ACCESS_AUDIT_2026-10-25</title>
-<style>
-@page { size: A4; margin: 18mm 16mm 16mm; }
-body { font-family: "DejaVu Sans", Arial, sans-serif; font-size: 10.5pt; line-height: 1.5; color: #111; }
-h1 { font-size: 20pt; border-bottom: 2px solid #111; padding-bottom: 4mm; margin-bottom: 6mm; }
-h2 { font-size: 14pt; margin-top: 8mm; border-bottom: 1px solid #bbb; padding-bottom: 1.5mm; page-break-after: avoid; }
-h3 { font-size: 11.5pt; margin-top: 6mm; color: #1a3d6d; page-break-after: avoid; }
-table { border-collapse: collapse; width: 100%; margin: 3mm 0; font-size: 9pt; page-break-inside: avoid; }
-th, td { border: 1px solid #999; padding: 1.6mm 2mm; vertical-align: top; text-align: left; }
-th { background: #eee; }
-code { background: #f4f4f4; padding: 0 1mm; font-family: "DejaVu Sans Mono", monospace; font-size: 9pt; }
-pre { background: #f7f7f7; border-left: 3px solid #999; padding: 3mm; font-size: 8.5pt; white-space: pre-wrap; page-break-inside: avoid; }
-blockquote { margin: 3mm 0; padding: 2mm 4mm; border-left: 3px solid #1a3d6d; background: #f6f8fb; }
-nav.toc { page-break-after: always; }
-nav.toc h2 { border: none; }
-nav.toc ol { list-style: none; padding-left: 0; }
-nav.toc li.lvl2 { padding-left: 5mm; font-size: 9.5pt; }
-nav.toc li.lvl3 { padding-left: 10mm; font-size: 9pt; color: #444; }
-nav.toc a { color: #111; text-decoration: none; }
-li { margin-bottom: 1mm; }
+<title>Audit Header Keamanan & Matriks Akses per Peran</title><style>
+@page { size: A4; margin: 18mm 14mm 16mm; }
+* { box-sizing: border-box; }
+body { font-family: "DejaVu Sans", Arial, sans-serif; font-size: 9.6pt; line-height: 1.45;
+       color: #1b1b1b; margin: 0; }
+.wrap { max-width: 100%; }
+h1 { font-size: 19pt; margin: 0 0 4mm; color: #0f2a44; border-bottom: 2px solid #0f2a44;
+     padding-bottom: 2mm; }
+h2 { font-size: 13pt; margin: 7mm 0 2mm; color: #0f2a44; page-break-after: avoid; }
+h3 { font-size: 10.8pt; margin: 5mm 0 1.5mm; color: #14395c; page-break-after: avoid; }
+p, li { margin: 1.2mm 0; }
+ul, ol { margin: 1.5mm 0 2mm 5mm; padding-left: 4mm; }
+table { border-collapse: collapse; width: 100%; margin: 2mm 0 3mm; font-size: 8.2pt;
+        page-break-inside: auto; }
+th, td { border: 0.4pt solid #9aa7b4; padding: 1.1mm 1.4mm; text-align: left;
+         vertical-align: top; }
+th { background: #eef3f8; font-weight: 600; }
+tr { page-break-inside: avoid; }
+code { font-family: "DejaVu Sans Mono", monospace; font-size: 8.4pt; background: #f3f4f6;
+       padding: 0 0.6mm; border-radius: 1mm; }
+pre { background: #f6f7f9; border-left: 2.5pt solid #0f2a44; padding: 2mm 3mm; overflow-wrap: anywhere;
+      white-space: pre-wrap; page-break-inside: avoid; }
+pre code { background: none; padding: 0; }
+blockquote { margin: 2mm 0; padding: 1.5mm 3mm; border-left: 2.5pt solid #c9a227;
+             background: #fdf9ec; }
+hr { border: none; border-top: 0.5pt solid #c5ccd4; margin: 5mm 0; }
+a { color: #14395c; text-decoration: none; }
+.toc { background: #f7f9fb; border: 0.5pt solid #d5dde5; padding: 3mm 4mm; margin: 0 0 6mm; }
+.toc-title { font-weight: 700; margin-bottom: 1.5mm; color: #0f2a44; }
+.toc ul { list-style: none; margin: 0; padding-left: 3mm; }
+.toc > ul { padding-left: 0; }
+.toc li { margin: 0.6mm 0; font-size: 8.8pt; }
+.toc .toctitle { display: none; }
+.hero .sub { color: #55636f; font-size: 8.6pt; margin: -2mm 0 6mm; }
 </style></head>
-<body>
-<nav class="toc"><h2>Daftar Isi</h2><ol><li class="lvl1"><a href="#audit-header-keamanan-matriks-akses-per-peran">Audit Header Keamanan & Matriks Akses per Peran</a></li>
-<li class="lvl2"><a href="#0-ringkasan">0. Ringkasan</a></li>
-<li class="lvl2"><a href="#1-cara-mengulang-audit-ini">1. Cara mengulang audit ini</a></li>
-<li class="lvl1"><a href="#1-salinan-db-jangan-pernah-memakai-datavilladb-untuk-pengujian">1. Salinan DB — jangan pernah memakai data/villa.db untuk pengujian</a></li>
-<li class="lvl1"><a href="#2-jalankan-kedua-permukaan-di-loopback">2. Jalankan kedua permukaan di loopback</a></li>
-<li class="lvl1"><a href="#3-header">3. Header</a></li>
-<li class="lvl1"><a href="#4-matriks-6-peran-×-12-rute-ditambah-kontrol-negatif">4. Matriks: 6 peran × 12 rute, ditambah kontrol negatif</a></li>
-<li class="lvl2"><a href="#2-header-yang-diamati-permintaan-nyata">2. Header yang diamati (permintaan nyata)</a></li>
-<li class="lvl3"><a href="#21-situs-publik-get-200">2.1 Situs publik — GET / → 200</a></li>
-<li class="lvl3"><a href="#22-dashboard-get">2.2 Dashboard — GET /</a></li>
-<li class="lvl2"><a href="#3-kontrol-negatif-dijalankan-untuk-keenam-peran">3. Kontrol negatif (dijalankan untuk keenam peran)</a></li>
-<li class="lvl2"><a href="#4-matriks-akses-halaman-status-http-nyata">4. Matriks akses halaman (status HTTP nyata)</a></li>
-<li class="lvl2"><a href="#5-matriks-kapabilitas-dari-srcrolespy-satu-sumber">5. Matriks kapabilitas (dari src/roles.py, satu sumber)</a></li>
-<li class="lvl3"><a href="#51-siapa-memegang-kapabilitas-apa">5.1 Siapa memegang kapabilitas apa</a></li>
-<li class="lvl3"><a href="#52-tangga-persetujuan-pemisahan-tugas">5.2 Tangga persetujuan & pemisahan tugas</a></li>
-<li class="lvl2"><a href="#6-temuan-terperinci">6. Temuan terperinci</a></li>
-<li class="lvl3"><a href="#f1-hsts-tidak-ada-sedang-sudah-diperbaiki">F1 — HSTS tidak ada (sedang) · sudah diperbaiki</a></li>
-<li class="lvl3"><a href="#f2-kebijakan-mfa-tidak-tersambung-ke-permukaan-yang-berjalan-sedang">F2 — Kebijakan MFA tidak tersambung ke permukaan yang berjalan (sedang)</a></li>
-<li class="lvl3"><a href="#f3-permissions-policy-coop-corp-tidak-ada-rendah">F3 — Permissions-Policy / COOP / CORP tidak ada (rendah)</a></li>
-<li class="lvl3"><a href="#f4-halaman-form-di-cache-publik-rendah">F4 — Halaman form di-cache publik (rendah)</a></li>
-<li class="lvl3"><a href="#f5-robotstxt-dan-sitemapxml-404-rendah-seo">F5 — robots.txt dan sitemap.xml 404 (rendah, SEO)</a></li>
-<li class="lvl3"><a href="#f6-yang-sudah-baik-jangan-diubah-tanpa-alasan">F6 — Yang sudah baik (jangan diubah tanpa alasan)</a></li>
-<li class="lvl2"><a href="#7-batas-audit-ini-jujur">7. Batas audit ini (jujur)</a></li>
-<li class="lvl2"><a href="#lampiran-a-scriptsaccess_matrix_probepy">Lampiran A — scripts/access_matrix_probe.py</a></li></ol></nav>
-<h1 id="audit-header-keamanan-matriks-akses-per-peran">Audit Header Keamanan & Matriks Akses per Peran</h1>
-
+<body><div class="wrap">
+<div class="toc"><div class="toc-title">Daftar Isi</div><div class="toc">
+<ul>
+<li><a href="#0-ringkasan">0. Ringkasan</a></li>
+<li><a href="#1-cara-mengulang-audit-ini">1. Cara mengulang audit ini</a></li>
+<li><a href="#2-header-yang-diamati-permintaan-nyata">2. Header yang diamati (permintaan nyata)</a><ul>
+<li><a href="#21-situs-publik-get-200">2.1 Situs publik — GET / → 200</a></li>
+<li><a href="#22-dashboard-get">2.2 Dashboard — GET /</a></li>
+</ul>
+</li>
+<li><a href="#3-kontrol-negatif-dijalankan-untuk-keenam-peran">3. Kontrol negatif (dijalankan untuk keenam peran)</a></li>
+<li><a href="#4-matriks-akses-halaman-status-http-nyata">4. Matriks akses halaman (status HTTP nyata)</a></li>
+<li><a href="#5-matriks-kapabilitas-dari-srcrolespy-satu-sumber">5. Matriks kapabilitas (dari src/roles.py, satu sumber)</a><ul>
+<li><a href="#51-siapa-memegang-kapabilitas-apa">5.1 Siapa memegang kapabilitas apa</a></li>
+<li><a href="#52-tangga-persetujuan-pemisahan-tugas">5.2 Tangga persetujuan &amp; pemisahan tugas</a></li>
+</ul>
+</li>
+<li><a href="#6-temuan-terperinci">6. Temuan terperinci</a><ul>
+<li><a href="#f1-hsts-tidak-ada-sedang-sudah-diperbaiki">F1 — HSTS tidak ada (sedang) · sudah diperbaiki</a></li>
+<li><a href="#f2-kebijakan-mfa-tidak-tersambung-ke-permukaan-yang-berjalan-sedang">F2 — Kebijakan MFA tidak tersambung ke permukaan yang berjalan (sedang)</a></li>
+<li><a href="#f3-permissions-policy-coop-corp-tidak-ada-rendah">F3 — Permissions-Policy / COOP / CORP tidak ada (rendah)</a></li>
+<li><a href="#f4-halaman-form-di-cache-publik-rendah">F4 — Halaman form di-cache publik (rendah)</a></li>
+<li><a href="#f5-robotstxt-dan-sitemapxml-404-rendah-seo">F5 — robots.txt dan sitemap.xml 404 (rendah, SEO)</a></li>
+<li><a href="#f6-yang-sudah-baik-jangan-diubah-tanpa-alasan">F6 — Yang sudah baik (jangan diubah tanpa alasan)</a></li>
+</ul>
+</li>
+<li><a href="#7-batas-audit-ini-jujur">7. Batas audit ini (jujur)</a></li>
+<li><a href="#lampiran-a-scriptsaccess_matrix_probepy">Lampiran A — scripts/access_matrix_probe.py</a></li>
+</ul>
+</div>
+</div>
+<h1 id="audit-header-keamanan-matriks-akses-per-peran">Audit Header Keamanan &amp; Matriks Akses per Peran</h1>
 <p><strong>Tanggal:</strong> 2026-10-25 · <strong>Kode diuji:</strong> <code>7c7bc96</code> · <strong>Metode:</strong> server nyata + HTTP nyata, bukan pembacaan dokumen
 <strong>Lingkup:</strong> dua permukaan yang berjalan — situs publik (<code>marketing_site.py</code>) dan dashboard internal (<code>dashboard.py</code>)
 <strong>Di luar lingkup:</strong> konfigurasi TLS riil, WAF, uji beban, sertifikat, HSTS preload</p>
 <hr />
 <h2 id="0-ringkasan">0. Ringkasan</h2>
-
 <table>
 <thead>
 <tr>
@@ -74,7 +92,7 @@ li { margin-bottom: 1mm; }
 <td>F2</td>
 <td><strong><code>identity.py</code> (MFA wajib untuk owner/finance/gm) tidak diimpor siapa pun</strong>; permukaan nyata memakai token bearer statis tanpa MFA dan tanpa kedaluwarsa</td>
 <td>sedang</td>
-<td>dicatat sebagai utang go-live (§6)</td>
+<td><strong>diperbaiki (A+B)</strong>: sesi operator per orang + TTL + pencabutan + audit; token mesin tetap, dengan jadwal rotasi 90 hari — sisa risiko di §6 F2</td>
 </tr>
 <tr>
 <td>F3</td>
@@ -105,28 +123,25 @@ li { margin-bottom: 1mm; }
 <p>Angka pokok: <strong>72/72 sel matriks akses sesuai niat kode</strong>, <strong>3/3 kontrol negatif menolak</strong>, <strong>0 kebocoran versi</strong> di header <code>Server</code>.</p>
 <hr />
 <h2 id="1-cara-mengulang-audit-ini">1. Cara mengulang audit ini</h2>
-
-<pre><code class="language-bash">&lt;h1 id=&quot;1-salinan-db-jangan-pernah-memakai-datavilladb-untuk-pengujian&quot;&gt;1. Salinan DB — jangan pernah memakai data/villa.db untuk pengujian&lt;/h1&gt;
+<pre><code class="language-bash"># 1. Salinan DB — jangan pernah memakai data/villa.db untuk pengujian
 cp data/villa.db /tmp/villa_hdr_dash.db
 
-&lt;h1 id=&quot;2-jalankan-kedua-permukaan-di-loopback&quot;&gt;2. Jalankan kedua permukaan di loopback&lt;/h1&gt;
+# 2. Jalankan kedua permukaan di loopback
 python3 src/marketing_site.py --db /tmp/villa_hdr_mkt.db --port 8897 &amp;
 python3 src/dashboard.py     --db /tmp/villa_hdr_dash.db --port 8898 --token audit-token-xyz &amp;
 
-&lt;h1 id=&quot;3-header&quot;&gt;3. Header&lt;/h1&gt;
+# 3. Header
 curl -sS -D - -o /dev/null http://127.0.0.1:8897/
 curl -sS -D - -o /dev/null -H &quot;Authorization: Bearer audit-token-xyz&quot; http://127.0.0.1:8898/
 
-&lt;h1 id=&quot;4-matriks-6-peran-×-12-rute-ditambah-kontrol-negatif&quot;&gt;4. Matriks: 6 peran × 12 rute, ditambah kontrol negatif&lt;/h1&gt;
+# 4. Matriks: 6 peran × 12 rute, ditambah kontrol negatif
 python3 scripts/access_matrix_probe.py --db /tmp/villa_hdr_dash.db --json /tmp/access_matrix.json
 </code></pre>
 <p>Semua pengujian memakai salinan DB di <code>/tmp</code>; tidak ada tulisan ke <code>data/villa.db</code>.
 Skrip probe <strong>menolak</strong> berjalan bila <code>--db</code> menunjuk <code>data/villa.db</code>.</p>
 <hr />
 <h2 id="2-header-yang-diamati-permintaan-nyata">2. Header yang diamati (permintaan nyata)</h2>
-
-<h3 id="21-situs-publik-get-200">2.1 Situs publik — GET / → 200</h3>
-
+<h3 id="21-situs-publik-get-200">2.1 Situs publik — <code>GET /</code> → 200</h3>
 <table>
 <thead>
 <tr>
@@ -188,8 +203,7 @@ Skrip probe <strong>menolak</strong> berjalan bila <code>--db</code> menunjuk <c
 </tr>
 </tbody>
 </table>
-<h3 id="22-dashboard-get">2.2 Dashboard — GET /</h3>
-
+<h3 id="22-dashboard-get">2.2 Dashboard — <code>GET /</code></h3>
 <table>
 <thead>
 <tr>
@@ -248,7 +262,6 @@ Skrip probe <strong>menolak</strong> berjalan bila <code>--db</code> menunjuk <c
 </table>
 <hr />
 <h2 id="3-kontrol-negatif-dijalankan-untuk-keenam-peran">3. Kontrol negatif (dijalankan untuk keenam peran)</h2>
-
 <table>
 <thead>
 <tr>
@@ -278,7 +291,6 @@ Skrip probe <strong>menolak</strong> berjalan bila <code>--db</code> menunjuk <c
 <p>Ini membuktikan kalimat di docstring modul (“identity is never taken from the request”) bukan sekadar klaim: peran hanya datang dari token.</p>
 <hr />
 <h2 id="4-matriks-akses-halaman-status-http-nyata">4. Matriks akses halaman (status HTTP nyata)</h2>
-
 <table>
 <thead>
 <tr>
@@ -411,10 +423,8 @@ Skrip probe <strong>menolak</strong> berjalan bila <code>--db</code> menunjuk <c
 <li><strong><code>reservation</code> boleh membuka <code>approvals</code></strong> dan termasuk <code>WRITE_ROLES</code>, tetapi perannya dipetakan ke <code>reservation_agent</code> (rank 1) — lihat §5.</li>
 </ul>
 <hr />
-<h2 id="5-matriks-kapabilitas-dari-srcrolespy-satu-sumber">5. Matriks kapabilitas (dari src/roles.py, satu sumber)</h2>
-
+<h2 id="5-matriks-kapabilitas-dari-srcrolespy-satu-sumber">5. Matriks kapabilitas (dari <code>src/roles.py</code>, satu sumber)</h2>
 <h3 id="51-siapa-memegang-kapabilitas-apa">5.1 Siapa memegang kapabilitas apa</h3>
-
 <table>
 <thead>
 <tr>
@@ -485,8 +495,7 @@ Skrip probe <strong>menolak</strong> berjalan bila <code>--db</code> menunjuk <c
 </tr>
 </tbody>
 </table>
-<h3 id="52-tangga-persetujuan-pemisahan-tugas">5.2 Tangga persetujuan & pemisahan tugas</h3>
-
+<h3 id="52-tangga-persetujuan-pemisahan-tugas">5.2 Tangga persetujuan &amp; pemisahan tugas</h3>
 <table>
 <thead>
 <tr>
@@ -521,31 +530,44 @@ Skrip probe <strong>menolak</strong> berjalan bila <code>--db</code> menunjuk <c
 </ol>
 <hr />
 <h2 id="6-temuan-terperinci">6. Temuan terperinci</h2>
-
-<h3 id="f1-hsts-tidak-ada-sedang-sudah-diperbaiki">F1 — HSTS tidak ada (sedang) · sudah diperbaiki</h3>
-
+<h3 id="f1-hsts-tidak-ada-sedang-sudah-diperbaiki">F1 — HSTS tidak ada (sedang) · <strong>sudah diperbaiki</strong></h3>
 <p>Tidak ada satu pun berkas di repo yang memuat <code>Strict-Transport-Security</code> (pencarian menyeluruh: 0 hasil), padahal kedua contoh nginx memakai <code>listen 443 ssl</code>. Tanpa HSTS, kunjungan pertama masih bisa diturunkan ke HTTP.</p>
 <p>Perbaikan: <code>docs/DEPLOYMENT.md</code> §4.1 dan §4.2 kini memuat <code>add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;</code> plus <code>ssl_protocols TLSv1.2 TLSv1.3;</code> dan <code>server_tokens off;</code>. Catatan penting yang ikut ditulis: <code>add_header</code> di dalam <code>location</code> <strong>menggantikan</strong> header selevel <code>server</code>, jadi HSTS harus ditulis di blok yang sama dengan header lain atau diwarisi dengan sadar.</p>
 <p>HSTS <strong>tidak</strong> bisa dipasang di aplikasi: upstream berjalan HTTP, dan header HSTS yang dikirim lewat HTTP diabaikan peramban.</p>
 <h3 id="f2-kebijakan-mfa-tidak-tersambung-ke-permukaan-yang-berjalan-sedang">F2 — Kebijakan MFA tidak tersambung ke permukaan yang berjalan (sedang)</h3>
-
-<p><code>src/identity.py</code> menyatakan “MFA wajib untuk OWNER dan FINANCE”, mendefinisikan <code>MFA_REQUIRED_ROLES</code>, sesi, dan faktor kedua. Namun:</p>
-<pre><code>grep -rn &quot;import identity&quot; src/ scripts/   → 0 hasil
+<p><code>src/identity.py</code> menyatakan “MFA wajib untuk OWNER dan FINANCE”, mendefinisikan <code>MFA_REQUIRED_ROLES</code>, sesi, dan faktor kedua. Saat audit itu <strong>tidak dipakai</strong> oleh kode mana pun:</p>
+<pre><code>grep -rn &quot;import identity&quot; src/ scripts/   → 0 hasil (saat audit)
 </code></pre>
-<p>Dashboard tidak memakai modul itu. Autentikasinya adalah token bearer statis per peran (<code>secrets.token_urlsafe(24)</code> = 192 bit, dibandingkan dengan <code>secrets.compare_digest</code>), tanpa login, tanpa MFA, tanpa kedaluwarsa, tanpa pencabutan per pengguna.</p>
-<p>Dampak sekarang <strong>terkendali</strong>: dashboard hanya loopback, di belakang proxy dengan <code>allow</code>/<code>deny</code> kantor/VPN, dan token 192 bit tidak bisa ditebak. Dampaknya berubah menjadi tinggi bila dashboard dipakai dari internet atau bila jumlah operator bertambah dan token harus dibagikan.</p>
-<p>Rekomendasi (belum dikerjakan, sengaja): sambungkan <code>identity.py</code> ke dashboard (login + MFA untuk owner/finance/gm + sesi berumur pendek), atau nyatakan tertulis bahwa token adalah kredensial mesin, bukan manusia — dan rotasi 90 hari.</p>
-<h3 id="f3-permissions-policy-coop-corp-tidak-ada-rendah">F3 — Permissions-Policy / COOP / CORP tidak ada (rendah)</h3>
-
+<p><strong>Perbaikan (A+B, 2026-10-29):</strong></p>
+<ul>
+<li><code>dashboard.py</code> sekarang menerima <strong>sesi operator</strong> di samping token mesin. Token sesi
+  diselesaikan oleh <code>identity.SessionService</code>: identitas dan peran dibaca dari baris sesi,
+  bukan dari header. Peran kanonik dipetakan ke enam peran halaman lewat
+  <code>PAGE_ROLE_BY_CANONICAL</code>; peran tanpa halaman (<code>system_admin</code>) <strong>ditolak</strong>, tidak diperluas.</li>
+<li><code>scripts/session_token.py</code> menjadi alat resmi: <code>enroll</code>, <code>confirm</code>, <code>login</code>, <code>list</code>,
+  <code>revoke</code>, <code>rotate</code>. Login menulis <code>auth_events</code> (LOGIN/ACCESS_DENIED/SESSION_REFUSED).</li>
+<li>Batas waktu berlaku: idle 30 menit, absolut 12 jam (dari <code>identity</code>), dan pencabutan
+  berlaku pada permintaan berikutnya (diuji: 401 seketika).</li>
+<li>Token mesin statis tetap ada untuk cron/integrasi, kini dengan <strong>jadwal rotasi 90 hari</strong>
+  yang ditulis di <code>docs/security/SESSION_AUTH.md</code> §4.</li>
+</ul>
+<p>Bukti: <code>tests/test_dashboard_sessions.py</code> — 11 tes (pemetaan peran, MFA wajib untuk owner,
+sesi dicabut, idle, absolut, peran tanpa halaman, token statis tetap jalan, token asing,
+jejak <code>auth_events</code>). Uji HTTP nyata: sesi owner → <code>/finance</code> 200, sesi auditor → <code>/audit</code> 200
+dan <code>/finance</code> 403, setelah <code>revoke</code> → 401.</p>
+<p><strong>Sisa risiko yang tidak disembunyikan:</strong> platform tidak punya faktor kata sandi. Sesi dibuka
+dengan menyatakan identitas + kode TOTP; siapa pun yang bisa menjalankan CLI sudah bisa membaca
+database. Yang ditambahkan adalah akuntabilitas, kedaluwarsa, dan pencabutan — bukan pertahanan
+terhadap penyerang lokal. Dashboard tetap hanya untuk loopback/VPN. Bila kelak dibuka ke
+internet, login berlapis (kata sandi + TOTP untuk <strong>semua</strong> peran) menjadi syarat baru, bukan
+peningkatan opsional.</p>
+<h3 id="f3-permissions-policy-coop-corp-tidak-ada-rendah">F3 — <code>Permissions-Policy</code> / <code>COOP</code> / <code>CORP</code> tidak ada (rendah)</h3>
 <p>Dengan CSP <code>default-src 'none'</code> (dashboard) dan <code>default-src 'self'</code> (publik), tidak ada jalur pemuatan yang bisa disalahgunakan hari ini. Header ini mencegah fitur peramban (kamera, mikrofon, geolokasi) dan isolasi proses aktif tanpa diminta. Belum ditambahkan karena tidak ada fitur yang membutuhkannya — dicatat agar tidak diklaim “sudah lengkap”.</p>
 <h3 id="f4-halaman-form-di-cache-publik-rendah">F4 — Halaman form di-cache publik (rendah)</h3>
-
 <p><code>GET /inquiry</code> → <code>Cache-Control: public, max-age=300</code>. Aman karena halaman itu tidak memuat token CSRF dan tidak memuat data pengguna (diverifikasi: tidak ada <code>&lt;input&gt;</code> tersembunyi bertoken; proteksi form memakai pemeriksaan <code>Origin</code> + pembatas laju). Bila kelak ada token di halaman form, cache ini harus menjadi <code>no-store</code>.</p>
-<h3 id="f5-robotstxt-dan-sitemapxml-404-rendah-seo">F5 — robots.txt dan sitemap.xml 404 (rendah, SEO)</h3>
-
+<h3 id="f5-robotstxt-dan-sitemapxml-404-rendah-seo">F5 — <code>robots.txt</code> dan <code>sitemap.xml</code> 404 (rendah, SEO)</h3>
 <p>Bukan masalah keamanan, tetapi situs publik tanpa keduanya sulit dirayapi dengan benar. Dicatat sebagai item produk.</p>
 <h3 id="f6-yang-sudah-baik-jangan-diubah-tanpa-alasan">F6 — Yang sudah baik (jangan diubah tanpa alasan)</h3>
-
 <ul>
 <li><code>Server</code> tidak membocorkan versi Python di kedua permukaan.</li>
 <li>Tidak ada cookie sama sekali → tidak ada <code>HttpOnly</code>/<code>SameSite</code>/<code>Secure</code> yang bisa salah set.</li>
@@ -555,7 +577,6 @@ Skrip probe <strong>menolak</strong> berjalan bila <code>--db</code> menunjuk <c
 </ul>
 <hr />
 <h2 id="7-batas-audit-ini-jujur">7. Batas audit ini (jujur)</h2>
-
 <ul>
 <li><strong>Tidak</strong> menguji TLS sungguhan: tidak ada sertifikat, cipher, OCSP, atau uji downgrade. HSTS hanya diperbaiki di dokumentasi konfigurasi, bukan dibuktikan hidup.</li>
 <li><strong>Tidak</strong> menguji WAF, DDoS, atau pembatasan laju di edge.</li>
@@ -564,8 +585,7 @@ Skrip probe <strong>menolak</strong> berjalan bila <code>--db</code> menunjuk <c
 <li>Matriks peran diuji pada <strong>satu instance per peran</strong>; tidak ada uji multi-agen atau pergantian peran di tengah sesi (memang tidak didukung oleh desain token statis).</li>
 </ul>
 <hr />
-<h2 id="lampiran-a-scriptsaccess_matrix_probepy">Lampiran A — scripts/access_matrix_probe.py</h2>
-
+<h2 id="lampiran-a-scriptsaccess_matrix_probepy">Lampiran A — <code>scripts/access_matrix_probe.py</code></h2>
 <p>Skrip ini ikut di-commit supaya audit bisa diulang pembeli tanpa menulis ulang alatnya.</p>
 <ol>
 <li>Untuk setiap peran di <code>dashboard.ROLES</code>: buka koneksi sqlite baru <strong>di dalam thread pelayan</strong>
@@ -580,4 +600,4 @@ Skrip probe <strong>menolak</strong> berjalan bila <code>--db</code> menunjuk <c
 </ol>
 <p>Hasil yang diarsipkan: <strong>72 sel, 0 tidak cocok</strong>, kontrol <code>{tanpa_token: 401, token_palsu: 401,
 eskalasi_header: 403}</code>.</p>
-</body></html>
+</div></body></html>
