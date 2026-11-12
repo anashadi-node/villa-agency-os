@@ -6,6 +6,16 @@
 > (lihat `LICENSE`). Kerentanan dilaporkan **privat** lewat tab *Security* →
 > *Report a vulnerability*, bukan lewat issue publik (lihat `SECURITY.md`).
 
+**Cara membuktikan klaim "hanya-baca" (dapat direproduksi, tanpa kredensial):**
+
+```bash
+git clone --depth 1 https://github.com/anashadi-node/villa-agency-os.git /tmp/audit   # baca: berhasil
+cd /tmp/audit && echo x >> README.md && git commit -qam probe
+GIT_TERMINAL_PROMPT=0 git push origin master   # tulis: ditolak — "protected branch hook declined"
+curl -s https://api.github.com/repos/anashadi-node/villa-agency-os \
+  | grep -o '"has_issues": *[a-z]*'   # has_issues: false — issue & proyek dimatikan
+```
+
 > **Batas produk wajib:** repo ini adalah kernel operasi + **dashboard internal** untuk
 > manajemen/karyawan villa agency. **Website Marketing Villa untuk calon tamu adalah
 > permukaan publik terpisah**: katalog, destinasi, villa detail, inquiry, dan concierge.
