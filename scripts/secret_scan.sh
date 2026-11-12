@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Secret scan — fail closed. Scans tracked files for credentials/keys.
+# Patterns are passed as `grep -e PATTERN`: a bare argument that starts with `--`
+# (the `--token <literal>` rule below) is otherwise read as a grep option and the
+# rule silently never runs.
 # Usage: scripts/secret_scan.sh [path]
 set -uo pipefail
 
@@ -24,6 +27,11 @@ PATTERNS=(
   '0x[a-fA-F0-9]{64}'
   'eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.'
   '(api[_-]?key|apikey|secret|passwd|password|token)["'"'"']?\s*[:=]\s*["'"'"'][A-Za-z0-9/_+\-]{16,}["'"'"']'
+  # Credential pasted onto a command line (systemd ExecStart, scripts, docs): `--token <value>`.
+  # A placeholder (`--token ${VILLA_DASHBOARD_TOKEN}`) or the repo convention `--token-file`
+  # does not match: the pattern needs a 16+ character value right after the flag.
+  '--(token|password|secret|api-key|apikey)[= ][[:space:]]*["'"'"']?[A-Za-z0-9_+/=-]{16,}'
+  'Bearer[[:space:]]+[A-Za-z0-9._\-]{20,}'
 )
 
 HITS=0
@@ -34,9 +42,11 @@ for f in "${FILES[@]}"; do
     # the leak this gate exists for. Example tokens are handled by the
     # REDACTED/PLACEHOLDER whitelist below instead of by skipping whole trees.
     .env.template|*.example|scripts/secret_scan.sh) continue ;;
+    # The gate's own negative-control tests plant secrets on purpose.
+    tests/test_secret_scan.py) continue ;;
   esac
   for p in "${PATTERNS[@]}"; do
-    if grep -EIn --binary-files=without-match "$p" "$f" 2>/dev/null | grep -v -E 'REDACTED|PLACEHOLDER|your[_-]|<[a-z_]+>|xxx' >/dev/null; then
+    if grep -EIn --binary-files=without-match -e "$p" "$f" 2>/dev/null | grep -v -E 'REDACTED|PLACEHOLDER|your[_-]|<[a-z_]+>|xxx' >/dev/null; then
       echo "SECRET-SCAN: potential secret in $f (pattern: ${p:0:24}...)"
       HITS=$((HITS + 1))
     fi
