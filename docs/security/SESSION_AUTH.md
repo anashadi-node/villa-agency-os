@@ -9,7 +9,7 @@
 
 | | Token mesin (statis) | Sesi operator (baru) |
 |---|---|---|
-| Dibuat oleh | `--token` saat menjalankan dashboard, atau otomatis saat start | `scripts/session_token.py login` |
+| Dibuat oleh | `--token-file` saat menjalankan dashboard, atau otomatis saat start | `scripts/session_token.py login` |
 | Menyebut siapa | tidak — hanya peran | ya — identitas + peran |
 | Kedaluwarsa | tidak (harus dirotasi manual) | idle 30 menit, absolut 12 jam |
 | Bisa dicabut per orang | tidak | ya, seketika |
@@ -115,7 +115,7 @@ Sesi yang dicabut langsung ditolak pada permintaan berikutnya (401) dan peristiw
 | Perintah | Kegunaan |
 |---|---|
 | `list --db ...` | daftar semua sesi + status aktif/REVOKED + dua batas waktunya |
-| `rotate --db ... --token <lama>` | tukar token; token lama mati pada transaksi yang sama |
+| `rotate --db ... --token-file <path>` | tukar token; token lama dibaca dari berkas 0600 dan mati pada transaksi yang sama |
 | `revoke --session-id <id>` | cabut satu sesi saja (mis. laptop hilang) |
 | `revoke --identity alice --reason "resign"` | cabut semua sesi orang itu sekaligus |
 

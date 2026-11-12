@@ -14,6 +14,9 @@ code. Whoever can run this command can already read the database, so the gain is
 accountability and revocation, not protection from a local attacker. Say that in
 the runbook instead of implying more.
 
+The old token is read from a 0600 file with ``--token-file``; ``--token`` still works but a
+command line is readable by every local user through ``/proc/<pid>/cmdline``.
+
 The TOTP secret never enters the database: only a ``secret_ref`` does, resolved
 from ``VILLA_TOTP_SECRET_<REF>`` in the environment.
 
@@ -25,6 +28,7 @@ Usage:
         --db data/villa.db --identity alice --role owner --code 123456
     python3 scripts/session_token.py list    --db data/villa.db
     python3 scripts/session_token.py revoke  --db data/villa.db --identity alice
+    python3 scripts/session_token.py rotate  --db data/villa.db --token-file /path/to/token
 """
 
 from __future__ import annotations
@@ -176,9 +180,22 @@ def cmd_revoke(args: argparse.Namespace) -> int:
 
 
 def cmd_rotate(args: argparse.Namespace) -> int:
+    token = args.token
+    if args.token_file:
+        if args.token:
+            print("REFUSED: --token dan --token-file saling eksklusif", file=sys.stderr)
+            return 2
+        try:
+            token = Path(args.token_file).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            print(f"REFUSED: tidak bisa membaca --token-file: {exc.strerror}", file=sys.stderr)
+            return 2
+    if not token:
+        print("REFUSED: beri --token-file (disarankan) atau --token", file=sys.stderr)
+        return 2
     conn = connect(args.db)
     svc = service(conn, args.agency)
-    result = svc.rotate(args.token)
+    result = svc.rotate(token)
     conn.commit()
     print(f"sesi    : {result.session.session_id}")
     print(f"idle s/d: {result.session.idle_expires_at}")
@@ -221,7 +238,17 @@ def build_parser() -> argparse.ArgumentParser:
     revoke.set_defaults(func=cmd_revoke)
 
     rotate = sub.add_parser("rotate", parents=[common], help="tukar token sesi (token lama langsung mati)")
-    rotate.add_argument("--token", required=True)
+    rotate.add_argument(
+        "--token",
+        default=None,
+        help="token sesi lama; terlihat oleh pengguna lokal lewat /proc/<pid>/cmdline",
+    )
+    rotate.add_argument(
+        "--token-file",
+        default=None,
+        metavar="PATH",
+        help="baca token sesi lama dari berkas (mode 0600); ganti --token di mesin bersama",
+    )
     rotate.set_defaults(func=cmd_rotate)
     return parser
 
