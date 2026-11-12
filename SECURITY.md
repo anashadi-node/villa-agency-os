@@ -46,10 +46,32 @@ menempelkan rahasia ke dalam laporan. Bila sebuah rahasia tampak bocor, laporkan
 - Tidak ada berkas `.env`, kunci privat, basis data, log, atau CSV yang ter-track.
 - Tidak ada nomor rekening, nomor identitas, atau data tamu nyata di dalam repo; data
   contoh memakai domain `example.com` / `.invalid`.
-- Pemindaian rahasia, *push protection*, dan peringatan dependensi diaktifkan di GitHub.
+- Pemindaian rahasia, *push protection*, dan pembaruan keamanan dependensi **aktif** di
+  GitHub (diverifikasi lewat `security_and_analysis`, 2026-11-13).
 - Percabangan `master` dilindungi: tanpa *force-push*, tanpa penghapusan, riwayat linear,
-  status check wajib hijau, dan hanya pemilik yang dapat menulis.
-- Hak akses tulis: **hanya pemilik**. Tidak ada kolaborator eksternal.
+  status check `pre-deploy gate (Python 3.12)` wajib hijau, wajib lewat pull request,
+  dan aturan ini **berlaku juga untuk admin** (`enforce_admins: true`).
+- Hak akses tulis: **hanya pemilik** (1 kolaborator: `anashadi-node`).
+- Pelaporan kerentanan privat: **aktif**.
+- Uji dari luar (anonim, tanpa kredensial) 2026-11-13: `git clone` **berhasil**
+  (baca), `git push` **ditolak** — `! [remote rejected] master -> master
+  (protected branch hook declined)`.
+
+### Batas yang tidak dapat ditegakkan GitHub
+
+Jujur soal batas platform, supaya tidak ada klaim berlebih:
+
+1. **Fork tidak bisa dimatikan** pada repositori publik milik akun pribadi (GitHub
+   menolak `allow_forking=false` dengan HTTP 422). Artinya siapa pun dapat membuat
+   **salinan** repo ini di akunnya sendiri dan mengubah salinan itu. Yang tidak bisa
+   mereka lakukan: mengubah repo asal — semua jalur tulis (push langsung, force-push,
+   hapus cabang) ditolak, dan penggabungan hanya oleh pemilik.
+2. **Pull request dari luar tetap bisa dibuka** (tanpa hak gabung). PR semacam itu tidak
+   mengubah isi repo sampai pemilik menekan *merge*, dan kebijakan repo ini adalah
+   menutupnya (lihat `CONTRIBUTING.md`).
+3. Repo publik dapat diarsipkan/disalin pihak ketiga (mis. arsip web, cermin) di luar
+   kendali GitHub. Karena itu **jangan pernah** menaruh rahasia di repo ini — bukan
+   karena pemindaian gagal, tetapi karena publikasi bersifat permanen.
 
 ## 5. Cakupan
 

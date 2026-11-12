@@ -22,7 +22,11 @@ Repositori ini adalah **cermin publik baca-saja** dari proyek internal Villa Age
 
 ## Untuk pemelihara
 
-- Jalankan `make check` sebelum setiap push; gate yang sama berjalan di CI (`check.yml`).
+- `master` dilindungi dengan `enforce_admins: true`: **push langsung ditolak**, termasuk
+  oleh pemilik. Alur wajib: buat cabang → commit → `gh pr create` → tunggu
+  `pre-deploy gate (Python 3.12)` hijau → merge (squash/rebase; merge commit dilarang
+  karena riwayat wajib linear). Ini bukan birokrasi: jejak PR adalah bukti audit.
+- Jalankan `make check` di lokal sebelum membuka PR; gate yang sama berjalan di CI.
 - Jangan pernah commit `.env`, kredensial, data tamu, atau data pembayaran. Pemindai
   rahasia berjalan di `make check` dan di GitHub *push protection*.
 - Satu commit = satu tema, pesan menjelaskan *mengapa*, bukan sekadar *apa*.
