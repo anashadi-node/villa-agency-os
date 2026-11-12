@@ -1,0 +1,16 @@
+# Peringatan dependensi & pembaruan otomatis.
+# Repo ini tidak punya manifest Python (tanpa requirements.txt/pyproject), jadi ekosistem
+# pip tidak bisa dipantau Dependabot; yang dipantau adalah GitHub Actions yang dipakai CI.
+# Perbarui daftar ini kalau kelak muncul manifest Python.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Jakarta"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci(deps)"

@@ -1,0 +1,40 @@
+Copyright (c) 2026 Pemilik repositori GitHub `anashadi-node` ("Pemilik"). Seluruh hak dilindungi.
+
+# Lisensi Proprietary — All Rights Reserved
+
+Kode, skema, dokumen, dan seluruh isi repositori ini adalah kekayaan intelektual Pemilik.
+Repositori ini dipublikasikan agar **dapat dibaca, ditelaah, dan diaudit** oleh pihak luar.
+
+## Yang DIIZINKAN tanpa permohonan tertulis
+
+1. Membaca isi repositori melalui antarmuka GitHub atau mengkloningnya untuk keperluan
+   penelaahan, audit, atau verifikasi keamanan.
+2. Menjalankan kode di lingkungan milik sendiri **semata-mata** untuk menguji klaim
+   teknis (mis. menjalankan `make check`), tanpa menyebarluaskannya sebagai produk.
+3. Mengutip potongan singkat (kutipan wajar) dengan atribusi yang jelas ke repositori ini.
+4. Melaporkan kerentanan atau kesalahan sesuai [`SECURITY.md`](SECURITY.md).
+
+## Yang DILARANG tanpa izin tertulis dari Pemilik
+
+1. Menyalin, menggandakan, atau menyebarkan seluruh/sebagian besar kode atau dokumen,
+   termasuk mengunggahnya ke repositori, arsip, atau layanan lain.
+2. Memodifikasi lalu mendistribusikan ulang, atau membuat karya turunan (fork yang
+   dipublikasikan sebagai produk sendiri), dalam bentuk apa pun.
+3. Penggunaan komersial: menjual, menyewakan, melisensikan, atau memakai kode/dokumen ini
+   untuk menyediakan layanan kepada pihak lain.
+4. Menghapus atau mengaburkan pemberitahuan hak cipta dan lisensi ini.
+
+## Tanpa jaminan
+
+Perangkat lunak dan dokumen disediakan **"SEBAGAIMANA ADANYA"**, tanpa jaminan apa pun,
+tersurat maupun tersirat, termasuk jaminan kelayakan jual, kesesuaian untuk tujuan
+tertentu, dan tidak adanya pelanggaran hak pihak ketiga. Pemilik tidak bertanggung jawab
+atas kerugian apa pun yang timbul dari penggunaan isi repositori ini.
+
+## Catatan
+
+- Ini **bukan** lisensi open source. Tidak ada hak yang diberikan selain yang tertulis di atas.
+- Dokumen ini bukan nasihat hukum. Untuk kebutuhan kontraktual/komersial, mintakan
+  ketentuan tertulis terpisah dari Pemilik dan tinjau dengan penasihat hukum.
+- Berkas pihak ketiga (jika ada) tunduk pada lisensi masing-masing; lihat catatan di
+  berkas atau direktori terkait.

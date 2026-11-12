@@ -1,5 +1,11 @@
 # Villa Agency OS
 
+> **Repositori publik — baca saja (2026-11-13).** Isi repo ini terbuka untuk dibaca,
+> ditelaah, dan diaudit; **tidak ada hak tulis** bagi pihak luar. Pull request dan issue
+> dari luar tidak diterima (lihat `CONTRIBUTING.md`). Hak pakai: *all rights reserved*
+> (lihat `LICENSE`). Kerentanan dilaporkan **privat** lewat tab *Security* →
+> *Report a vulnerability*, bukan lewat issue publik (lihat `SECURITY.md`).
+
 > **Batas produk wajib:** repo ini adalah kernel operasi + **dashboard internal** untuk
 > manajemen/karyawan villa agency. **Website Marketing Villa untuk calon tamu adalah
 > permukaan publik terpisah**: katalog, destinasi, villa detail, inquiry, dan concierge.
