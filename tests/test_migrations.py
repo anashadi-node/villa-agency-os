@@ -56,7 +56,7 @@ def _old_database(path: Path) -> None:
         and "preferred_currency" not in line
         # migration 016 itself carries the phrase in its header comment
         and not line.startswith("-- Migration 016")
-        # migration 017's columns (ADR-0061) — an old database predates all four
+        # migration 017's columns (ADR-0068) — an old database predates all four
         and "geo_precision" not in line
         and "geo_source" not in line
         and not line.strip().startswith(("latitude ", "longitude "))

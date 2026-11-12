@@ -1,4 +1,4 @@
--- Migration 017: properties.latitude / longitude / geo_precision / geo_source (ADR-0061).
+-- Migration 017: properties.latitude / longitude / geo_precision / geo_source (ADR-0068).
 --
 -- 001_initial.sql creates these columns for a new database; this file exists for databases
 -- that already exist, because schema_loader.apply_schema refuses to re-apply the initial
@@ -17,7 +17,7 @@
 --
 -- The CHECK constraints are self-contained on purpose: SQLite cannot add a table-level
 -- constraint with ALTER TABLE, so the "VERIFIED implies coordinates" rule is enforced in
--- `villa_import.validate_geo_fields` and pinned by tests/test_geo.py instead.
+-- `geo.validate_geo_fields` (src/geo.py, ADR-0068) and pinned by tests/test_geo.py instead.
 
 ALTER TABLE properties ADD COLUMN latitude REAL
     CHECK (latitude IS NULL OR (latitude >= -90 AND latitude <= 90));
