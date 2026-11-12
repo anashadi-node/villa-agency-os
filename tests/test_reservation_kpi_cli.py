@@ -11,13 +11,16 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 SCRIPT = REPO / "scripts" / "reservation_kpi.py"
+
+sys.path.insert(0, str(REPO / "src"))
+from primitives import SystemClock  # noqa: E402  (path setup must run first)
 
 
 def _run(db: Path | None, *args: str) -> subprocess.CompletedProcess[str]:
@@ -60,7 +63,7 @@ def _fresh_db(tmp_path: Path) -> Path:
         "source_doc_ref": rc.source_doc_ref, "approved_by": rc.approved_by, "created_at": NOW,
     })
     # One hour ago, on the same clock the CLI subprocess will read.
-    created = datetime.now(UTC) - timedelta(hours=1)
+    created = SystemClock().now() - timedelta(hours=1)
     recent = created.isoformat()
     first_due = (created + timedelta(hours=1)).isoformat()
     quote_due = (created + timedelta(hours=4)).isoformat()

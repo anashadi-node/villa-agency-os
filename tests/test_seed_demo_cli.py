@@ -15,13 +15,13 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from approvals import _payload_digest
 from marketing_site import PublicReadModel
+from primitives import SystemClock
 from schema_loader import connect_sqlite
 
 REPO = Path(__file__).resolve().parent.parent
@@ -109,7 +109,7 @@ def test_the_demo_can_never_rot_into_hiding_a_working_feature(seeded: Path):
     clock, which is what a buyer's browser uses.
     """
     conn = connect_sqlite(str(seeded))
-    now = datetime.now(timezone.utc).isoformat()
+    now = SystemClock().now().isoformat()
     try:
         assert _scalar(
             conn, "SELECT COUNT(*) FROM availability_evidence WHERE valid_until > ?", now

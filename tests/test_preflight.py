@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import preflight as PF  # noqa: E402
-from primitives import FrozenClock, IdFactory  # noqa: E402
+from primitives import FrozenClock, IdFactory, SystemClock  # noqa: E402
 from schema_loader import connect_sqlite  # noqa: E402
 import agency_roles as AGENCY_ROLES  # noqa: E402
 import settings as SETTINGS  # noqa: E402
@@ -261,11 +261,14 @@ def test_go_when_everyhing_checks_out(tmp_path):
     conn = connect_sqlite(str(db))
     try:
         _ready_tenant(conn)
+        # The gate reads SystemClock, so an anchor pinned to a fixture date ages out on its
+        # own: this test went red 45 days after the frozen instant with no code change. The
+        # anchor is published on the same real clock the gate reads.
         publish_anchor(
             conn=conn,
-            audit=AuditLog(conn, clock=FrozenClock.at("2026-09-21T08:00:00Z"),
+            audit=AuditLog(conn, clock=SystemClock(),
                            ids=IdFactory(True, "pf")),
-            clock=FrozenClock.at("2026-09-21T08:00:00Z"),
+            clock=SystemClock(),
             directory=anchors, actor="ops.anchor", actor_role="operations",
         )
     finally:
