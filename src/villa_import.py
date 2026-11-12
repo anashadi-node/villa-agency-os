@@ -20,6 +20,11 @@ Five rules, each one a way this goes wrong otherwise:
 * **The file shape is checked before the values.** An unknown column is refused, because a column
   nobody reads is a promise to the operator that their data landed. A missing required column names
   itself, rather than every row failing mysteriously.
+* **A location needs a source.** Four optional columns carry where a villa is; the rule lives in
+  :func:`geo.validate_geo_fields`, so an import cannot mark a villa ``VERIFIED`` without both
+  coordinates and the sentence that says who confirmed them (ADR-0068). A file may leave the
+  columns out — it may not half-fill them, and it can never erase a survey already recorded:
+  ``geo_precision`` is only written when the row names one.
 * **Every row is in the audit chain.** One event per property and per unit, carrying the file's
   fingerprint, so "which file put this villa here" is answerable years later.
 
@@ -38,6 +43,7 @@ from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import geo
 from audit import append_event
 from primitives import DomainError, IdFactory, require_ref
 
@@ -88,6 +94,10 @@ PROPERTY_COLUMNS: tuple[str, ...] = (
     "timezone",
     "property_status",
     "contract_pack_status",
+    "latitude",
+    "longitude",
+    "geo_precision",
+    "geo_source",
 )
 UNIT_COLUMNS: tuple[str, ...] = (
     "unit_id",
@@ -302,13 +312,30 @@ def _identifier(
     return value
 
 
+def _geo(
+    row: Mapping[str, str], line: int, refusals: list[RowRefusal]
+) -> tuple[str, Optional[float], Optional[float], Optional[str]]:
+    """The four location columns, through the single rule in :func:`geo.validate_geo_fields`."""
+    try:
+        return geo.validate_geo_fields(
+            row.get("geo_precision", ""),
+            row.get("latitude", ""),
+            row.get("longitude", ""),
+            row.get("geo_source", ""),
+        )
+    except geo.GeoError as exc:
+        field = str(exc.details.get("field") or "geo_precision")
+        refusals.append(RowRefusal(line, field, str(exc), str(exc.details.get("value") or "")))
+        return "UNKNOWN", None, None, None
+
+
 def plan_import(kernel: Any, text: str) -> VillaImportPlan:
     """Validate every row and classify it as new or existing. Writes nothing."""
     rows = read_rows(text)
     refusals: list[RowRefusal] = []
     planned: list[ImportRow] = []
     seen_units: dict[str, int] = {}
-    seen_properties: dict[str, tuple[str, ...]] = {}
+    seen_properties: dict[str, tuple[Any, ...]] = {}
 
     for offset, row in enumerate(rows, start=2):  # line 1 is the header
         line = offset
@@ -334,6 +361,7 @@ def plan_import(kernel: Any, text: str) -> VillaImportPlan:
         )
         unit_type = _choice(row, line, "unit_type", UNIT_TYPES, refusals)
         unit_status = _choice(row, line, "unit_status", UNIT_STATUSES, refusals)
+        geo_precision, latitude, longitude, geo_source = _geo(row, line, refusals)
 
         timezone = str(row.get("timezone", "")).strip() or COLUMN_DEFAULTS["timezone"]
         try:
@@ -361,7 +389,7 @@ def plan_import(kernel: Any, text: str) -> VillaImportPlan:
                 seen_units[unit_id] = line
         if property_id:
             signature = (property_name, property_type, region, province, timezone, property_status,
-                         contract_pack_status)
+                         contract_pack_status, geo_precision, latitude, longitude, geo_source)
             previous = seen_properties.get(property_id)
             if previous is None:
                 seen_properties[property_id] = signature
@@ -375,21 +403,31 @@ def plan_import(kernel: Any, text: str) -> VillaImportPlan:
                     )
                 )
 
+        property_values: dict[str, Any] = {
+            "property_id": property_id,
+            "name": property_name,
+            "property_type": property_type,
+            "region": region,
+            "province": province,
+            "timezone": timezone,
+            "status": property_status,
+            "contract_pack_status": contract_pack_status,
+        }
+        if geo_precision != "UNKNOWN":
+            # Named precision only. An omitted column leaves the four geo columns untouched, so
+            # re-importing a list written before the survey cannot un-survey a villa.
+            property_values.update(
+                geo_precision=geo_precision,
+                latitude=latitude,
+                longitude=longitude,
+                geo_source=geo_source,
+            )
         planned.append(
             ImportRow(
                 line=line,
                 property_id=property_id,
                 unit_id=unit_id,
-                property_values={
-                    "property_id": property_id,
-                    "name": property_name,
-                    "property_type": property_type,
-                    "region": region,
-                    "province": province,
-                    "timezone": timezone,
-                    "status": property_status,
-                    "contract_pack_status": contract_pack_status,
-                },
+                property_values=property_values,
                 unit_values={
                     "unit_id": unit_id,
                     "property_id": property_id,
@@ -447,6 +485,20 @@ def _agency_of(row: Any) -> str:
         return str(row[0])
 
 
+def _audit_payload(values: Mapping[str, Any]) -> dict[str, Any]:
+    """An audit payload carries no floats: a coordinate travels as its decimal string.
+
+    ``audit`` refuses floats on purpose — evidence is read by humans and compared by machines, and
+    a binary fraction is neither. The column keeps the float SQLite stores; the event keeps the
+    number the operator typed.
+    """
+    payload = dict(values)
+    for key in ("latitude", "longitude"):
+        if payload.get(key) is not None:
+            payload[key] = str(payload[key])
+    return payload
+
+
 def apply_import(
     kernel: Any,
     plan: VillaImportPlan,
@@ -502,7 +554,7 @@ def apply_import(
                     actor=actor,
                     actor_role=role,
                     before=None,
-                    after=dict(row.property_values),
+                    after=_audit_payload(row.property_values),
                     reason=f"{reason}; file {plan.fingerprint[:12]}",
                     evidence_ref=f"import:{plan.fingerprint}",
                 )
@@ -547,6 +599,7 @@ def template_csv() -> str:
     header = ",".join(COLUMNS)
     example = (
         "villa_ubud_01,Villa Ubud Satu,villa,Ubud,Bali,Asia/Makassar,SELLABLE,ACTIVATED,"
+        ",,UNKNOWN,,"
         "unit_ubud_01,Unit Utama,entire_villa,2,2,2,4,ACTIVE"
     )
     return f"{header}\n{example}\n"

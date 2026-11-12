@@ -52,6 +52,7 @@ __all__ = [
     "locator_map_svg",
     "validate_coordinate",
     "validate_precision",
+    "validate_geo_fields",
 ]
 
 #: Mirror of the ``properties.geo_precision`` CHECK constraint, verbatim.
@@ -140,6 +141,59 @@ def validate_precision(precision: Any) -> str:
             value=repr(precision),
         )
     return precision
+
+
+def _blank(value: Any) -> bool:
+    """A CSV cell holding nothing: empty, whitespace, or the string "None"."""
+    return value is None or (isinstance(value, str) and value.strip().lower() in ("", "none"))
+
+
+def validate_geo_fields(
+    precision: Any = "UNKNOWN",
+    latitude: Any = None,
+    longitude: Any = None,
+    source: Any = None,
+) -> tuple[str, Optional[float], Optional[float], Optional[str]]:
+    """The one rule that decides whether a geo row may be stored: ``(precision, lat, lon, source)``.
+
+    SQLite cannot add a table-level CHECK with ``ALTER TABLE`` (migration 017), so the rule
+    "VERIFIED implies coordinates" lives here and is called by both writers — the import
+    (``villa_import``) and the kernel (``upsert_property``). Three outcomes, no fourth:
+
+    * ``UNKNOWN`` — nothing claimed. Carrying a coordinate *or* a source under this precision is
+      refused rather than silently stored: a row that says "we know nothing" while holding a
+      number is the same class of lie as a pin on an unsurveyed villa.
+    * ``AREA_APPROX`` / ``VERIFIED`` — both coordinates **and** a source are required. The source
+      is what an auditor asks for when a guest says the pin sat on their gate (ADR-0068).
+
+    Normalised values come back, so callers never store ``" "`` as a source or a string where the
+    schema wants a REAL.
+    """
+    chosen = validate_precision("UNKNOWN" if _blank(precision) else str(precision).strip().upper())
+    has_lat, has_lon = not _blank(latitude), not _blank(longitude)
+    has_source = not _blank(source)
+    if chosen == "UNKNOWN":
+        if has_lat or has_lon or has_source:
+            raise GeoError(
+                "UNKNOWN means no claim: remove the coordinate and the source, or raise the precision",
+                field="geo_precision",
+                value=chosen,
+            )
+        return chosen, None, None, None
+    if not (has_lat and has_lon):
+        missing = "latitude" if not has_lat else "longitude"
+        raise GeoError(
+            f"{chosen} requires both coordinates; {missing} is empty",
+            field=missing,
+            value="",
+        )
+    lat, lon = validate_coordinate(latitude, longitude)
+    if not has_source:
+        raise GeoError(f"{chosen} requires geo_source: an unsourced pin cannot be audited", field="geo_source", value="")
+    text = str(source).strip()
+    if not 2 <= len(text) <= 200:
+        raise GeoError("geo_source must be 2 to 200 characters", field="geo_source", value=text[:40])
+    return chosen, lat, lon, text
 
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:

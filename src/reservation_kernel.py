@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
 
 import booking_closure as CLOSURE
+import geo
 import matching as MATCHING
 import policy_engine as PE
 import quote_calculator as QC
@@ -425,10 +426,24 @@ class ReservationKernel:
         timezone: str = "Asia/Makassar",
         status: str = "SELLABLE",
         contract_pack_status: str = "VERIFIED",
+        geo_precision: Optional[str] = None,
+        latitude: Any = None,
+        longitude: Any = None,
+        geo_source: Optional[str] = None,
     ) -> str:
-        """Insert or refresh a property row (contract pack status is explicit)."""
+        """Insert or refresh a property row (contract pack status is explicit).
+
+        ``geo_precision`` is the switch for the four location columns: leave it ``None`` and the
+        kernel does not touch them, so a re-import of a file without geo columns cannot erase a
+        survey somebody walked. Name it — and the rule in :func:`geo.validate_geo_fields` applies:
+        ``AREA_APPROX``/``VERIFIED`` need both coordinates plus a source, ``UNKNOWN`` must carry
+        nothing. The precision, not the coordinate, is what the public site reads.
+        """
         property_id = require_ref(property_id, "property_id")
         now = self._now()
+        geo_values = None
+        if geo_precision is not None:
+            geo_values = geo.validate_geo_fields(geo_precision, latitude, longitude, geo_source)
         with self.transaction(join=join) as conn:
             existing = conn.execute(
                 "SELECT agency_id FROM properties WHERE property_id = ?", (property_id,)
@@ -439,13 +454,50 @@ class ReservationKernel:
                     code="PROPERTY_NOT_FOUND",
                     property_id=property_id,
                 )
+            if geo_values is None:
+                conn.execute(
+                    """
+                    INSERT INTO properties (
+                        property_id, agency_id, name, property_type, region, province, timezone,
+                        status, contract_pack_status, contract_pack_evaluated_at,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(property_id) DO UPDATE SET
+                        name = excluded.name,
+                        property_type = excluded.property_type,
+                        region = excluded.region,
+                        province = excluded.province,
+                        timezone = excluded.timezone,
+                        status = excluded.status,
+                        contract_pack_status = excluded.contract_pack_status,
+                        contract_pack_evaluated_at = excluded.contract_pack_evaluated_at,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        property_id,
+                        self.agency_id,
+                        require_text(name, "name", max_len=120),
+                        property_type,
+                        region,
+                        province,
+                        timezone,
+                        status,
+                        contract_pack_status,
+                        now,
+                        now,
+                        now,
+                    ),
+                )
+                return property_id
+            chosen, lat, lon, source = geo_values
             conn.execute(
                 """
                 INSERT INTO properties (
                     property_id, agency_id, name, property_type, region, province, timezone,
                     status, contract_pack_status, contract_pack_evaluated_at,
+                    latitude, longitude, geo_precision, geo_source,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(property_id) DO UPDATE SET
                     name = excluded.name,
                     property_type = excluded.property_type,
@@ -455,6 +507,10 @@ class ReservationKernel:
                     status = excluded.status,
                     contract_pack_status = excluded.contract_pack_status,
                     contract_pack_evaluated_at = excluded.contract_pack_evaluated_at,
+                    latitude = excluded.latitude,
+                    longitude = excluded.longitude,
+                    geo_precision = excluded.geo_precision,
+                    geo_source = excluded.geo_source,
                     updated_at = excluded.updated_at
                 """,
                 (
@@ -468,6 +524,10 @@ class ReservationKernel:
                     status,
                     contract_pack_status,
                     now,
+                    lat,
+                    lon,
+                    chosen,
+                    source,
                     now,
                     now,
                 ),

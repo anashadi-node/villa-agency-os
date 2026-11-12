@@ -22,7 +22,8 @@ SCHEMA = Path(__file__).resolve().parents[1] / "src" / "schema" / "001_initial.s
 
 HEADER = (
     "property_id,property_name,property_type,region,province,timezone,property_status,"
-    "contract_pack_status,unit_id,unit_name,unit_type,bedrooms,bathrooms,base_capacity,"
+    "contract_pack_status,latitude,longitude,geo_precision,geo_source,"
+    "unit_id,unit_name,unit_type,bedrooms,bathrooms,base_capacity,"
     "max_guests,unit_status"
 )
 
@@ -37,6 +38,10 @@ def row(**overrides) -> str:
         "timezone": "Asia/Makassar",
         "property_status": "SELLABLE",
         "contract_pack_status": "ACTIVATED",
+        "latitude": "",
+        "longitude": "",
+        "geo_precision": "",
+        "geo_source": "",
         "unit_id": "unit_ubud_01",
         "unit_name": "Unit Utama",
         "unit_type": "entire_villa",
@@ -396,3 +401,94 @@ class _temp_db:
 
     def __exit__(self, *exc) -> None:
         return None
+
+
+# --------------------------------------------------------------------------- #
+# 7. A location needs a source: the four geo columns (ADR-0068)
+# --------------------------------------------------------------------------- #
+def _property_row(db, property_id: str = "villa_ubud_01"):
+    conn = RK.ReservationKernel.open(str(db), clock=FrozenClock.at(NOW),
+                                     ids=IdFactory(True, "geo"), agency_id=AGENCY)
+    try:
+        return conn.conn.execute(
+            "SELECT latitude, longitude, geo_precision, geo_source FROM properties"
+            " WHERE property_id = ?", (property_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def test_a_verified_row_stores_the_coordinate_and_its_source(tmp_path):
+    listing = tmp_path / "villas.csv"
+    listing.write_text(
+        file_of(row(latitude="-8.5069", longitude="115.2627", geo_precision="VERIFIED",
+                    geo_source="survei 2026-11-12 oleh pemilik")),
+        encoding="utf-8",
+    )
+    with _temp_db(tmp_path) as db:
+        applied = run_cli("--file", str(listing), "--apply", "--actor", "owner_anas",
+                          env={"VILLA_DB": str(db)})
+        assert applied.returncode == 0, applied.stdout
+        stored = _property_row(db)
+        assert stored["geo_precision"] == "VERIFIED"
+        assert stored["latitude"] == pytest.approx(-8.5069)
+        assert stored["longitude"] == pytest.approx(115.2627)
+        assert "survei" in stored["geo_source"]
+
+
+def test_verified_without_coordinates_is_refused_and_names_the_column(kernel):
+    plan = VI.plan_import(kernel, file_of(row(geo_precision="VERIFIED", geo_source="survei")))
+    assert plan.ok is False
+    assert plan.refusals[0].field == "latitude"
+    assert "requires both coordinates" in plan.refusals[0].message
+
+
+def test_verified_without_a_source_is_refused_and_names_the_column(kernel):
+    plan = VI.plan_import(
+        kernel, file_of(row(latitude="-8.5", longitude="115.2", geo_precision="VERIFIED"))
+    )
+    assert plan.ok is False
+    assert plan.refusals[0].field == "geo_source"
+
+
+def test_unknown_may_not_carry_a_coordinate(kernel):
+    plan = VI.plan_import(kernel, file_of(row(latitude="-8.5", longitude="115.2")))
+    assert plan.ok is False
+    assert plan.refusals[0].field == "geo_precision"
+
+
+def test_a_coordinate_outside_the_valid_range_is_refused(kernel):
+    plan = VI.plan_import(
+        kernel, file_of(row(latitude="95", longitude="115.2", geo_precision="AREA_APPROX",
+                            geo_source="peta desa"))
+    )
+    assert plan.ok is False
+    assert plan.refusals[0].field == "latitude"
+
+
+def test_a_later_file_without_geo_columns_does_not_erase_a_survey(kernel):
+    """Re-importing the list written before the survey must not un-survey the villa."""
+    first = file_of(row(latitude="-8.5069", longitude="115.2627", geo_precision="VERIFIED",
+                        geo_source="survei 2026-11-12"))
+    assert VI.apply_import(kernel, VI.plan_import(kernel, first), actor="owner_anas",
+                           actor_role="owner").properties_created == 1
+    before = kernel.conn.execute(
+        "SELECT geo_precision, geo_source FROM properties WHERE property_id = 'villa_ubud_01'"
+    ).fetchone()
+    assert before["geo_precision"] == "VERIFIED"
+
+    second = file_of(row())  # the same villa list, geo columns left blank
+    VI.apply_import(kernel, VI.plan_import(kernel, second), actor="owner_anas",
+                    actor_role="owner")
+    after = kernel.conn.execute(
+        "SELECT geo_precision, latitude, geo_source FROM properties"
+        " WHERE property_id = 'villa_ubud_01'"
+    ).fetchone()
+    assert after["geo_precision"] == "VERIFIED"
+    assert after["latitude"] == pytest.approx(-8.5069)
+
+
+def test_the_template_carries_the_geo_columns_in_schema_order():
+    header = VI.template_csv().splitlines()[0].split(",")
+    assert header == list(VI.COLUMNS)
+    assert header[8:12] == ["latitude", "longitude", "geo_precision", "geo_source"]

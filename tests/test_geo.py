@@ -213,3 +213,96 @@ def test_two_exact_points_in_one_rounding_cell_draw_identically():
 def test_locator_map_label_is_escaped_in_the_aria_attribute():
     svg = geo.locator_map_svg(-8.66, 115.13, "Bali", label='Villa "A" <b>')
     assert 'aria-label="Map of the area around Villa &quot;A&quot; &lt;b&gt;"' in svg
+
+
+# --------------------------------------------------------------------------- #
+# The one rule both writers call
+#
+# SQLite cannot add a CHECK constraint to an existing table, so migration 017
+# could not express "VERIFIED implies coordinates" in the schema. It lives here
+# instead, and every writer calls it: the bulk importer and the kernel. A test
+# that only checked one of them would let the other drift.
+# --------------------------------------------------------------------------- #
+def test_a_blank_precision_means_unknown_and_carries_nothing():
+    assert geo.validate_geo_fields() == ("UNKNOWN", None, None, None)
+    assert geo.validate_geo_fields("", "  ", None, "none") == ("UNKNOWN", None, None, None)
+
+
+def test_a_named_precision_keeps_the_coordinate_it_was_given():
+    chosen, latitude, longitude, source = geo.validate_geo_fields(
+        "VERIFIED", "-8.5069", "115.2627", "survei 2026-11-12"
+    )
+    assert chosen == "VERIFIED"
+    assert latitude == pytest.approx(-8.5069)
+    assert longitude == pytest.approx(115.2627)
+    assert source == "survei 2026-11-12"
+    # Exact in the column, rounded on the way to the map: the publication rule is unchanged.
+    published = geo.public_point(latitude, longitude)
+    assert published != (latitude, longitude)
+    assert abs(published[0] - latitude) <= 0.0051
+    assert abs(published[1] - longitude) <= 0.0051
+
+
+def test_a_lowercase_precision_is_normalised_not_stored_as_typed():
+    assert geo.validate_geo_fields(" verified ", "-8.5", "115.2", "survei")[0] == "VERIFIED"
+
+
+@pytest.mark.parametrize("precision", ["VERIFIED", "AREA_APPROX"])
+def test_a_named_precision_without_both_coordinates_is_refused(precision):
+    with pytest.raises(GeoError) as caught:
+        geo.validate_geo_fields(precision, "-8.5", None, "survei")
+    assert caught.value.details["field"] == "longitude"
+
+    with pytest.raises(GeoError) as caught:
+        geo.validate_geo_fields(precision, None, "115.2", "survei")
+    assert caught.value.details["field"] == "latitude"
+
+
+@pytest.mark.parametrize("precision", ["VERIFIED", "AREA_APPROX"])
+def test_a_named_precision_needs_the_sentence_that_says_who_confirmed_it(precision):
+    with pytest.raises(GeoError) as caught:
+        geo.validate_geo_fields(precision, "-8.5", "115.2", "   ")
+    assert caught.value.details["field"] == "geo_source"
+
+
+def test_a_source_too_short_to_identify_anybody_is_refused():
+    with pytest.raises(GeoError) as caught:
+        geo.validate_geo_fields("VERIFIED", "-8.5", "115.2", "x")
+    assert caught.value.details["field"] == "geo_source"
+
+
+def test_unknown_refuses_a_coordinate_rather_than_dropping_it():
+    """Silently discarding it would tell the operator the coordinate landed."""
+    with pytest.raises(GeoError) as caught:
+        geo.validate_geo_fields("UNKNOWN", "-8.5", "115.2", None)
+    assert caught.value.details["field"] == "geo_precision"
+
+
+def test_unknown_refuses_a_source_it_could_not_have_used():
+    with pytest.raises(GeoError) as caught:
+        geo.validate_geo_fields("UNKNOWN", None, None, "survei 2026-11-12")
+    assert caught.value.details["field"] == "geo_precision"
+
+
+def test_a_precision_nobody_defined_is_refused_by_name():
+    with pytest.raises(GeoError) as caught:
+        geo.validate_geo_fields("APPROX", "-8.5", "115.2", "survei")
+    assert caught.value.details["field"] == "geo_precision"
+    assert "VERIFIED" in caught.value.details["value"] or "APPROX" in caught.value.details["value"]
+
+
+def test_a_coordinate_that_is_not_a_number_is_refused():
+    with pytest.raises(GeoError) as caught:
+        geo.validate_geo_fields("VERIFIED", "south", "115.2", "survei")
+    assert caught.value.details["field"] == "latitude"
+
+
+def test_the_kernel_and_the_importer_share_one_rule():
+    """Two writers, one function: importing a refused coordinate must fail the same way."""
+    import inspect
+
+    import reservation_kernel
+    import villa_import
+
+    for module in (reservation_kernel, villa_import):
+        assert "geo.validate_geo_fields(" in inspect.getsource(module), module.__name__
