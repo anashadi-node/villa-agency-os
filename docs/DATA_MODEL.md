@@ -8,6 +8,8 @@ Angka ringkas dari skema saat ini: **72 tabel, 62 index (2 di antaranya unique p
 python3 -c "import sys; sys.path.insert(0,'src'); import schema_loader as s; m=s.parse_schema_model('sqlite'); print(len(m.tables), len(m.indexes), len(m.triggers), len(m.enums))"
 ```
 
+Catatan hitung (diperiksa ulang 2026-11-13): kalau seluruh `src/schema/*.sql` di-`grep 'CREATE TABLE'`, hasilnya 84 — bukan tabel baru. Enam migrasi (`006`, `007`, `008`, `010`, `012`, `013`, `014`) menulis ulang `CREATE TABLE IF NOT EXISTS` untuk tabel yang sudah ada di skema awal (idempoten, supaya DB lama ikut menyusul), dan `011` memakai tabel kerja `ai_principal_events_new` lalu mengganti nama tabel lama. Tabel unik saat ini tetap **72**, sama dengan isi `data/villa.db` (72 tabel + `schema_migrations`).
+
 ---
 
 ## 0. Prinsip yang mengikat isi tabel
