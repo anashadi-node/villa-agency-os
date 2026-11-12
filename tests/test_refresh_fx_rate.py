@@ -81,6 +81,19 @@ def test_a_quote_carries_the_pair_the_rate_and_the_providers_own_clock():
     assert "quoted_at=" in found.source_ref and URL in found.source_ref
 
 
+def test_a_long_source_url_is_shortened_without_losing_where_it_came_from():
+    """Provenance that cannot be re-read is decoration: the file name must survive.
+
+    A truncated prefix alone kept the tmp directory and dropped ``quote-*.json``,
+    which is exactly the part a human needs to fetch the answer again.
+    """
+    long_url = "file://" + "/nested/" * 40 + "quote-abc123.json"
+    shortened = R.short_source_url(long_url, limit=120)
+    assert len(shortened) == 120
+    assert shortened.startswith("file:///nested/")
+    assert shortened.endswith("quote-abc123.json")
+
+
 def test_a_json_float_is_read_as_its_exact_decimal_not_as_a_binary_approximation():
     """A float rate is a decimal written by the provider: read it back verbatim."""
     found = quote(rates={"IDR": 17897.896326})

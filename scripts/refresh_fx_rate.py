@@ -56,6 +56,24 @@ DEFAULT_PAIR = "USD/IDR"
 
 #: A quote the provider itself dates older than this is a dead feed, not a rate.
 DEFAULT_MAX_FEED_AGE_HOURS = 48
+#: Characters of a provider URL that survive into ``source_doc_ref``. The kernel caps that
+#: field at 200 chars and the suffixes below take ~80, leaving ~120 for the URL.
+SOURCE_URL_MAX_CHARS = 120
+
+
+def short_source_url(url: str, limit: int = SOURCE_URL_MAX_CHARS) -> str:
+    """Fit a URL into ``limit`` chars without cutting off the part that identifies it.
+
+    Keeping only the head dropped the file name of a long ``file://`` probe URL — the one
+    part that lets a human fetch the provider's answer again. The scheme and host at the
+    front and the path/file name at the back are both kept; the middle is what goes.
+    """
+    if len(url) <= limit:
+        return url
+    keep = max(limit - 1, 0)  # one character goes to the ellipsis
+    head = keep // 3
+    return f"{url[:head]}…{url[-(keep - head):]}"
+
 #: A move larger than this against the rate already published is not a market move;
 #: it is a bad payload, and someone should look before the floor moves with it.
 DEFAULT_MAX_MOVE_PCT = Decimal("20")
@@ -162,7 +180,7 @@ def quote_from_payload(payload: Any, *, pair: str, url: str) -> Quote:
     # publish — so the URL is recorded truncated and the *full* provenance (URL, rate,
     # quote time) is preserved by the per-field anchors. Keep this in sync with the
     # kernel cap: the suffixes below are ~80 chars, leaving ~120 for the URL.
-    source_url = url[:120]
+    source_url = short_source_url(url)
     return Quote(
         pair=pair,
         rate=rate,
