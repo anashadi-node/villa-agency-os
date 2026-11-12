@@ -44,11 +44,11 @@ hr { border: none; border-top: 0.5pt solid #c9cfcb; margin: 6mm 0; }
   <h1>Project Villa Agency — Dokumen Update Lengkap A–Z</h1>
   <div class="sub">Reservation &amp; Operations Control Plane</div>
   <div class="meta">Dokumen kerja internal · dirender dari
-  <code>docs/PROJECT_VILLA_AGENCY_A-Z.md</code> · 130,343 karakter</div>
+  <code>docs/PROJECT_VILLA_AGENCY_A-Z.md</code> · 136,061 karakter</div>
 </section>
 <p><strong>Nama sistem:</strong> Villa Agency OS (Villa Management &amp; Agency)<br />
 <strong>Tanggal dokumen:</strong> 12 November 2026 · <strong>Pemilik:</strong> Owner (Mas Anas) · <strong>Disusun oleh:</strong> divisi Villa Management &amp; Agency<br />
-<strong>Posisi repo (potret, bukan angka hidup):</strong> <code>~/villa-agency-os</code> pada commit <code>2cb0696</code> — 181 commit (pertama 2026-09-21), 375 berkas ter-track, 58 modul <code>src/*.py</code> (±52.924 baris), 102 berkas <code>test_*.py</code> (104 berkas <code>.py</code> di <code>tests/</code> termasuk <code>conftest.py</code> dan <code>seed_support.py</code>), 68 berkas ADR (ADR-0068 ditambahkan 2026-11-13 setelah dokumen ini disusun).</p>
+<strong>Posisi repo (potret, bukan angka hidup):</strong> <code>~/villa-agency-os</code> pada commit <code>2cb0696</code> — 181 commit (pertama 2026-09-21), 375 berkas ter-track, 58 modul <code>src/*.py</code> (±52.924 baris), 102 berkas <code>test_*.py</code> (104 berkas <code>.py</code> di <code>tests/</code> termasuk <code>conftest.py</code> dan <code>seed_support.py</code>), 68 berkas ADR (ADR-0068 ditambahkan 2026-11-13 setelah dokumen ini disusun). <strong>Hari ini (2026-11-13, sebelum commit dokumen ini):</strong> 185 komit, 377 berkas ter-track, 103 berkas <code>test_*.py</code>, 3.875 tes lulus (<code>make check</code> rc=0 pada <code>8280c93</code>).</p>
 <blockquote>
 <p><strong>Cara membaca dokumen ini.</strong> Dokumen ini adalah konsolidasi <em>bertanggal</em> dari seluruh sumber resmi di repo
 (Charter, Peta Status &amp; Gap, Panduan Alur Kerja, State Machine, Policy Matrix, Data Model, Runbook, Deployment,
@@ -128,8 +128,8 @@ ia mengurus tiga hal yang paling sering menimbulkan kerugian di bisnis villa —
 </tr>
 <tr>
 <td>Tes terakhir</td>
-<td><code>make check</code> rc=0: <strong>3.851 passed, 4 skipped, 4.008 subtests passed</strong></td>
-<td>log gerbang 2026-11-12</td>
+<td><code>make check</code> rc=0: <strong>3.875 passed, 4 skipped, 4.008 subtests passed</strong></td>
+<td>log gerbang 2026-11-13</td>
 </tr>
 <tr>
 <td>Gerbang</td>
@@ -946,7 +946,7 @@ ia mengurus tiga hal yang paling sering menimbulkan kerugian di bisnis villa —
 <tr>
 <td><code>tests/</code></td>
 <td>Uji otomatis (pytest + subtests)</td>
-<td>102 berkas <code>test_*.py</code> + <code>conftest.py</code> + <code>seed_support.py</code>; 57.668 baris</td>
+<td>103 berkas <code>test_*.py</code> + <code>conftest.py</code> + <code>seed_support.py</code>; 57.955 baris</td>
 </tr>
 <tr>
 <td><code>docs/</code></td>
@@ -2632,7 +2632,7 @@ python3 src/marketing_site.py --db /tmp/demo/villa.db --dump /tmp/demo/site   # 
 <li><strong>Catatan dokumen (diperbaiki 2026-11-13):</strong> <code>docs/security/SESSION_AUTH.md</code> §1 dan §3 sudah memakai <code>--token-file</code>, dan <code>scripts/session_token.py rotate</code> menerima <code>--token-file</code> sehingga token sesi lama tidak perlu lewat argumen proses.</li>
 </ul>
 <h3 id="206-pengerasan-server-http">20.6 Pengerasan server HTTP</h3>
-<p><code>http.server</code> satu-utas: timeout koneksi 20 detik (soket menggantung tak lagi melumpuhkan layanan; dibuktikan dua arah oleh <code>tests/test_server_hardening.py</code>); antrean listen 64 (bukan 5) — 20 pengunjung serentak turun dari 1.248,2 ms ke 74,3 ms (16,8×), terukur; dashboard mengirim <code>X-Frame-Options: DENY</code> dan CSP <code>frame-ancestors 'none'; base-uri 'none'</code>. Kerentanan kelas PHP/Laravel/Node <strong>tidak berlaku</strong> karena kodenya tidak ada: runtime 100% stdlib, 0 dependency pihak ketiga (census <code>SCALING_AND_UPGRADE</code> §1). Hasil census tertulis 57 modul; hitungan hari ini 58 (Bab 7).</p>
+<p><code>http.server</code> satu-utas: timeout koneksi 20 detik (soket menggantung tak lagi melumpuhkan layanan; dibuktikan dua arah oleh <code>tests/test_server_hardening.py</code>); antrean listen 64 (bukan 5) — 20 pengunjung serentak turun dari 1.248,2 ms ke 74,3 ms (16,8×), terukur; dashboard mengirim <code>X-Frame-Options: DENY</code> dan CSP <code>frame-ancestors 'none'; base-uri 'none'</code>. Kerentanan kelas PHP/Laravel/Node <strong>tidak berlaku</strong> karena kodenya tidak ada: runtime jalur SQLite 100% stdlib. Satu-satunya impor pihak ketiga adalah <code>psycopg</code> (v3) / <code>psycopg2</code> yang diimpor <strong>lazy</strong> di <code>schema_loader.connect_postgres</code> dan tidak dibutuhkan untuk menjalankan layanan (census <code>SCALING_AND_UPGRADE</code> §1, dikoreksi 2026-11-13 — klaim lama "0 dependency pihak ketiga" terlalu mutlak). Census <code>SCALING_AND_UPGRADE</code> §1 kini 58 modul (dikoreksi 2026-11-13; Bab 7).</p>
 <h3 id="207-retensi-data">20.7 Retensi data</h3>
 <table>
 <thead>
@@ -2834,11 +2834,11 @@ python3 src/marketing_site.py --db /tmp/demo/villa.db --dump /tmp/demo/site   # 
 <p>Berjalan pada <strong>interpreter produksi</strong> <code>/usr/bin/python3</code> (bukan <code>python3</code> venv yang kebetulan pertama di PATH — komentar Makefile menjelaskan: di mesin ini venv = Python 3.11.16/SQLite 3.53.1, unit systemd = 3.12.3/SQLite 3.45.1; tes yang bergantung interpreter dulu hijau berbulan-bulan sambil menguji Python yang tak dipakai produksi). Target <code>check</code> (Makefile) = <code>interpreter syntax lint test secret-scan unsafe-scan schema-parity</code>, lalu mencetak <code>=== PRE-DEPLOY GATE: PASS ===</code>. <code>schema-parity</code> memeriksa bahwa twin PostgreSQL sama dengan hasil regenerasi dari sumber SQLite. Standar bahasa dijaga oleh tes pytest (<code>tests/test_language_standard.py</code>), bukan target make sendiri. <code>scripts/preflight.py</code> (verdict GO/NO-GO terhadap DB, anker, dan keputusan Go-Live) adalah langkah <strong>terpisah</strong> pada checklist go-live, bukan bagian <code>make check</code>. Sengaja bukan target make: menerbitkan allowance §56, menetapkan policy, menerapkan migrasi — itu tindakan Owner/ops.</p>
 <p>Catatan desain gerbang: <code>-q</code> sudah ada di <code>pytest.ini</code>; menambah satu lagi (<code>-qq</code>) membuat pytest 9 tidak mencetak baris hitungan, dan gerbang yang tak bisa menyebut jumlah tes akan tetap "PASS" meski berkas tes diam-diam tak terkumpul.</p>
 <h3 id="222-hasil-terakhir-2026-11-12-setelah-komit-5647b23">22.2 Hasil terakhir (2026-11-12, setelah komit <code>5647b23</code>)</h3>
-<p><code>make check</code> rc=0 · <strong>3.851 passed, 4 skipped, 4.008 subtests passed</strong> (301,52 s) · SECRET-SCAN PASS (0 temuan / 370 berkas) · UNSAFE-SCAN PASS (0/370) · baris penutup <code>PRE-DEPLOY GATE: PASS</code>. Belum dijalankan ulang setelah dokumen A–Z ini ditambahkan.</p>
+<p><code>make check</code> rc=0 · <strong>3.875 passed, 4 skipped, 4.008 subtests passed</strong> (305,67 s) · SECRET-SCAN PASS (0 temuan / 377 berkas) · UNSAFE-SCAN PASS (0/377) · baris penutup <code>PRE-DEPLOY GATE: PASS</code> — gerbang dijalankan ulang 2026-11-13 pada commit <code>8280c93</code>, pohon yang sudah memuat dokumen A–Z, ADR-0068, migrasi geo 017, <code>src/schema/README.md</code>, dan <code>tests/test_schema_adr_citations.py</code>; interpreter gerbang Python 3.12.3 / SQLite 3.45.1.</p>
 <h3 id="223-standar-bahasa">22.3 Standar bahasa</h3>
 <p><code>tests/test_language_standard.py</code> menjaga anggaran string non-Inggris per berkas; teks CLI/help/galat di <code>src/dashboard.py</code> berbahasa Inggris (anggaran 156). Salinan publik situs = en-US (ADR-0011).</p>
 <h3 id="224-rentang-interpreter-yang-diuji-scaling_and_upgrade-62-potret-2026-10-25">22.4 Rentang interpreter yang diuji (<code>SCALING_AND_UPGRADE</code> §6.2, potret 2026-10-25)</h3>
-<p>3.11.16 → seluruh suite lulus · 3.12.3 → seluruh suite lulus · 3.14.7 → modul <code>src/</code> berhasil diimpor, suite belum dijalankan. Aturan naik versi: jalankan <code>make check</code> dengan interpreter baru; bukti = lulus, bukan asumsi. Tidak ada <code>pip install</code> di produksi.</p>
+<p>3.11.16 → seluruh suite lulus · 3.12.3 → seluruh suite lulus · 3.14.9 → <strong>58/58 modul <code>src/</code> berhasil diimpor</strong> (diukur ulang 2026-11-13), suite belum dijalankan di bawah 3.14.9. Aturan naik versi: jalankan <code>make check</code> dengan interpreter baru; bukti = lulus, bukan asumsi. Tidak ada <code>pip install</code> di produksi.</p>
 <h3 id="225-kategori-tes-yang-masih-kurang-potret-2026-09-28">22.5 Kategori tes yang masih kurang (potret 2026-09-28)</h3>
 <p><code>STATUS_AND_GAP_MAP</code> §3.4 mencatat kategori concurrency, security (IDOR/prompt-injection/tool abuse), AI grounding, resilience, human handoff <strong>belum</strong> ada sebagai berkas bernama. Itu potret; sejak itu lapisan AI dibangun, jadi daftar ini <strong>perlu diaudit ulang</strong> (Bab 25).</p>
 <h3 id="226-probe-akses">22.6 Probe akses</h3>
@@ -2977,7 +2977,7 @@ python3 src/marketing_site.py --db /tmp/demo/villa.db --dump /tmp/demo/site   # 
 <tbody>
 <tr>
 <td>Komit</td>
-<td>173; pertama 2026-09-21 (<code>8c4c777</code>, "Phase 1 reservation kernel"); terakhir sebelum dokumen ini <code>5647b23</code></td>
+<td>potret <code>2cb0696</code> = 181; 185 per 2026-11-13 sebelum commit dokumen ini; pertama 2026-09-21 (<code>8c4c777</code>, "Phase 1 reservation kernel"); terakhir sebelum dokumen ini <code>5647b23</code></td>
 <td><code>git log</code></td>
 </tr>
 <tr>
@@ -2987,13 +2987,13 @@ python3 src/marketing_site.py --db /tmp/demo/villa.db --dump /tmp/demo/site   # 
 </tr>
 <tr>
 <td>Tes</td>
-<td>102 <code>test_*.py</code> (+ <code>conftest.py</code>, <code>seed_support.py</code>), 57.668 baris</td>
+<td>103 <code>test_*.py</code> (+ <code>conftest.py</code>, <code>seed_support.py</code>), 57.955 baris (2026-11-13; potret 102 / 57.668)</td>
 <td>hitung berkas</td>
 </tr>
 <tr>
-<td>Hasil <code>make check</code></td>
-<td>rc=0 · 3.851 passed · 4 skipped · 4.008 subtests</td>
+<td><code>make check</code> rc=0 · 3.875 passed · 4 skipped · 4.008 subtests · 377 berkas dipindai</td>
 <td>Bab 22.2</td>
+<td></td>
 </tr>
 <tr>
 <td>ADR</td>
@@ -3025,7 +3025,7 @@ python3 src/marketing_site.py --db /tmp/demo/villa.db --dump /tmp/demo/site   # 
 <blockquote>
 <p>Catatan: D1–D17 lengkap; di berkas, baris D17 tertulis sebelum D16.</p>
 </blockquote>
-<p><strong>Perubahan sejak potret Status-Gap (2026-09-28/10-08):</strong> tes naik dari 3.768 ke 3.851; berkas pindai dari 344 ke 370; lapisan AI yang pada potret "nol" kini ada sebagian (di bawah); D17 sudah <code>DECIDED</code>; peta geo (017), <code>--token-file</code>, dan gerbang secret-scan yang lebih ketat masuk pada 2026-11-12.</p>
+<p><strong>Perubahan sejak potret Status-Gap (2026-09-28/10-08):</strong> tes naik dari 3.768 ke 3.875 (dihitung 2026-11-13; 103 berkas <code>test_*.py</code>); berkas pindai dari 344 ke 370; lapisan AI yang pada potret "nol" kini ada sebagian (di bawah); D17 sudah <code>DECIDED</code>; peta geo (017), <code>--token-file</code>, dan gerbang secret-scan yang lebih ketat masuk pada 2026-11-12.</p>
 <h3 id="241-lapisan-ai-workforce-keadaan-kode">24.1 Lapisan AI Workforce — keadaan kode</h3>
 <table>
 <thead>
@@ -3136,10 +3136,10 @@ python3 src/marketing_site.py --db /tmp/demo/villa.db --dump /tmp/demo/site   # 
 </tr>
 <tr>
 <td>6</td>
-<td>Status-Gap §3.5 (potret) menyatakan dokumen AI Workforce belum dipetakan ke repo; berkas <code>docs/AI_WORKFORCE_TRACEABILITY.md</code> kini <strong>ada</strong> (diperiksa 2026-09-28, memakai tanda DIIKUTI/SEBAGIAN) — pernyataan Status-Gap itu sudah usang, tetapi isi pemetaan belum diaudit ulang di dokumen ini</td>
+<td>Status-Gap §3.5 (potret) menyatakan dokumen AI Workforce belum dipetakan ke repo; berkas <code>docs/AI_WORKFORCE_TRACEABILITY.md</code> <strong>ada</strong> (23.149 byte; 6 judul <code>##</code> — "Cara membaca" + §1–§5; 16 judul <code>#</code> seluruhnya; tanda DIIKUTI/SEBAGIAN). Angka "24 bagian" di dalam berkas itu menunjuk ke <strong>24 bagian dokumen acuan <code>Villa_Agency_AI_Workforce_Architecture_V1_1_Hermes.html</code></strong> (baris 3 berkasnya), bukan ke jumlah bagian berkas traceability itu sendiri. <strong>2026-11-13:</strong> §3.5 sudah diberi penanda <strong>USANG</strong> di berkasnya sendiri, jadi tuduhan "belum tersambung" tidak lagi dibaca sebagai status hari ini; yang tersisa hanyalah audit ulang atas ketepatan pemetaan</td>
 <td>pemetaan mungkin tertinggal dari kode</td>
-<td>Lampiran F</td>
-<td>Owner</td>
+<td><code>docs/STATUS_AND_GAP_MAP.md</code> §3.5, <code>docs/AI_WORKFORCE_TRACEABILITY.md</code></td>
+<td>Owner (prioritas audit)</td>
 </tr>
 <tr>
 <td>7</td>
@@ -3233,8 +3233,8 @@ python3 src/marketing_site.py --db /tmp/demo/villa.db --dump /tmp/demo/site   # 
 <ol>
 <li><strong>Koordinat 3 villa pilot:</strong> sumber terverifikasi (kunjungan atau pernyataan tertulis pemilik), presisi (<code>VERIFIED</code> atau <code>AREA_APPROX</code>), dan teks <code>geo_source</code>.</li>
 <li>~~ADR peta geo~~ <strong>sudah ditulis 2026-11-13</strong> sebagai ADR-0068 (aturan pembulatan 2 desimal, tiga tingkat presisi, larangan aset remote). Tidak ada lagi yang menunggu Owner di butir ini.</li>
-<li><strong>Retensi:</strong> satukan D9 (7 tahun) dengan tabel 10 tahun, atau tulis pengecualian per kelas.</li>
-<li><strong>Frekuensi uji restore:</strong> bulanan atau tiga bulanan.</li>
+<li><strong>Retensi (Lampiran F butir 5):</strong> satukan D9 (7 tahun) dengan tabel 10 tahun, atau tulis pengecualian per kelas. <em>Rekomendasi analisis:</em> untuk <strong>data transaksi, kontrak, pajak, dan audit</strong> pakai <strong>10 tahun</strong> — kewajiban pembukuan/pajak berjalan 10 tahun, dan menghapus pada tahun ke-7 membuat sistem menghapus dokumen yang masih diminta. Angka 7 tahun hanya aman untuk kelas tanpa kewajiban penyimpanan (mis. pesan pemasaran, jejak sesi). Keputusan akhir Owner + counsel; sampai diputuskan, tidak ada pekerjaan penghapusan yang dijalankan.</li>
+<li><strong>Frekuensi uji restore (Lampiran F butir 6):</strong> bulanan atau tiga bulanan. <em>Rekomendasi analisis:</em> <strong>bulanan</strong> — dengan RPO 24 jam, uji tiga bulanan berarti sampai 90 hari salinan terakhir belum pernah dibuktikan bisa dipulihkan; satu tiket per bulan jauh lebih murah daripada data yang tak teruji.</li>
 <li><strong>D15/D16</strong> — apa yang dianggap bukti level A dan rate card apa yang tampil ke tamu.</li>
 <li><strong>Urutan pembangunan</strong> Commercial AI dan Warden; Status-Gap §6 menyarankan "jangan membangun Commercial AI sebelum reservation otomatis terbukti".</li>
 <li><strong>Foto asli</strong> untuk situs publik.</li>
@@ -3266,7 +3266,7 @@ python3 src/marketing_site.py --db /tmp/demo/villa.db --dump /tmp/demo/site   # 
 </tr>
 <tr>
 <td>4</td>
-<td>Audit ulang kategori tes §19 terhadap 102 berkas</td>
+<td>Audit ulang kategori tes §19 terhadap 103 berkas</td>
 <td>tabel kategori → berkas</td>
 </tr>
 <tr>
@@ -3278,6 +3278,11 @@ python3 src/marketing_site.py --db /tmp/demo/villa.db --dump /tmp/demo/site   # 
 <td>6</td>
 <td>Pasang reverse proxy TLS + HSTS; jalankan <code>access_matrix_probe.py</code> dan <code>perf_probe.py</code></td>
 <td>bukti pada berkas laporan</td>
+</tr>
+<tr>
+<td>7 ✅</td>
+<td>Penjaga rujukan ADR di komentar skema (<code>tests/test_schema_adr_citations.py</code>) + <code>src/schema/README.md</code> (urutan migrasi, larangan pakai ulang nomor, penjelasan kenapa <code>009</code> tidak ada) — <strong>selesai 2026-11-13</strong></td>
+<td>mengembalikan <code>(ADR-0061)</code> di baris geo menggagalkan <code>make check</code>; aturan migrasi terbaca tanpa bertanya</td>
 </tr>
 </tbody>
 </table>
@@ -3940,12 +3945,12 @@ python3 src/marketing_site.py --db /tmp/demo/villa.db --dump /tmp/demo/site   # 
 </tbody>
 </table>
 <h2 id="lampiran-d-migrasi-skrip-dan-target-make">Lampiran D — Migrasi, skrip, dan target make</h2>
-<p><strong>Berkas <code>src/schema/</code>:</strong> <code>001_initial.sql</code> (+ <code>.pg.sql</code>), <code>002_pg_range_exclusions.pg.sql</code> (khusus PostgreSQL), <code>003_policy_catalogue_and_deny_registry</code>, <code>004_currency_aware_margin_floor</code>, <code>005_fx_rate_max_age_hours</code>, <code>006_outbox_and_integration_inbox</code>, <code>007_exception_fingerprints</code>, <code>008_agency_settings</code>, <code>010_agency_roles</code>, <code>011_ai_ladder</code>, <code>012_reservation_service</code>, <code>013_deposit_resolutions</code>, <code>014_supplier_settlements</code>, <code>015_shadow_bars</code>, <code>016_guest_preferred_currency</code>, <code>017_property_geo</code>. <strong>Nomor 009 tidak ada</strong> sebagai berkas (tidak ditemukan penjelasan di repo; lompatan 008→010 dicatat apa adanya).</p>
+<p><strong>Berkas <code>src/schema/</code>:</strong> <code>001_initial.sql</code> (+ <code>.pg.sql</code>), <code>002_pg_range_exclusions.pg.sql</code> (khusus PostgreSQL), <code>003_policy_catalogue_and_deny_registry</code>, <code>004_currency_aware_margin_floor</code>, <code>005_fx_rate_max_age_hours</code>, <code>006_outbox_and_integration_inbox</code>, <code>007_exception_fingerprints</code>, <code>008_agency_settings</code>, <code>010_agency_roles</code>, <code>011_ai_ladder</code>, <code>012_reservation_service</code>, <code>013_deposit_resolutions</code>, <code>014_supplier_settlements</code>, <code>015_shadow_bars</code>, <code>016_guest_preferred_currency</code>, <code>017_property_geo</code>. <strong>Nomor 009 tidak ada</strong> sebagai berkas — dijelaskan 2026-11-13 di <code>src/schema/README.md</code>: riwayat git membuktikan <code>009_*.sql</code> tidak pernah ada dan tidak ada migrasi yang dihapus, jadi nomor itu dilompati sejak awal dan tidak boleh dipakai ulang (lihat Lampiran F butir 9).</p>
 <p><strong><code>scripts/</code> (22 berkas + <code>__pycache__</code>):</strong> <code>access_matrix_probe</code>, <code>ai_mode</code>, <code>apply_migrations</code>, <code>audit_structure</code>, <code>build_deliverables</code>, <code>closure_facts</code>, <code>generate_pg_twin</code>, <code>go_live_smoke</code>, <code>import_villas</code>, <code>manage_roles</code>, <code>perf_probe</code>, <code>phishing_drill_score</code>, <code>preflight</code>, <code>publish_ai_allowance</code>, <code>publish_anchor</code>, <code>publish_policy_value</code>, <code>refresh_fx_rate</code>, <code>reservation_kpi</code>, <code>secret_scan.sh</code>, <code>seed_demo</code>, <code>session_token</code>, <code>unsafe_config_scan.sh</code>.</p>
 <p><strong>Target make:</strong> <code>help test syntax secret-scan unsafe-scan schema-parity pg-twin check interpreter lint anchor-publish anchor-verify allowance-status policy-status migrate-check audit-structure</code>.</p>
 <h2 id="lampiran-e-apa-yang-diverifikasi-dan-apa-yang-hanya-dikutip">Lampiran E — Apa yang diverifikasi dan apa yang hanya dikutip</h2>
-<p><strong>Dihitung/dibaca ulang dari repo/DB pada 2026-11-12:</strong> jumlah komit dan komit pertama; jumlah modul/baris <code>src/</code>; berkas dan baris tes; jumlah ADR dan status; <code>PAGE_ROLES</code> (14 entri) dan 6 peran; 73 nama tabel §9.2 vs <code>sqlite_master</code> DB hidup (73/73 cocok; 72 tabel model + <code>schema_migrations</code>); nama tabel/kolom Bab 13 (semua ada, kecuali <code>approvals</code> yang adalah modul); 14 baris <code>schema_migrations</code>; 3 properti <code>UNKNOWN</code>; keluaran preflight; target make; isi <code>GO_LIVE_DECISIONS.md</code>; CSP/rate limit/honeypot/token form pada <code>marketing_site.py</code>; keberadaan/ketiadaan <code>validate_geo_fields</code>; rujukan "ADR-0061".</p>
-<p><strong>Dikutip dari dokumen sumber (tidak diuji ulang di sini):</strong> angka SLA/retensi/RPO-RTO; isi 6 playbook insiden; ambang shadow-mode (agreement ≥ 95%, ≥ 100 kasus); ukuran performa (3,42 ms, 292 req/s, 20 pengunjung 1.248,2→74,3 ms); hasil uji interpreter 3.11/3.12/3.14; census 0 dependency; daftar 27 <code>denied_actions</code>; isi tabel §9 selain nama tabel.</p>
+<p><strong>Dihitung/dibaca ulang dari repo/DB pada 2026-11-12 (dan 2026-11-13 untuk: 58/58 modul <code>src/</code> berhasil diimpor pada 3.14.9; isi <code>src/schema/README.md</code>; riwayat <code>git log --all -- src/schema/009*</code> yang kosong; byte vs karakter <code>STATUS_AND_GAP_MAP.md</code>):</strong> jumlah komit dan komit pertama; jumlah modul/baris <code>src/</code>; berkas dan baris tes; jumlah ADR dan status; <code>PAGE_ROLES</code> (14 entri) dan 6 peran; 73 nama tabel §9.2 vs <code>sqlite_master</code> DB hidup (73/73 cocok; 72 tabel model + <code>schema_migrations</code>); nama tabel/kolom Bab 13 (semua ada, kecuali <code>approvals</code> yang adalah modul); 14 baris <code>schema_migrations</code>; 3 properti <code>UNKNOWN</code>; keluaran preflight; target make; isi <code>GO_LIVE_DECISIONS.md</code>; CSP/rate limit/honeypot/token form pada <code>marketing_site.py</code>; keberadaan/ketiadaan <code>validate_geo_fields</code>; rujukan "ADR-0061".</p>
+<p><strong>Dikutip dari dokumen sumber (tidak diuji ulang di sini):</strong> angka SLA/retensi/RPO-RTO; isi 6 playbook insiden; ambang shadow-mode (agreement ≥ 95%, ≥ 100 kasus); ukuran performa (3,42 ms, 292 req/s, 20 pengunjung 1.248,2→74,3 ms); hasil uji interpreter 3.11/3.12 (3.14 sudah diukur ulang ke 3.14.9, impor saja); census dependency (dikutip, lalu <strong>dikoreksi</strong> 2026-11-13: bukan "0" mutlak — <code>psycopg</code>/<code>psycopg2</code> diimpor lazy di jalur PostgreSQL); daftar 27 <code>denied_actions</code>; isi tabel §9 selain nama tabel.</p>
 <p><strong>Tidak dilakukan:</strong> uji penetrasi; verifikasi legal/pajak; memulihkan backup; menjalankan tes PostgreSQL hidup.</p>
 <h2 id="lampiran-f-daftar-ketidakkonsistenan-yang-ditemukan">Lampiran F — Daftar ketidakkonsistenan yang ditemukan</h2>
 <table>
@@ -3955,6 +3960,7 @@ python3 src/marketing_site.py --db /tmp/demo/villa.db --dump /tmp/demo/site   # 
 <th>Temuan</th>
 <th>Lokasi</th>
 <th>Tindakan yang disarankan</th>
+<th>Status 2026-11-13</th>
 </tr>
 </thead>
 <tbody>
@@ -3963,67 +3969,86 @@ python3 src/marketing_site.py --db /tmp/demo/villa.db --dump /tmp/demo/site   # 
 <td>Label "ADR-0061" pada peta geo salah; ADR-0061 = efek tool agen telemetri (opsi B)</td>
 <td><code>001_initial.sql:53</code>, <code>001_initial.pg.sql:53</code>, <code>017_property_geo.sql:1</code></td>
 <td>tulis ADR peta; ganti komentar</td>
+<td>✅ ditutup — ketiga berkas menyebut ADR-0068; dikunci <code>tests/test_schema_adr_citations.py</code> (gagal bila ADR-0061 muncul lagi di baris geo)</td>
 </tr>
 <tr>
 <td>2</td>
 <td><code>villa_import.validate_geo_fields</code> dirujuk tetapi tidak ada</td>
 <td><code>017_property_geo.sql:20</code></td>
 <td>bangun fungsi + tes, atau hapus rujukan</td>
+<td>✅ ditutup — fungsi ada di <code>src/geo.py</code>, dipanggil jalur impor &amp; kernel</td>
 </tr>
 <tr>
 <td>3</td>
 <td><code>SESSION_AUTH.md</code> menyebut <code>--token</code> pada dashboard</td>
 <td>§1, §4</td>
 <td>ganti <code>--token-file</code></td>
+<td>✅ ditutup — <code>--token-file &lt;path&gt;</code></td>
 </tr>
 <tr>
 <td>4</td>
 <td><code>session_token.py rotate --token &lt;lama&gt;</code> menaruh token sesi di argumen</td>
 <td><code>session_token.py:224</code></td>
 <td>nilai risikonya; bila perlu baca dari stdin/berkas</td>
+<td>✅ ditutup — <code>rotate --token-file</code>; <code>--token</code> dipertahankan, keduanya bersamaan → exit 2</td>
 </tr>
 <tr>
 <td>5</td>
 <td>Retensi 7 tahun (D9) vs 10 tahun (tabel retensi)</td>
 <td>GO_LIVE D9 vs RETENTION</td>
 <td>keputusan Owner</td>
+<td>⏳ <strong>menunggu Owner + counsel</strong> — D9 "hapus setelah 7 tahun" bertentangan dengan <code>RETENTION</code> (data transaksi 10 tahun) dan dengan aturan pembukuan/pajak 10 tahun; sistem menjalankan aturan yang disetujui, jadi angkanya harus dipilih Owner, bukan diambil dari salah satu dokumen</td>
 </tr>
 <tr>
 <td>6</td>
 <td>Uji restore bulanan vs tiga bulanan</td>
 <td>DEPLOYMENT §5 vs D10</td>
 <td>keputusan Owner</td>
+<td>⏳ <strong>menunggu Owner</strong> — <code>DEPLOYMENT</code> §5 menulis "uji restore penuh <strong>bulanan</strong>", D10 menulis "tiap <strong>3 bulan</strong>"; RPO 24 jam / RTO 4 jam sama di kedua dokumen. Calon jawaban: satukan ke <strong>bulanan</strong> (lebih ketat, biayanya satu tiket operasional per bulan)</td>
 </tr>
 <tr>
 <td>7</td>
 <td>Status-Gap §3.5 menyatakan traceability belum ada; berkasnya ada</td>
 <td>STATUS_AND_GAP_MAP</td>
 <td>tandai usang</td>
+<td>✅ ditutup — penanda <strong>USANG sejak 2026-09-28</strong> dipasang di §3.5 (berkas <code>docs/AI_WORKFORCE_TRACEABILITY.md</code>, 23.149 byte, 6 judul <code>##</code> + 16 judul <code>#</code>; angka "24 bagian" di dalamnya = 24 bagian dokumen AI Workforce V1.1, bukan jumlah bagian berkasnya); paragraf lama disimpan sebagai potret sejarah</td>
 </tr>
 <tr>
 <td>8</td>
 <td>Census 57 modul (SCALING_AND_UPGRADE) vs 58 hari ini</td>
 <td>SCALING §1</td>
 <td>perbarui angka</td>
+<td>✅ ditutup — §1 kini "58 modul"; tabel kompatibilitas diperbarui ke <strong>3.14.9, 58/58 modul berhasil diimpor</strong> (diukur ulang 2026-11-13). Sekalian dikoreksi: klaim "0 dependency pihak ketiga" tidak utuh — <code>psycopg</code> v3/<code>psycopg2</code> diimpor <em>lazy</em> di <code>schema_loader.connect_postgres</code> untuk kembaran PostgreSQL</td>
 </tr>
 <tr>
 <td>9</td>
 <td>Tidak ada migrasi bernomor 009</td>
 <td><code>src/schema/</code></td>
 <td>jelaskan atau catat sengaja</td>
+<td>✅ ditutup — <code>src/schema/README.md</code>: riwayat git membuktikan <code>009_*.sql</code> <strong>tidak pernah ada</strong> dan tidak ada migrasi yang dihapus (<code>git log --all -- 'src/schema/009*'</code> kosong; <code>--diff-filter=D</code> kosong); dilompati sejak awal, nomor tidak dipakai ulang</td>
 </tr>
 <tr>
 <td>10</td>
 <td>Status-Gap §1 menulis go-live NO-GO (D17 OPEN); hari ini D17 DECIDED dan preflight GO</td>
 <td>STATUS_AND_GAP_MAP</td>
 <td>tandai potret (sudah)</td>
+<td>✅ sudah berupa potret — banner "CATATAN STATUS (2026-10-03) — baca ini dulu" di baris 4, jadi <code>NO-GO</code> di sana dibaca sebagai keadaan 2026-10-02, bukan hari ini</td>
 </tr>
 <tr>
 <td>11</td>
 <td>Ukuran <code>STATUS_AND_GAP_MAP.md</code> terukur berbeda pada dua pembacaan (25.677 vs 25.871 vs 24.308 karakter) — perbedaan byte vs karakter</td>
 <td>—</td>
 <td>tidak diselidiki lebih jauh</td>
+<td>✅ diselidiki — ukuran berkas dihitung <strong>byte</strong>; isi dihitung <strong>karakter</strong>. Satu pembacaan 2026-11-13: <code>wc -c</code> 25.386 byte vs <code>wc -m</code> 24.983 karakter (selisih 403 = karakter non-ASCII multi-byte). Kedua angka benar bila satuannya disebut; setiap pembacaan setelah dokumen disunting akan bergeser, jadi ukuran berkas tidak boleh dipakai sebagai bukti isi</td>
 </tr>
 </tbody>
 </table>
+<p><strong>Ringkasan Lampiran F (2026-11-13):</strong> 9 dari 11 butir ditutup dengan bukti di repo; 2
+butir (retensi data, frekuensi uji restore) <strong>tidak bisa ditutup oleh kode</strong> karena
+keduanya keputusan bisnis yang bertentangan antardokumen — keduanya menunggu Owner, dan
+sampai diputuskan sistem <strong>tidak</strong> boleh menegakkan salah satunya diam-diam. Butir 5
+membawa risiko kepatuhan (menghapus data transaksi pada tahun ke-7 sementara kewajiban
+pembukuan/pajak berjalan 10 tahun), jadi ia didahulukan sebelum ada penghapusan data
+nyata. Butir 1 kini punya penjaga otomatis: komentar skema yang menyebut ADR yang salah
+menggagalkan <code>make check</code>, bukan menunggu audit berikutnya.</p>
 </body></html>

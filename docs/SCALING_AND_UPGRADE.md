@@ -16,8 +16,8 @@ Sebelum menambal apa pun, premisnya diuji dulu.
 | Berkas PHP / Blade / `artisan` | **0** |
 | `composer.json` / `composer.lock` (Laravel) | **0** |
 | Berkas JS/TS, `package.json`, `node_modules` | **0** |
-| Dependency runtime pihak ketiga | **0** — 57 modul `src/` seluruhnya Python stdlib |
-| Dependency build/test | pytest, pyflakes, psycopg2 (dev/uji saja) |
+| Dependency runtime pihak ketiga | **0** pada jalur SQLite (bawaan) — 58 modul `src/` hanya memakai stdlib. Satu-satunya impor pihak ketiga adalah **driver PostgreSQL opsional** (`psycopg` v3 atau `psycopg2`), diimpor *lazy* di dalam `schema_loader.connect_postgres` dan hanya dibutuhkan bila memakai kembaran PG |
+| Dependency build/test | pytest, pyflakes; `markdown` hanya dipakai skrip build `scripts/build_deliverables.py`; `psycopg2`/`psycopg` untuk uji paritas PG |
 
 **Konsekuensinya, dan ini yang penting:** kelas kerentanan PHP/Laravel/Node
 (unserialize injection, `composer` supply chain, `npm` lifecycle script, template
@@ -150,7 +150,7 @@ menulis seluruh halaman sebagai HTML statis.
    |---|---|
    | 3.11.16 (venv, SQLite 3.53.1) | seluruh suite lulus |
    | 3.12.3 (`/usr/bin/python3`, SQLite 3.45.1) | seluruh suite lulus (`make check`) |
-   | 3.14.7 | 57/57 modul `src/` berhasil diimpor; suite belum dijalankan (pytest tidak terpasang untuk interpreter ini) |
+   | 3.14.9 | 58/58 modul `src/` berhasil diimpor (diukur ulang 2026-11-13); suite belum dijalankan (pytest tidak terpasang untuk interpreter ini) |
 
    Artinya kode tidak memakai API yang dihapus sampai 3.14. Untuk menaikkan
    versi produksi: jalankan `make check` dengan interpreter baru; bila lulus,

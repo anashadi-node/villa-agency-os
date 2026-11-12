@@ -117,7 +117,14 @@ Ini bukan kontradiksi — ADR-0012 sendiri menyatakan *"It is a design acceptanc
 
 **Kesimpulan jujur:** §19 belum bisa dijalankan karena 6 dari 8 kategorinya menguji lapisan yang belum ada.
 
-### 3.5 Dokumen AI Workforce belum tersambung ke traceability repo
+### 3.5 Dokumen AI Workforce belum tersambung ke traceability repo — **USANG sejak 2026-09-28**
+
+> **Koreksi (2026-11-13):** pernyataan di bawah **tidak lagi benar**. Berkas
+> `docs/AI_WORKFORCE_TRACEABILITY.md` sudah ada (23.149 byte, diperiksa 2026-09-28, metode:
+> pemeriksaan langsung kode/skema/tes/gerbang) dan memetakan 24 bagian dokumen AI Workforce
+> dengan tanda ✅ DIIKUTI / 🟡 SEBAGIAN / ❌ BELUM. Yang **belum** dilakukan: audit ulang atas
+> ketepatan pemetaan itu (lihat Bab 25 butir 6 dokumen A–Z). Isi paragraf lama dipertahankan
+> di bawah sebagai potret sejarah, bukan sebagai status hari ini.
 
 Dokumen itu hanya disebut di `ADR-0033`, `ADR-0034` (yang saya tulis) dan matriks. **Tidak ada satu dokumen pun** di `docs/` yang memetakan 24 bagian dokumen itu ke repo ini. Artinya: acuan Anda belum jadi acuan *proyek* — masih jadi acuan *percakapan*.
 

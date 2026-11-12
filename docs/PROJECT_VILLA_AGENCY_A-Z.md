@@ -2,7 +2,7 @@
 
 **Nama sistem:** Villa Agency OS (Villa Management & Agency)  
 **Tanggal dokumen:** 12 November 2026 · **Pemilik:** Owner (Mas Anas) · **Disusun oleh:** divisi Villa Management & Agency  
-**Posisi repo (potret, bukan angka hidup):** `~/villa-agency-os` pada commit `2cb0696` — 181 commit (pertama 2026-09-21), 375 berkas ter-track, 58 modul `src/*.py` (±52.924 baris), 102 berkas `test_*.py` (104 berkas `.py` di `tests/` termasuk `conftest.py` dan `seed_support.py`), 68 berkas ADR (ADR-0068 ditambahkan 2026-11-13 setelah dokumen ini disusun).
+**Posisi repo (potret, bukan angka hidup):** `~/villa-agency-os` pada commit `2cb0696` — 181 commit (pertama 2026-09-21), 375 berkas ter-track, 58 modul `src/*.py` (±52.924 baris), 102 berkas `test_*.py` (104 berkas `.py` di `tests/` termasuk `conftest.py` dan `seed_support.py`), 68 berkas ADR (ADR-0068 ditambahkan 2026-11-13 setelah dokumen ini disusun). **Hari ini (2026-11-13, sebelum commit dokumen ini):** 185 komit, 377 berkas ter-track, 103 berkas `test_*.py`, 3.875 tes lulus (`make check` rc=0 pada `8280c93`).
 
 > **Cara membaca dokumen ini.** Dokumen ini adalah konsolidasi *bertanggal* dari seluruh sumber resmi di repo
 > (Charter, Peta Status & Gap, Panduan Alur Kerja, State Machine, Policy Matrix, Data Model, Runbook, Deployment,
@@ -55,7 +55,7 @@ ia mengurus tiga hal yang paling sering menimbulkan kerugian di bisnis villa —
 | Halaman dashboard | 14 entri `PAGE_ROLES` (12 halaman navigasi + `case_detail` + `error`); 6 peran | `PAGE_ROLES` di `src/dashboard.py` |
 | Rute situs publik | `/`, `/villas`, `/villas/<id>`, `/destinations/bali`, `/destinations/yogyakarta`, `/owners`, `/inquiry`, `/favicon.ico` | `src/marketing_site.py` |
 | ADR | 68 berkas (`0001`–`0068`) | `ls docs/adr` |
-| Tes terakhir | `make check` rc=0: **3.851 passed, 4 skipped, 4.008 subtests passed** | log gerbang 2026-11-12 |
+| Tes terakhir | `make check` rc=0: **3.875 passed, 4 skipped, 4.008 subtests passed** | log gerbang 2026-11-13 |
 | Gerbang | SECRET-SCAN 0/370, UNSAFE-SCAN 0/370, PRE-DEPLOY GATE PASS | `make check` |
 | Properti di DB hidup | 3, semuanya `geo_precision=UNKNOWN` | query baca-saja 2026-11-12 |
 
@@ -390,7 +390,7 @@ Keduanya **loopback saja**. Membuka dashboard ke internet butuh lapisan login ta
 |---|---|---|
 | `src/` | Seluruh logika domain, Python stdlib saja | 58 modul `.py`, 52.924 baris (potret `2cb0696`) |
 | `src/schema/` | Skema SQLite + twin PostgreSQL + migrasi | `001_initial.sql`, `001_initial.pg.sql`, `002_pg_range_exclusions.pg.sql`, migrasi `003`–`008`, `010`–`017` (tidak ada `009`) |
-| `tests/` | Uji otomatis (pytest + subtests) | 102 berkas `test_*.py` + `conftest.py` + `seed_support.py`; 57.668 baris |
+| `tests/` | Uji otomatis (pytest + subtests) | 103 berkas `test_*.py` + `conftest.py` + `seed_support.py`; 57.955 baris |
 | `docs/` | Dokumen kerja, ADR, keamanan, laporan desain | 29 berkas `.md` di akar `docs/` (42 entri termasuk HTML/PDF dan subfolder), `docs/adr/` (68 ADR), `docs/security/` |
 | `scripts/` | CLI operator, gerbang, utilitas | 22 berkas |
 | `templates/` | HTML dashboard (`base`, `error`, dan halaman), `templates/marketing/` (9 berkas), `templates/messages/id-ID.json` (templat pesan) | 15 `.html` dashboard |
@@ -1086,7 +1086,7 @@ Larangan AI yang **ditegakkan mesin** (`security.ai.denied_actions`, daftar lara
 
 ### 20.6 Pengerasan server HTTP
 
-`http.server` satu-utas: timeout koneksi 20 detik (soket menggantung tak lagi melumpuhkan layanan; dibuktikan dua arah oleh `tests/test_server_hardening.py`); antrean listen 64 (bukan 5) — 20 pengunjung serentak turun dari 1.248,2 ms ke 74,3 ms (16,8×), terukur; dashboard mengirim `X-Frame-Options: DENY` dan CSP `frame-ancestors 'none'; base-uri 'none'`. Kerentanan kelas PHP/Laravel/Node **tidak berlaku** karena kodenya tidak ada: runtime 100% stdlib, 0 dependency pihak ketiga (census `SCALING_AND_UPGRADE` §1). Hasil census tertulis 57 modul; hitungan hari ini 58 (Bab 7).
+`http.server` satu-utas: timeout koneksi 20 detik (soket menggantung tak lagi melumpuhkan layanan; dibuktikan dua arah oleh `tests/test_server_hardening.py`); antrean listen 64 (bukan 5) — 20 pengunjung serentak turun dari 1.248,2 ms ke 74,3 ms (16,8×), terukur; dashboard mengirim `X-Frame-Options: DENY` dan CSP `frame-ancestors 'none'; base-uri 'none'`. Kerentanan kelas PHP/Laravel/Node **tidak berlaku** karena kodenya tidak ada: runtime jalur SQLite 100% stdlib. Satu-satunya impor pihak ketiga adalah `psycopg` (v3) / `psycopg2` yang diimpor **lazy** di `schema_loader.connect_postgres` dan tidak dibutuhkan untuk menjalankan layanan (census `SCALING_AND_UPGRADE` §1, dikoreksi 2026-11-13 — klaim lama "0 dependency pihak ketiga" terlalu mutlak). Census `SCALING_AND_UPGRADE` §1 kini 58 modul (dikoreksi 2026-11-13; Bab 7).
 
 ### 20.7 Retensi data
 
@@ -1157,7 +1157,7 @@ Catatan desain gerbang: `-q` sudah ada di `pytest.ini`; menambah satu lagi (`-qq
 
 ### 22.2 Hasil terakhir (2026-11-12, setelah komit `5647b23`)
 
-`make check` rc=0 · **3.851 passed, 4 skipped, 4.008 subtests passed** (301,52 s) · SECRET-SCAN PASS (0 temuan / 370 berkas) · UNSAFE-SCAN PASS (0/370) · baris penutup `PRE-DEPLOY GATE: PASS`. Belum dijalankan ulang setelah dokumen A–Z ini ditambahkan.
+`make check` rc=0 · **3.875 passed, 4 skipped, 4.008 subtests passed** (305,67 s) · SECRET-SCAN PASS (0 temuan / 377 berkas) · UNSAFE-SCAN PASS (0/377) · baris penutup `PRE-DEPLOY GATE: PASS` — gerbang dijalankan ulang 2026-11-13 pada commit `8280c93`, pohon yang sudah memuat dokumen A–Z, ADR-0068, migrasi geo 017, `src/schema/README.md`, dan `tests/test_schema_adr_citations.py`; interpreter gerbang Python 3.12.3 / SQLite 3.45.1.
 
 ### 22.3 Standar bahasa
 
@@ -1165,7 +1165,7 @@ Catatan desain gerbang: `-q` sudah ada di `pytest.ini`; menambah satu lagi (`-qq
 
 ### 22.4 Rentang interpreter yang diuji (`SCALING_AND_UPGRADE` §6.2, potret 2026-10-25)
 
-3.11.16 → seluruh suite lulus · 3.12.3 → seluruh suite lulus · 3.14.7 → modul `src/` berhasil diimpor, suite belum dijalankan. Aturan naik versi: jalankan `make check` dengan interpreter baru; bukti = lulus, bukan asumsi. Tidak ada `pip install` di produksi.
+3.11.16 → seluruh suite lulus · 3.12.3 → seluruh suite lulus · 3.14.9 → **58/58 modul `src/` berhasil diimpor** (diukur ulang 2026-11-13), suite belum dijalankan di bawah 3.14.9. Aturan naik versi: jalankan `make check` dengan interpreter baru; bukti = lulus, bukan asumsi. Tidak ada `pip install` di produksi.
 
 ### 22.5 Kategori tes yang masih kurang (potret 2026-09-28)
 
@@ -1261,10 +1261,10 @@ Semua angka di bawah diambil langsung dari repo/DB pada hari penulisan, bukan da
 
 | Ukuran | Nilai | Cara memeriksa |
 |---|---|---|
-| Komit | 173; pertama 2026-09-21 (`8c4c777`, "Phase 1 reservation kernel"); terakhir sebelum dokumen ini `5647b23` | `git log` |
+| Komit | potret `2cb0696` = 181; 185 per 2026-11-13 sebelum commit dokumen ini; pertama 2026-09-21 (`8c4c777`, "Phase 1 reservation kernel"); terakhir sebelum dokumen ini `5647b23` | `git log` |
 | Modul `src/` | 58 berkas `.py`, 52.924 baris (potret `2cb0696`) | hitung berkas |
-| Tes | 102 `test_*.py` (+ `conftest.py`, `seed_support.py`), 57.668 baris | hitung berkas |
-| Hasil `make check` | rc=0 · 3.851 passed · 4 skipped · 4.008 subtests | Bab 22.2 |
+| Tes | 103 `test_*.py` (+ `conftest.py`, `seed_support.py`), 57.955 baris (2026-11-13; potret 102 / 57.668) | hitung berkas |
+| `make check` rc=0 · 3.875 passed · 4 skipped · 4.008 subtests · 377 berkas dipindai | Bab 22.2 |
 | ADR | 68 berkas di `docs/adr/` (Lampiran B) | `ls` |
 | Migrasi terpasang di DB hidup | 14 baris `schema_migrations` (003–008, 010–017; 001 dan 002 adalah skema dasar); **tidak ada nomor 009** | `select` baca-saja |
 | Properti di DB hidup | 3, semua `geo_precision = UNKNOWN` | `select` baca-saja |
@@ -1273,7 +1273,7 @@ Semua angka di bawah diambil langsung dari repo/DB pada hari penulisan, bukan da
 
 > Catatan: D1–D17 lengkap; di berkas, baris D17 tertulis sebelum D16.
 
-**Perubahan sejak potret Status-Gap (2026-09-28/10-08):** tes naik dari 3.768 ke 3.851; berkas pindai dari 344 ke 370; lapisan AI yang pada potret "nol" kini ada sebagian (di bawah); D17 sudah `DECIDED`; peta geo (017), `--token-file`, dan gerbang secret-scan yang lebih ketat masuk pada 2026-11-12.
+**Perubahan sejak potret Status-Gap (2026-09-28/10-08):** tes naik dari 3.768 ke 3.875 (dihitung 2026-11-13; 103 berkas `test_*.py`); berkas pindai dari 344 ke 370; lapisan AI yang pada potret "nol" kini ada sebagian (di bawah); D17 sudah `DECIDED`; peta geo (017), `--token-file`, dan gerbang secret-scan yang lebih ketat masuk pada 2026-11-12.
 
 ### 24.1 Lapisan AI Workforce — keadaan kode
 
@@ -1308,7 +1308,7 @@ Daftar ini menggabungkan Status-Gap (potret), temuan hari ini, dan hasil membang
 | 3 | ADR-0012 (4 kategori rel pembayaran) dan ADR-0013 (stablecoin) berstatus Accepted tetapi **belum dieksekusi** | `payments.py` masih memakai `HOSTED_PAGE, BANK_TRANSFER, CASH, OTHER`; tak ada `method_category`; tak ada USDC/USDT | Status-Gap §3.3 (potret; periksa ulang) | Owner (migrasi pembayaran perlu persetujuan) |
 | 4 | Kategori tes: concurrency, security (IDOR/prompt-injection/tool abuse), AI grounding, resilience, human handoff tidak ada sebagai berkas bernama pada potret | liputan §19 belum terbukti | Status-Gap §3.4 (potret; **perlu audit ulang** — AI sudah dibangun sejak itu) | QA/Tech |
 | 5 | Outbox: worker latar yang memanggil `publish_due` berkala + transport nyata (email/WA/webhook) belum ada | pesan keluar belum benar-benar terkirim otomatis | Status-Gap §3.2 (potret) | Tech |
-| 6 | Status-Gap §3.5 (potret) menyatakan dokumen AI Workforce belum dipetakan ke repo; berkas `docs/AI_WORKFORCE_TRACEABILITY.md` kini **ada** (diperiksa 2026-09-28, memakai tanda DIIKUTI/SEBAGIAN) — pernyataan Status-Gap itu sudah usang, tetapi isi pemetaan belum diaudit ulang di dokumen ini | pemetaan mungkin tertinggal dari kode | Lampiran F | Owner |
+| 6 | Status-Gap §3.5 (potret) menyatakan dokumen AI Workforce belum dipetakan ke repo; berkas `docs/AI_WORKFORCE_TRACEABILITY.md` **ada** (23.149 byte; 6 judul `##` — "Cara membaca" + §1–§5; 16 judul `#` seluruhnya; tanda DIIKUTI/SEBAGIAN). Angka "24 bagian" di dalam berkas itu menunjuk ke **24 bagian dokumen acuan `Villa_Agency_AI_Workforce_Architecture_V1_1_Hermes.html`** (baris 3 berkasnya), bukan ke jumlah bagian berkas traceability itu sendiri. **2026-11-13:** §3.5 sudah diberi penanda **USANG** di berkasnya sendiri, jadi tuduhan "belum tersambung" tidak lagi dibaca sebagai status hari ini; yang tersisa hanyalah audit ulang atas ketepatan pemetaan | pemetaan mungkin tertinggal dari kode | `docs/STATUS_AND_GAP_MAP.md` §3.5, `docs/AI_WORKFORCE_TRACEABILITY.md` | Owner (prioritas audit) |
 | 7 | MFA hanya untuk 3 peran; membuka dashboard ke internet butuh MFA semua peran + faktor kata sandi — belum ada | dashboard hanya boleh loopback/VPN | SESSION_AUTH §5 | Tech-Security |
 | 8 ♦ | ~~Peta geo belum punya ADR sendiri~~ **SELESAI 2026-11-13:** **ADR-0068** (presisi + sumber lokasi properti) ditulis; komentar SQL, `test_migrations.py`, dan `test_marketing_site.py` tidak lagi menyebut "ADR-0061" di konteks geo | jejak keputusan menunjuk dokumen yang benar | `docs/adr/0068-property-location-precision-and-source.md` | selesai |
 | 9 ♦ | ~~`villa_import.validate_geo_fields` dirujuk tetapi tidak ada~~ **SELESAI 2026-11-13:** aturan hidup di `geo.validate_geo_fields` dan dipanggil **dua** penulis (`villa_import._geo`, `reservation_kernel.upsert_property`); impor CSV menerima empat kolom geo (template 20 kolom) | `VERIFIED` tanpa kedua koordinat atau tanpa kalimat sumber ditolak sebelum menulis; impor ulang tanpa kolom geo tidak menghapus survei | `src/geo.py`, `src/villa_import.py`, `src/reservation_kernel.py`, `tests/test_geo.py`, `tests/test_villa_import.py` | selesai |
@@ -1330,8 +1330,8 @@ Daftar ini menggabungkan Status-Gap (potret), temuan hari ini, dan hasil membang
 
 1. **Koordinat 3 villa pilot:** sumber terverifikasi (kunjungan atau pernyataan tertulis pemilik), presisi (`VERIFIED` atau `AREA_APPROX`), dan teks `geo_source`.
 2. ~~ADR peta geo~~ **sudah ditulis 2026-11-13** sebagai ADR-0068 (aturan pembulatan 2 desimal, tiga tingkat presisi, larangan aset remote). Tidak ada lagi yang menunggu Owner di butir ini.
-3. **Retensi:** satukan D9 (7 tahun) dengan tabel 10 tahun, atau tulis pengecualian per kelas.
-4. **Frekuensi uji restore:** bulanan atau tiga bulanan.
+3. **Retensi (Lampiran F butir 5):** satukan D9 (7 tahun) dengan tabel 10 tahun, atau tulis pengecualian per kelas. *Rekomendasi analisis:* untuk **data transaksi, kontrak, pajak, dan audit** pakai **10 tahun** — kewajiban pembukuan/pajak berjalan 10 tahun, dan menghapus pada tahun ke-7 membuat sistem menghapus dokumen yang masih diminta. Angka 7 tahun hanya aman untuk kelas tanpa kewajiban penyimpanan (mis. pesan pemasaran, jejak sesi). Keputusan akhir Owner + counsel; sampai diputuskan, tidak ada pekerjaan penghapusan yang dijalankan.
+4. **Frekuensi uji restore (Lampiran F butir 6):** bulanan atau tiga bulanan. *Rekomendasi analisis:* **bulanan** — dengan RPO 24 jam, uji tiga bulanan berarti sampai 90 hari salinan terakhir belum pernah dibuktikan bisa dipulihkan; satu tiket per bulan jauh lebih murah daripada data yang tak teruji.
 5. **D15/D16** — apa yang dianggap bukti level A dan rate card apa yang tampil ke tamu.
 6. **Urutan pembangunan** Commercial AI dan Warden; Status-Gap §6 menyarankan "jangan membangun Commercial AI sebelum reservation otomatis terbukti".
 7. **Foto asli** untuk situs publik.
@@ -1343,9 +1343,10 @@ Daftar ini menggabungkan Status-Gap (potret), temuan hari ini, dan hasil membang
 | 1 ✅ | Perbarui `docs/security/SESSION_AUTH.md` (`--token-file`) + `rotate --token-file` di `session_token.py` — **selesai 2026-11-13** | opsi argumen token hanya tersisa sebagai kompatibilitas yang didokumentasikan |
 | 2 ✅ | `validate_geo_fields` + empat kolom geo di `villa_import.py` dan `reservation_kernel.py` — **selesai 2026-11-13** | impor CSV dengan VERIFIED tanpa koordinat/sumber ditolak; tes hijau; `make check` rc=0 |
 | 3 ✅ | ADR-0068 ditulis; label geo di berkas SQL dan tes diperbaiki (komentar saja) — **selesai 2026-11-13** | tak ada label "ADR-0061" pada konteks geo |
-| 4 | Audit ulang kategori tes §19 terhadap 102 berkas | tabel kategori → berkas |
+| 4 | Audit ulang kategori tes §19 terhadap 103 berkas | tabel kategori → berkas |
 | 5 | Pasang anker + backup + uji restore di mesin target; ulangi preflight dengan `--anchor-dir`, `--backup` | tak ada WARN anker/backup |
 | 6 | Pasang reverse proxy TLS + HSTS; jalankan `access_matrix_probe.py` dan `perf_probe.py` | bukti pada berkas laporan |
+| 7 ✅ | Penjaga rujukan ADR di komentar skema (`tests/test_schema_adr_citations.py`) + `src/schema/README.md` (urutan migrasi, larangan pakai ulang nomor, penjelasan kenapa `009` tidak ada) — **selesai 2026-11-13** | mengembalikan `(ADR-0061)` di baris geo menggagalkan `make check`; aturan migrasi terbaca tanpa bertanya |
 
 ### 26.3 Kriteria sukses proyek (North Star, dari Charter)
 
@@ -1517,7 +1518,7 @@ Dibangkitkan dari AST: nama berkas, jumlah baris, kalimat pertama docstring modu
 
 ## Lampiran D — Migrasi, skrip, dan target make
 
-**Berkas `src/schema/`:** `001_initial.sql` (+ `.pg.sql`), `002_pg_range_exclusions.pg.sql` (khusus PostgreSQL), `003_policy_catalogue_and_deny_registry`, `004_currency_aware_margin_floor`, `005_fx_rate_max_age_hours`, `006_outbox_and_integration_inbox`, `007_exception_fingerprints`, `008_agency_settings`, `010_agency_roles`, `011_ai_ladder`, `012_reservation_service`, `013_deposit_resolutions`, `014_supplier_settlements`, `015_shadow_bars`, `016_guest_preferred_currency`, `017_property_geo`. **Nomor 009 tidak ada** sebagai berkas (tidak ditemukan penjelasan di repo; lompatan 008→010 dicatat apa adanya).
+**Berkas `src/schema/`:** `001_initial.sql` (+ `.pg.sql`), `002_pg_range_exclusions.pg.sql` (khusus PostgreSQL), `003_policy_catalogue_and_deny_registry`, `004_currency_aware_margin_floor`, `005_fx_rate_max_age_hours`, `006_outbox_and_integration_inbox`, `007_exception_fingerprints`, `008_agency_settings`, `010_agency_roles`, `011_ai_ladder`, `012_reservation_service`, `013_deposit_resolutions`, `014_supplier_settlements`, `015_shadow_bars`, `016_guest_preferred_currency`, `017_property_geo`. **Nomor 009 tidak ada** sebagai berkas — dijelaskan 2026-11-13 di `src/schema/README.md`: riwayat git membuktikan `009_*.sql` tidak pernah ada dan tidak ada migrasi yang dihapus, jadi nomor itu dilompati sejak awal dan tidak boleh dipakai ulang (lihat Lampiran F butir 9).
 
 **`scripts/` (22 berkas + `__pycache__`):** `access_matrix_probe`, `ai_mode`, `apply_migrations`, `audit_structure`, `build_deliverables`, `closure_facts`, `generate_pg_twin`, `go_live_smoke`, `import_villas`, `manage_roles`, `perf_probe`, `phishing_drill_score`, `preflight`, `publish_ai_allowance`, `publish_anchor`, `publish_policy_value`, `refresh_fx_rate`, `reservation_kpi`, `secret_scan.sh`, `seed_demo`, `session_token`, `unsafe_config_scan.sh`.
 
@@ -1525,24 +1526,33 @@ Dibangkitkan dari AST: nama berkas, jumlah baris, kalimat pertama docstring modu
 
 ## Lampiran E — Apa yang diverifikasi dan apa yang hanya dikutip
 
-**Dihitung/dibaca ulang dari repo/DB pada 2026-11-12:** jumlah komit dan komit pertama; jumlah modul/baris `src/`; berkas dan baris tes; jumlah ADR dan status; `PAGE_ROLES` (14 entri) dan 6 peran; 73 nama tabel §9.2 vs `sqlite_master` DB hidup (73/73 cocok; 72 tabel model + `schema_migrations`); nama tabel/kolom Bab 13 (semua ada, kecuali `approvals` yang adalah modul); 14 baris `schema_migrations`; 3 properti `UNKNOWN`; keluaran preflight; target make; isi `GO_LIVE_DECISIONS.md`; CSP/rate limit/honeypot/token form pada `marketing_site.py`; keberadaan/ketiadaan `validate_geo_fields`; rujukan "ADR-0061".
+**Dihitung/dibaca ulang dari repo/DB pada 2026-11-12 (dan 2026-11-13 untuk: 58/58 modul `src/` berhasil diimpor pada 3.14.9; isi `src/schema/README.md`; riwayat `git log --all -- src/schema/009*` yang kosong; byte vs karakter `STATUS_AND_GAP_MAP.md`):** jumlah komit dan komit pertama; jumlah modul/baris `src/`; berkas dan baris tes; jumlah ADR dan status; `PAGE_ROLES` (14 entri) dan 6 peran; 73 nama tabel §9.2 vs `sqlite_master` DB hidup (73/73 cocok; 72 tabel model + `schema_migrations`); nama tabel/kolom Bab 13 (semua ada, kecuali `approvals` yang adalah modul); 14 baris `schema_migrations`; 3 properti `UNKNOWN`; keluaran preflight; target make; isi `GO_LIVE_DECISIONS.md`; CSP/rate limit/honeypot/token form pada `marketing_site.py`; keberadaan/ketiadaan `validate_geo_fields`; rujukan "ADR-0061".
 
-**Dikutip dari dokumen sumber (tidak diuji ulang di sini):** angka SLA/retensi/RPO-RTO; isi 6 playbook insiden; ambang shadow-mode (agreement ≥ 95%, ≥ 100 kasus); ukuran performa (3,42 ms, 292 req/s, 20 pengunjung 1.248,2→74,3 ms); hasil uji interpreter 3.11/3.12/3.14; census 0 dependency; daftar 27 `denied_actions`; isi tabel §9 selain nama tabel.
+**Dikutip dari dokumen sumber (tidak diuji ulang di sini):** angka SLA/retensi/RPO-RTO; isi 6 playbook insiden; ambang shadow-mode (agreement ≥ 95%, ≥ 100 kasus); ukuran performa (3,42 ms, 292 req/s, 20 pengunjung 1.248,2→74,3 ms); hasil uji interpreter 3.11/3.12 (3.14 sudah diukur ulang ke 3.14.9, impor saja); census dependency (dikutip, lalu **dikoreksi** 2026-11-13: bukan "0" mutlak — `psycopg`/`psycopg2` diimpor lazy di jalur PostgreSQL); daftar 27 `denied_actions`; isi tabel §9 selain nama tabel.
 
 **Tidak dilakukan:** uji penetrasi; verifikasi legal/pajak; memulihkan backup; menjalankan tes PostgreSQL hidup.
 
 ## Lampiran F — Daftar ketidakkonsistenan yang ditemukan
 
-| # | Temuan | Lokasi | Tindakan yang disarankan |
-|---|---|---|---|
-| 1 | Label "ADR-0061" pada peta geo salah; ADR-0061 = efek tool agen telemetri (opsi B) | `001_initial.sql:53`, `001_initial.pg.sql:53`, `017_property_geo.sql:1` | tulis ADR peta; ganti komentar |
-| 2 | `villa_import.validate_geo_fields` dirujuk tetapi tidak ada | `017_property_geo.sql:20` | bangun fungsi + tes, atau hapus rujukan |
-| 3 | `SESSION_AUTH.md` menyebut `--token` pada dashboard | §1, §4 | ganti `--token-file` |
-| 4 | `session_token.py rotate --token <lama>` menaruh token sesi di argumen | `session_token.py:224` | nilai risikonya; bila perlu baca dari stdin/berkas |
-| 5 | Retensi 7 tahun (D9) vs 10 tahun (tabel retensi) | GO_LIVE D9 vs RETENTION | keputusan Owner |
-| 6 | Uji restore bulanan vs tiga bulanan | DEPLOYMENT §5 vs D10 | keputusan Owner |
-| 7 | Status-Gap §3.5 menyatakan traceability belum ada; berkasnya ada | STATUS_AND_GAP_MAP | tandai usang |
-| 8 | Census 57 modul (SCALING_AND_UPGRADE) vs 58 hari ini | SCALING §1 | perbarui angka |
-| 9 | Tidak ada migrasi bernomor 009 | `src/schema/` | jelaskan atau catat sengaja |
-| 10 | Status-Gap §1 menulis go-live NO-GO (D17 OPEN); hari ini D17 DECIDED dan preflight GO | STATUS_AND_GAP_MAP | tandai potret (sudah) |
-| 11 | Ukuran `STATUS_AND_GAP_MAP.md` terukur berbeda pada dua pembacaan (25.677 vs 25.871 vs 24.308 karakter) — perbedaan byte vs karakter | — | tidak diselidiki lebih jauh |
+| # | Temuan | Lokasi | Tindakan yang disarankan | Status 2026-11-13 |
+|---|---|---|---|---|
+| 1 | Label "ADR-0061" pada peta geo salah; ADR-0061 = efek tool agen telemetri (opsi B) | `001_initial.sql:53`, `001_initial.pg.sql:53`, `017_property_geo.sql:1` | tulis ADR peta; ganti komentar | ✅ ditutup — ketiga berkas menyebut ADR-0068; dikunci `tests/test_schema_adr_citations.py` (gagal bila ADR-0061 muncul lagi di baris geo) |
+| 2 | `villa_import.validate_geo_fields` dirujuk tetapi tidak ada | `017_property_geo.sql:20` | bangun fungsi + tes, atau hapus rujukan | ✅ ditutup — fungsi ada di `src/geo.py`, dipanggil jalur impor & kernel |
+| 3 | `SESSION_AUTH.md` menyebut `--token` pada dashboard | §1, §4 | ganti `--token-file` | ✅ ditutup — `--token-file <path>` |
+| 4 | `session_token.py rotate --token <lama>` menaruh token sesi di argumen | `session_token.py:224` | nilai risikonya; bila perlu baca dari stdin/berkas | ✅ ditutup — `rotate --token-file`; `--token` dipertahankan, keduanya bersamaan → exit 2 |
+| 5 | Retensi 7 tahun (D9) vs 10 tahun (tabel retensi) | GO_LIVE D9 vs RETENTION | keputusan Owner | ⏳ **menunggu Owner + counsel** — D9 "hapus setelah 7 tahun" bertentangan dengan `RETENTION` (data transaksi 10 tahun) dan dengan aturan pembukuan/pajak 10 tahun; sistem menjalankan aturan yang disetujui, jadi angkanya harus dipilih Owner, bukan diambil dari salah satu dokumen |
+| 6 | Uji restore bulanan vs tiga bulanan | DEPLOYMENT §5 vs D10 | keputusan Owner | ⏳ **menunggu Owner** — `DEPLOYMENT` §5 menulis "uji restore penuh **bulanan**", D10 menulis "tiap **3 bulan**"; RPO 24 jam / RTO 4 jam sama di kedua dokumen. Calon jawaban: satukan ke **bulanan** (lebih ketat, biayanya satu tiket operasional per bulan) |
+| 7 | Status-Gap §3.5 menyatakan traceability belum ada; berkasnya ada | STATUS_AND_GAP_MAP | tandai usang | ✅ ditutup — penanda **USANG sejak 2026-09-28** dipasang di §3.5 (berkas `docs/AI_WORKFORCE_TRACEABILITY.md`, 23.149 byte, 6 judul `##` + 16 judul `#`; angka "24 bagian" di dalamnya = 24 bagian dokumen AI Workforce V1.1, bukan jumlah bagian berkasnya); paragraf lama disimpan sebagai potret sejarah |
+| 8 | Census 57 modul (SCALING_AND_UPGRADE) vs 58 hari ini | SCALING §1 | perbarui angka | ✅ ditutup — §1 kini "58 modul"; tabel kompatibilitas diperbarui ke **3.14.9, 58/58 modul berhasil diimpor** (diukur ulang 2026-11-13). Sekalian dikoreksi: klaim "0 dependency pihak ketiga" tidak utuh — `psycopg` v3/`psycopg2` diimpor *lazy* di `schema_loader.connect_postgres` untuk kembaran PostgreSQL |
+| 9 | Tidak ada migrasi bernomor 009 | `src/schema/` | jelaskan atau catat sengaja | ✅ ditutup — `src/schema/README.md`: riwayat git membuktikan `009_*.sql` **tidak pernah ada** dan tidak ada migrasi yang dihapus (`git log --all -- 'src/schema/009*'` kosong; `--diff-filter=D` kosong); dilompati sejak awal, nomor tidak dipakai ulang |
+| 10 | Status-Gap §1 menulis go-live NO-GO (D17 OPEN); hari ini D17 DECIDED dan preflight GO | STATUS_AND_GAP_MAP | tandai potret (sudah) | ✅ sudah berupa potret — banner "CATATAN STATUS (2026-10-03) — baca ini dulu" di baris 4, jadi `NO-GO` di sana dibaca sebagai keadaan 2026-10-02, bukan hari ini |
+| 11 | Ukuran `STATUS_AND_GAP_MAP.md` terukur berbeda pada dua pembacaan (25.677 vs 25.871 vs 24.308 karakter) — perbedaan byte vs karakter | — | tidak diselidiki lebih jauh | ✅ diselidiki — ukuran berkas dihitung **byte**; isi dihitung **karakter**. Satu pembacaan 2026-11-13: `wc -c` 25.386 byte vs `wc -m` 24.983 karakter (selisih 403 = karakter non-ASCII multi-byte). Kedua angka benar bila satuannya disebut; setiap pembacaan setelah dokumen disunting akan bergeser, jadi ukuran berkas tidak boleh dipakai sebagai bukti isi |
+
+**Ringkasan Lampiran F (2026-11-13):** 9 dari 11 butir ditutup dengan bukti di repo; 2
+butir (retensi data, frekuensi uji restore) **tidak bisa ditutup oleh kode** karena
+keduanya keputusan bisnis yang bertentangan antardokumen — keduanya menunggu Owner, dan
+sampai diputuskan sistem **tidak** boleh menegakkan salah satunya diam-diam. Butir 5
+membawa risiko kepatuhan (menghapus data transaksi pada tahun ke-7 sementara kewajiban
+pembukuan/pajak berjalan 10 tahun), jadi ia didahulukan sebelum ada penghapusan data
+nyata. Butir 1 kini punya penjaga otomatis: komentar skema yang menyebut ADR yang salah
+menggagalkan `make check`, bukan menunggu audit berikutnya.

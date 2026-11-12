@@ -315,7 +315,7 @@ Semua langkah di atas bisa ditelusuri ulang minggu depan, bulan depan, atau saat
 
 | Bagian | Isi | Angka |
 |---|---|---|
-| Modul inti | `src/*.py` | 57 modul |
+| Modul inti | `src/*.py` | 57 modul (potret 2026-10-29; **58** per 2026-11-13) |
 | Tabel database | `src/schema/001_initial.sql` + migrasi | 72 tabel di skema awal; 73 di database berjalan |
 | Status booking | state machine tunggal | 32 status, 116 transisi sah dari 1.024 pasangan |
 | Halaman dashboard | `PAGE_ROLES` | 12 halaman, 6 peran |
