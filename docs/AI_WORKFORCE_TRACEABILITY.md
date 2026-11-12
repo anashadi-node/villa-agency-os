@@ -1,6 +1,6 @@
 # AI Workforce Architecture V1.1 → Traceability ke Villa Agency OS
 
-**Sumber acuan:** `Villa_Agency_AI_Workforce_Architecture_V1_1_Hermes.html` (24 bagian)
+**Sumber acuan:** [`docs/source/Villa_Agency_AI_Workforce_Architecture_V1_1_Hermes.html`](source/Villa_Agency_AI_Workforce_Architecture_V1_1_Hermes.html) (24 bagian) — salinan arsip di dalam repo, SHA-256 `5368429b6958b155a66d099afdec2d30115c072e8feab06165b7ed987559ae4c`, 47.896 byte, aslinya `~/Downloads/` (mtime 2026-09-30 10:59), disalin 2026-11-13. Berkas mandiri: 0 rujukan jaringan, 0 `<script>`, 0 `<input>`.
 **Tanggal periksa:** 2026-09-28 · **Metode:** pemeriksaan langsung kode, skema, tes, gerbang
 **Aturan presedensi dari dokumen itu sendiri (§1):** *"If a conflict exists, locked security, privacy, financial-control, business-state and source-of-truth invariants in the Master Specification take precedence."* → **Master Spec menang** kalau bentrok.
 

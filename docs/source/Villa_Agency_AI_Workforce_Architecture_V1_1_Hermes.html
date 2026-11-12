@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Villa Agency OS — AI Workforce Architecture V1</title>
+<style>
+:root{--ink:#20252b;--muted:#66707a;--line:#dfe4e8;--soft:#f5f7f8;--accent:#6f553f;--dark:#252a2f;--ok:#eaf6ee;--warn:#fff7e8;--deny:#fdeeee;--info:#edf4fb}
+*{box-sizing:border-box} body{margin:0;background:#eef0f1;color:var(--ink);font-family:Inter,Segoe UI,Arial,sans-serif;line-height:1.55}
+.page{max-width:1220px;margin:auto;background:#fff;min-height:100vh} header{padding:54px 64px 42px;background:#252a2f;color:#fff}
+.eyebrow{text-transform:uppercase;letter-spacing:1.8px;font-size:12px;opacity:.72}.subtitle{max-width:940px;color:#e2e5e7}
+.badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:22px}.badge{border:1px solid #ffffff35;border-radius:999px;padding:6px 10px;font-size:12px}
+main{padding:42px 64px} h1{font-size:37px;line-height:1.13;margin:10px 0 14px} h2{font-size:25px;margin:46px 0 14px;padding-bottom:9px;border-bottom:2px solid #252a2f}
+h3{font-size:19px;margin:28px 0 10px} h4{font-size:15px;margin:20px 0 8px}.callout,.warning,.deny,.info{padding:15px 17px;margin:16px 0;border-left:4px solid}
+.callout{background:#f7f2ed;border-color:var(--accent)}.warning{background:var(--warn);border-color:#b77b18}.deny{background:var(--deny);border-color:#a73b3b}.info{background:var(--info);border-color:#447aa8}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px}.card{border:1px solid var(--line);border-radius:10px;padding:17px}.card strong{display:block;margin-bottom:6px}
+table{width:100%;border-collapse:collapse;margin:13px 0 24px;font-size:13px}th,td{border:1px solid var(--line);padding:9px 10px;vertical-align:top}th{background:#f0f2f3;text-align:left}
+pre{white-space:pre-wrap;background:#fafafa;border:1px solid var(--line);padding:18px;border-radius:10px;font-family:Consolas,monospace;font-size:12.5px;line-height:1.55}
+code{background:#f3f4f5;padding:2px 5px;border-radius:4px}.small{font-size:12px;color:var(--muted)} ul{padding-left:22px}.agent{page-break-inside:avoid}
+footer{padding:28px 64px;background:#252a2f;color:#d9dcde;font-size:12px}
+@media(max-width:800px){header,main,footer{padding-left:24px;padding-right:24px}.grid{grid-template-columns:1fr}h1{font-size:30px}}
+@media print{body{background:#fff}.page{max-width:none}.card,table,pre{break-inside:avoid}h2,h3{break-after:avoid}}
+</style>
+</head>
+<body><div class="page">
+<header>
+<div class="eyebrow">Hermes Implementation Input • Architecture Baseline • Version 1.1</div>
+<h1>Villa Agency OS — AI Workforce Architecture</h1>
+<div class="subtitle">Authoritative architecture for the six logical AI agents/services to be implemented by Hermes. This document defines responsibility, reporting, workers, authority, prohibitions, handoff, source-of-truth rules, KPI design, safety controls, concurrency and implementation constraints. It is intentionally explicit to reduce ambiguity, agent overlap, unsafe autonomy, implementation drift, errors and bugs.</div>
+<div class="badges"><span class="badge">6 Logical AI Components</span><span class="badge">Human-Governed</span><span class="badge">Security & Privacy First</span><span class="badge">Financial Authority = Human</span><span class="badge">Production Language: en-US</span></div>
+</header>
+<main>
+
+<h2>1. Status, Scope and Instruction to Hermes</h2>
+<div class="callout"><strong>Purpose.</strong> Implement a controlled AI workforce for a villa marketing/reservation agency. This is not a collection of unrestricted chatbots. The six AI components are bounded business capabilities operating through policy-controlled tools and deterministic domain services.</div>
+<ul>
+<li>This document supplements the Villa Agency OS Master Specification. If a conflict exists, locked security, privacy, financial-control, business-state and source-of-truth invariants in the Master Specification take precedence.</li>
+<li>Do not create additional autonomous domain agents merely to mirror human job titles.</li>
+<li>Do not merge responsibilities across agents unless an approved architecture decision explicitly changes this baseline.</li>
+<li>Do not give any LLM direct database credentials, unrestricted API credentials, payment credentials, private keys, or authority to bypass policy/approval controls.</li>
+<li>Production UI, system labels and customer-facing communication use U.S. English (<code>en-US</code>).</li>
+</ul>
+
+<h2>2. Human Governance and AI Workforce</h2>
+<pre>
+OWNER / SHAREHOLDERS [HUMAN]
+          |
+          v
+GENERAL MANAGER / CEO [HUMAN]
+          |
+          +-- Commercial & Marketing Manager [HUMAN]
+          +-- Partnership Manager [HUMAN] ----> Villa Owners / Villa Management / Property Managers
+          +-- Operations / Reservation Manager [HUMAN]
+          +-- Finance & Accounting Manager [HUMAN]
+          +-- Revenue Manager / GM if lean [HUMAN]
+          +-- Technology / Security [HUMAN + deterministic controls]
+          +-- Legal / Compliance [HUMAN / external counsel]
+
+AI WORKFORCE
+          |
+          +-- 1. AI Control Tower / Orchestrator
+          +-- 2. Commercial AI Agent
+          +-- 3. AI Reservation Service
+          +-- 4. Operations AI Agent
+          +-- 5. Finance Admin AI Agent
+          +-- 6. Revenue & Business Intelligence AI Agent
+</pre>
+<div class="warning"><strong>Partnership is intentionally human-led.</strong> Relationship building, negotiation, commercial terms, partnership decisions and contracts with villa owners/managers remain human responsibilities. AI may provide research, extraction, reminders, analytics and administrative support only. There is no autonomous Partnership AI Agent in V1.</div>
+
+
+<h2>2A. Canonical AI Organization Map — MUST IMPLEMENT</h2>
+<div class="callout"><strong>This is the canonical AI organization map for Hermes.</strong> The solid hierarchy below defines orchestration/reporting responsibility. Workers are capabilities inside their parent agent/service; they are <em>not</em> independent executives, do not acquire separate business authority, and must not be promoted into new autonomous agents without an approved ADR.</div>
+<pre>
+HUMAN GOVERNANCE
+OWNER / SHAREHOLDERS [HUMAN]
+        |
+        +================ Executive reporting ====================+
+        |                                                         |
+        v                                                         |
+GENERAL MANAGER / CEO [HUMAN]                                    |
+        |                                                         |
+        v                                                         |
+[1] AI CONTROL TOWER / ORCHESTRATOR                              |
+        |                                                         |
+        +-- CT-W01 Event / Intent Router                          |
+        +-- CT-W02 Workflow Coordinator                           |
+        +-- CT-W03 Event Dispatcher                               |
+        +-- CT-W04 SLA Monitor                                    |
+        +-- CT-W05 Exception Router                               |
+        +-- CT-W06 Human Escalation Worker                        |
+        +-- CT-W07 Agent Health Monitor                           |
+        +-- CT-W08 Retry / Recovery Worker                        |
+        +-- CT-W09 Notification Worker                            |
+        +-- CT-W10 Cost / Token Budget Monitor                    |
+        |                                                         |
+        +--------------------+--------------------+----------------+--------------------+
+        |                    |                    |                |                    |
+        v                    v                    v                v                    v
+[2] COMMERCIAL AI     [3] RESERVATION AI   [4] OPERATIONS AI [5] FINANCE ADMIN AI [6] REVENUE & BI AI
+    AGENT                 SERVICE               AGENT              AGENT               AGENT
+        |                    |                    |                |                    |
+        +-- COM-W01 Lead     +-- RES-W01 Inquiry +-- OPS-W01     +-- FIN-W01 AR      +-- RBI-W01 Revenue KPI
+        |   Intelligence     |   Extraction      | Workflow       | Monitor            | Worker
+        +-- COM-W02 Lead     +-- RES-W02 Villa   | Monitor        +-- FIN-W02 AP      +-- RBI-W02 Conversion
+        |   Scoring          |   Matching        +-- OPS-W02 SLA | Monitor            | Analytics
+        +-- COM-W03 CRM      +-- RES-W03         | Monitor        +-- FIN-W03 Payment +-- RBI-W03 Booking Pace
+        |   Segmentation     |   Availability    +-- OPS-W03 Doc | Matching           +-- RBI-W04 Demand Intel
+        +-- COM-W04 Campaign +-- RES-W04 Pricing | Completeness   +-- FIN-W04 Recon   +-- RBI-W05 Pricing Intel
+        |   Analysis         +-- RES-W05 Quote   +-- OPS-W04     | Assistance         +-- RBI-W06 Villa Perf.
+        +-- COM-W05 Content  +-- RES-W06         | Booking QC     +-- FIN-W05 Invoice +-- RBI-W07 Partner Perf.
+        |   Drafting         |   Conversation    +-- OPS-W05 Pre-| Validation         +-- RBI-W08 Channel Perf.
+        +-- COM-W06 SEO      |   & Follow-up     | Arrival Ready  +-- FIN-W06         +-- RBI-W09 Forecast
+        |   Intelligence     +-- RES-W07 Hold    +-- OPS-W06 Task| Settlement Calc.   +-- RBI-W10 Margin Analysis
+        +-- COM-W07 Social   +-- RES-W08 Booking | Assignment     +-- FIN-W07 Due     +-- RBI-W11 Anomaly Detect.
+        |   Content          +-- RES-W09 Amend/  +-- OPS-W07     | Monitor            +-- RBI-W12 Executive Report
+        +-- COM-W08 Lead     |   Cancel Assist   | Exception      +-- FIN-W08
+        |   Nurture          +-- RES-W10 Pre-    | Detection      | Unallocated Receipt
+        +-- COM-W09 B2B      |   Arrival Comm.   +-- OPS-W08     +-- FIN-W09 Duplicate
+        |   Research         +-- RES-W11 Human   | Incident Route | Invoice/Payment
+        +-- COM-W10 Campaign |   Handoff         +-- OPS-W09     +-- FIN-W10 Financial
+        |   Performance      |                    | Comm. QC       | Exception
+        +-- COM-W11 Abandoned|                    +-- OPS-W10     +-- FIN-W11 Cash/
+            Inquiry Recovery |                       Compliance    | Exposure Report
+</pre>
+
+<h3>2A.1 Reporting Map — Human Accountability Is Not Replaced by AI</h3>
+<table>
+<tr><th>AI Component</th><th>Functional Human Report / Owner</th><th>Direct Executive Report</th><th>Escalation Destination</th></tr>
+<tr><td>AI Control Tower</td><td>General Manager</td><td>GM; Owner for configured executive/material incidents</td><td>Responsible domain manager → GM → Owner by severity</td></tr>
+<tr><td>Commercial AI</td><td>Commercial & Marketing Manager</td><td>Normally through manager/GM</td><td>Commercial Manager; GM for material exception</td></tr>
+<tr><td>AI Reservation Service</td><td>Operations / Reservation Manager</td><td>Normally through manager/GM</td><td>Reservation/Operations Manager; GM for material/VIP/legal/safety case</td></tr>
+<tr><td>Operations AI</td><td>Operations Manager</td><td>Normally through manager/GM</td><td>Operations Manager; GM/Owner by incident severity</td></tr>
+<tr><td>Finance Admin AI</td><td>Finance & Accounting Manager</td><td><strong>GM + Owner</strong> for configured finance management/exception reports</td><td>Finance Manager → GM/Owner; human approval remains mandatory</td></tr>
+<tr><td>Revenue & BI AI</td><td>Revenue Manager if present; otherwise GM</td><td><strong>GM + Owner</strong></td><td>Revenue Manager/GM; data-integrity issues to responsible data/system owner</td></tr>
+</table>
+
+<h3>2A.2 Worker Taxonomy — Prevent Hermes from Misreading “Worker”</h3>
+<table>
+<tr><th>Worker Type</th><th>Meaning</th><th>May Use LLM?</th><th>Own Authority?</th><th>Persistent Identity?</th></tr>
+<tr><td>Capability Worker</td><td>Named bounded function inside one parent agent, e.g. Villa Matching</td><td>Only when useful</td><td>No; inherits narrower parent policy</td><td>Logical capability only</td></tr>
+<tr><td>Execution Worker</td><td>Ephemeral runtime process handling queued jobs/conversations</td><td>Possibly</td><td>No</td><td>No</td></tr>
+<tr><td>Deterministic Worker</td><td>Rules/code for SLA, arithmetic, validation, idempotency, events, etc.</td><td>Prefer no</td><td>No business judgment</td><td>Service component</td></tr>
+<tr><td>Human Handoff Worker</td><td>Packages context and transfers control to authorized human</td><td>May summarize</td><td>Cannot resolve the escalated authority itself</td><td>No</td></tr>
+</table>
+
+<h3>2A.3 Explicit Routing Boundaries</h3>
+<pre>
+MARKETING / CRM / LEAD INTELLIGENCE  -> Commercial AI
+ACTIVE CUSTOMER RESERVATION INTENT   -> AI Reservation Service
+SLA / QC / READINESS / PROCESS       -> Operations AI
+AR / AP / RECON / FINANCE ADMIN      -> Finance Admin AI
+FORECAST / REVENUE / BI / PRICING INSIGHT -> Revenue & BI AI
+CROSS-DOMAIN ROUTING / HEALTH / ESCALATION -> AI Control Tower
+
+PARTNER RELATIONSHIP / NEGOTIATION / CONTRACT AGREEMENT -> HUMAN Partnership Manager
+OUTGOING MONEY / REFUND APPROVAL / BANK-WALLET CHANGE   -> HUMAN Finance Authority
+LEGAL DECISION / CONTRACT APPROVAL                      -> HUMAN
+SECURITY PRIVILEGE GRANT / CRITICAL OVERRIDE            -> AUTHORIZED HUMAN + deterministic controls
+</pre>
+
+<h3>2A.4 Cross-Agent Handoff — No Shared Authority</h3>
+<table>
+<tr><th>From</th><th>To</th><th>Typical Trigger</th><th>What Is Passed</th><th>What Is NOT Passed</th></tr>
+<tr><td>Commercial</td><td>Reservation</td><td>Lead expresses active booking intent</td><td>Lead/inquiry ID, consent, verified requirements/context</td><td>Commercial authority or invented offer</td></tr>
+<tr><td>Reservation</td><td>Operations</td><td>Operational task/readiness/exception needed</td><td>Reservation ID, task/evidence/state references</td><td>Permission to override booking truth</td></tr>
+<tr><td>Reservation</td><td>Finance Admin</td><td>Payment reported/invoice workflow</td><td>Invoice/payment references and event</td><td>Assertion that funds are received</td></tr>
+<tr><td>Finance Admin</td><td>Reservation</td><td>Authoritative payment state changes</td><td>Verified state/reference through domain event</td><td>Payment credentials or sensitive evidence</td></tr>
+<tr><td>Revenue & BI</td><td>Commercial/GM</td><td>Opportunity/anomaly/recommendation</td><td>Analysis, lineage, assumptions</td><td>Authority to change rates/discounts</td></tr>
+<tr><td>Any Agent</td><td>Control Tower</td><td>Failure, timeout, exception, escalation</td><td>Structured event, correlation ID, evidence refs</td><td>New privileges or self-approved exception</td></tr>
+</table>
+
+<h3>2A.5 Reservation Concurrency Map</h3>
+<pre>
+Channels: Web Chat / WhatsApp / Email / Other Approved Channels
+                         |
+                         v
+                 Inbound Message Queue
+                         |
+                         v
+               AI RESERVATION SERVICE
+                         |
+          +--------------+--------------+
+          |              |              |
+          v              v              v
+ Execution Worker 1  Execution Worker 2 ... Execution Worker N
+          |              |              |
+          v              v              v
+     Context A        Context B        Context N
+     Guest A          Guest B          Guest N
+          |              |              |
+          +--------------+--------------+
+                         |
+             BOUNDED DOMAIN CAPABILITIES
+                         |
+      Search / Availability / Pricing / Quote / Hold / Booking
+                         |
+                 SYSTEM OF RECORD
+
+RULE: scaling adds execution workers, NOT new autonomous Reservation Agent roles.
+RULE: no worker-local memory is authoritative business state.
+RULE: customer/tenant contexts never mix.
+</pre>
+
+<h3>2A.6 Non-Agent Shared Infrastructure — DO NOT TURN INTO AGENTS</h3>
+<div class="grid">
+<div class="card"><strong>AI Policy Gateway</strong>Context minimization, authorization checks, tool policy, model routing.</div>
+<div class="card"><strong>Policy Engine</strong>Deterministic business/risk rules.</div>
+<div class="card"><strong>Approval Engine</strong>Human approval lifecycle, target binding and invalidation.</div>
+<div class="card"><strong>Exception Engine</strong>Typed exceptions, severity, ownership and escalation.</div>
+<div class="card"><strong>Identity / RBAC</strong>Authentication and least-privilege authorization.</div>
+<div class="card"><strong>Audit / Observability</strong>Immutable critical evidence, traces, metrics and alerts.</div>
+<div class="card"><strong>Outbox / Inbox / Queue</strong>Reliable, idempotent asynchronous communication.</div>
+<div class="card"><strong>Secrets / DLP / Security Controls</strong>Secrets isolation, sensitive-data controls and kill switches.</div>
+</div>
+
+<h3>2A.7 Hermes Anti-Bias Interpretation Rules</h3>
+<ol>
+<li>The six numbered boxes are the only V1 logical AI agents/services.</li>
+<li>Every <code>*-Wxx</code> item is a worker/capability owned by exactly one parent; it is not a seventh/eighth/etc. autonomous agent.</li>
+<li>A worker may be deterministic code. Do not invoke an LLM where rules, arithmetic, state machines or validation are sufficient.</li>
+<li>Reporting to Owner/GM means generating/dispatching authorized reports; it does not grant executive authority to the AI.</li>
+<li>Control Tower coordinates but never becomes source of truth or approval authority.</li>
+<li>Cross-agent communication uses structured events/tool contracts; never use free-form chat as authorization.</li>
+<li>Human managers remain accountable even where AI performs most routine work.</li>
+<li>If implementation ambiguity remains, stop and create an ADR/question instead of silently inventing a new role, permission, state or business rule.</li>
+</ol>
+
+<h2>3. Universal Architecture Law</h2>
+<pre>
+USER / EVENT
+    |
+AUTHORIZATION
+    |
+AI POLICY GATEWAY
+    |
+MINIMUM NECESSARY CONTEXT + PII CONTROLS
+    |
+BOUNDED AI AGENT / SERVICE
+    |
+STRUCTURED PROPOSAL / TOOL REQUEST
+    |
+SCHEMA VALIDATION
+    |
+POLICY ENGINE ---- APPROVAL ENGINE ---- EXCEPTION ENGINE
+    |
+DETERMINISTIC DOMAIN SERVICE
+    |
+SYSTEM OF RECORD
+    |
+TRANSACTIONAL OUTBOX / AUDIT / OBSERVABILITY
+</pre>
+<div class="deny"><strong>Core law:</strong> LLM output is never, by itself, authorization. Frontend state, chat memory, screenshots, customer statements and agent-to-agent messages are not authoritative evidence for critical business or financial state.</div>
+
+<h2>4. Universal Authority Levels</h2>
+<table>
+<tr><th>Level</th><th>Meaning</th><th>Default AI Treatment</th><th>Examples</th></tr>
+<tr><td>L0</td><td>Read / analyze</td><td>Autonomous with access controls</td><td>Search verified villas, calculate analytics, read approved policy</td></tr>
+<tr><td>L1</td><td>Low-risk and reversible</td><td>Autonomous inside policy</td><td>Routine verified FAQ, internal task/reminder, normal follow-up</td></tr>
+<tr><td>L2</td><td>Material business action</td><td>Policy-gated; human approval where configured</td><td>Send quotation, request hold, publish campaign, special operational action</td></tr>
+<tr><td>L3</td><td>Financial, legal, security, contractual or high-impact</td><td>Human authority required</td><td>Outgoing payment, refund approval, bank change, contract approval, major override</td></tr>
+</table>
+
+<h2>5. Agent vs Worker vs Workflow</h2>
+<div class="grid">
+<div class="card"><strong>Agent / Service</strong>Persistent logical responsibility and policy boundary. Example: <code>reservation-service</code>.</div>
+<div class="card"><strong>Worker</strong>Ephemeral execution capacity. Workers scale horizontally; they do not own business truth.</div>
+<div class="card"><strong>Workflow</strong>Durable business process stored outside worker memory. A worker crash must not lose the reservation workflow.</div>
+<div class="card"><strong>Conversation Context</strong>Isolated per customer/inquiry. Never share private context between customers or tenants.</div>
+</div>
+<pre>
+ONE AI RESERVATION SERVICE
+       |
+       +-- worker-001 -> Customer A / Context A
+       +-- worker-002 -> Customer B / Context B
+       +-- worker-003 -> Customer C / Context C
+       +-- ... auto-scale within configured limits
+</pre>
+
+<h2>6. Summary Responsibility Matrix</h2>
+<table>
+<tr><th>AI Component</th><th>Primary Purpose</th><th>Functional Human Owner / Report</th><th>Customer Facing</th><th>Autonomy</th></tr>
+<tr><td>AI Control Tower</td><td>Routing, coordination, workflow health, exception/escalation</td><td>GM; operational exceptions to responsible manager</td><td>No</td><td>L0-L1; no business authority</td></tr>
+<tr><td>Commercial AI</td><td>Demand, CRM, marketing intelligence, commercial assistance</td><td>Commercial & Marketing Manager → GM</td><td>Limited</td><td>L0-L1; L2 policy-gated</td></tr>
+<tr><td>AI Reservation Service</td><td>Professional customer reservation lifecycle</td><td>Operations/Reservation Manager → GM</td><td>Yes, primary</td><td>L0-L2 within policy</td></tr>
+<tr><td>Operations AI</td><td>SLA, QC, readiness, tasks, exceptions, process control</td><td>Operations Manager → GM</td><td>Usually no</td><td>L0-L1; bounded L2</td></tr>
+<tr><td>Finance Admin AI</td><td>AR/AP administration, matching, reconciliation assistance, finance reporting</td><td>Finance Manager + direct management/exception reports to GM & Owner</td><td>No</td><td>L0-L1 only for money-related work; zero money authority</td></tr>
+<tr><td>Revenue & BI AI</td><td>Revenue/pricing intelligence, forecasting, business analytics</td><td>Revenue Manager if present; direct reports to GM & Owner</td><td>No</td><td>L0-L1 analysis; changes are proposals</td></tr>
+</table>
+
+<section class="agent">
+<h2>7. Agent 1 — AI Control Tower / Orchestrator</h2>
+<p><strong>Mission:</strong> Coordinate the AI workforce and durable workflows without becoming a virtual CEO or acquiring domain authority.</p>
+<h3>Workers / Components</h3>
+<ul><li>Event/Intent Router</li><li>Workflow Coordinator</li><li>Event Dispatcher</li><li>SLA Monitor</li><li>Exception Router</li><li>Human Escalation Worker</li><li>Agent Health Monitor</li><li>Retry/Recovery Worker</li><li>Notification Worker</li><li>Cost/Token Budget Monitor</li></ul>
+<h3>Detailed Job Description</h3>
+<ul><li>Classify incoming events and route them to the correct bounded agent/service.</li><li>Maintain workflow correlation and ownership without becoming the transactional source of truth.</li><li>Monitor deadlines, stuck workflows, queue health, tool failures and integration failures.</li><li>Perform only safe/idempotent retries within configured retry budgets.</li><li>Open exceptions and route them to the correct human owner when automated recovery is unsafe or exhausted.</li><li>Coordinate agent handoffs using structured events, not free-form agent-to-agent authority transfer.</li><li>Monitor AI availability, degraded mode, kill switches and resource budgets.</li></ul>
+<h3>May</h3><p>Route, coordinate, query status, create internal tasks, trigger approved workflows, retry idempotent operations, escalate, suspend automation, produce exception summaries.</p>
+<h3>Must Not</h3><p>Approve or move money; approve contracts; change bank/wallet details; invent business facts; override Policy/Approval/RBAC; modify audit evidence; grant itself or another agent new privileges.</p>
+<h3>Reporting</h3><p>Routine system/workflow health → GM/Operations. Domain exceptions → responsible human manager. Material security/financial/business incidents → responsible manager + GM; Owner when severity policy requires.</p>
+<h3>KPI Families</h3><p>Routing accuracy; workflow completion; stuck-workflow detection; mean time to detect/escalate; duplicate workflow rate; safe retry success; false escalation rate; unauthorized-action attempts blocked; availability; cost/token per completed workflow.</p>
+</section>
+
+<section class="agent">
+<h2>8. Agent 2 — Commercial AI Agent</h2>
+<p><strong>Mission:</strong> Generate and improve demand, CRM intelligence and commercial execution support without independently changing commercial truth or commitments.</p>
+<h3>Workers / Capabilities</h3>
+<ul><li>Lead Intelligence</li><li>Lead Scoring</li><li>CRM Segmentation</li><li>Campaign Analysis</li><li>Content Drafting</li><li>SEO/Content Intelligence</li><li>Social Content</li><li>Lead Nurture</li><li>B2B Research</li><li>Campaign Performance</li><li>Abandoned Inquiry Recovery</li></ul>
+<h3>Detailed Job Description</h3>
+<ul><li>Analyze lead sources, quality, segments, funnels and campaign performance.</li><li>Assist CRM segmentation, nurturing, reactivation and remarketing subject to consent/policy.</li><li>Prepare content/campaign drafts and performance analysis.</li><li>Identify abandoned inquiries and qualified commercial opportunities.</li><li>Support B2B research and pipeline intelligence.</li><li>Handoff active reservation intent to the AI Reservation Service with structured context.</li></ul>
+<h3>May</h3><p>Analyze, score, segment, draft, recommend, execute approved low-risk follow-up, enrich CRM from verified sources, prepare campaign plans.</p>
+<h3>Policy-Gated</h3><p>Campaign sending, bulk outreach, promotional offer communication, content publishing, reactivation at scale, paid-media actions.</p>
+<h3>Must Not</h3><p>Invent discounts/rates/availability; alter contracts; change verified commercial terms; make unauthorized commitments; exceed approved budget; misuse customer data; claim attribution unsupported by data.</p>
+<h3>Reporting</h3><p>Commercial & Marketing Manager → GM. Executive trends may feed Revenue/BI management reporting.</p>
+<h3>KPI Families</h3><p>Qualified leads; scoring quality; lead→inquiry and inquiry→booking conversion; cost per qualified lead; attributable revenue; abandoned-inquiry recovery; CRM completeness; opt-out/complaint rate; human correction rate; hallucinated commercial facts (critical defect).</p>
+</section>
+
+<section class="agent">
+<h2>9. Agent 3 — AI Reservation Service</h2>
+<p><strong>Mission:</strong> Act as the primary professional customer-facing reservation workforce while remaining grounded in verified villa, contract, rate, availability and transaction state.</p>
+<h3>Runtime Model</h3>
+<p>One logical service, multiple isolated concurrent workers. Horizontal scaling must be controlled by queue depth, latency, provider limits, token/cost budget and safety limits. Business state must live in durable stores, never only in worker memory.</p>
+<h3>Capability Workers</h3>
+<ul><li>Inquiry & Requirement Extraction</li><li>Villa Matching</li><li>Availability Query</li><li>Pricing/Rate Calculation Interface</li><li>Quotation</li><li>Conversation & Follow-up</li><li>Tentative/Full Hold Workflow</li><li>Booking Workflow</li><li>Amendment/Cancellation Assistance</li><li>Pre-arrival Communication</li><li>Human Handoff</li></ul>
+<h3>Conversation Isolation Minimum</h3>
+<p><code>agency_id, conversation_id, customer_id, inquiry_id, channel_id, reservation_id, current_state, requirements, villa_candidates, quote_reference, hold_reference, payment_state, consent_state, human_owner, risk_state</code>.</p>
+<h3>Detailed Job Description</h3>
+<ul><li>Receive inquiry from approved channels and extract guest requirements.</li><li>Ask clarification questions only when required information is missing.</li><li>Search verified inventory and recommend relevant villas.</li><li>Query availability and preserve source, timestamp and confidence/state semantics.</li><li>Use deterministic pricing from verified rate/contract versions; do not calculate commercial truth from model memory.</li><li>Create/send quotations only through approved policy-controlled workflow.</li><li>Perform professional follow-up without spam or conflicting communication.</li><li>Request tentative/full hold when policy permits and track expiry.</li><li>Coordinate booking workflow after applicable gates are satisfied.</li><li>Communicate payment status but never infer settlement from customer claims/screenshots.</li><li>Provide verified pre-arrival information and escalate exceptions.</li></ul>
+<h3>May Autonomously Within Policy</h3>
+<p>Verified FAQ; requirement extraction; deterministic search/matching; availability query; explain verified rates; generate approved quotation; routine follow-up; alternatives; approved hold request; status communication; verified pre-arrival communication.</p>
+<h3>Mandatory Escalation</h3>
+<p>Out-of-policy discount; high-value/complex negotiation; ambiguous/conflicting contract or supplier data; availability conflict; funds after hold expiry; serious complaint; safety/emergency; legal threat; unusual cancellation; sensitive privacy/security matter; customer requests human; AI uncertainty above configured threshold.</p>
+<h3>Must Not</h3>
+<p>Invent availability/rates/amenities/policies; claim requested hold is confirmed; claim reported payment is received; fabricate supplier confirmation; override cancellation/commercial terms; expose another customer's data; place raw passport/identity documents into LLM context.</p>
+<h3>Reporting</h3><p>Operations/Reservation Manager → GM. Material customer/business exceptions may escalate to GM. Owner receives executive aggregates/material exceptions, not routine chats.</p>
+<h3>KPI Families</h3>
+<p>First-response latency; response SLA; inquiry completeness; recommendation relevance; availability/quotation/booking accuracy; inquiry→quote and quote→booking conversion; follow-up completion; confirmation accuracy; duplicate booking incidents; hallucinated business facts; inappropriate autonomous actions; escalation precision; human takeover rate; CSAT; cost per confirmed booking.</p>
+</section>
+
+<section class="agent">
+<h2>10. Agent 4 — Operations AI Agent</h2>
+<p><strong>Mission:</strong> Keep agency workflows complete, timely, compliant and operationally ready; detect exceptions before they become customer or financial failures.</p>
+<h3>Workers / Capabilities</h3>
+<ul><li>Workflow Monitor</li><li>SLA Monitor</li><li>Documentation Completeness</li><li>Booking QC</li><li>Pre-arrival Readiness</li><li>Task Assignment</li><li>Exception Detection</li><li>Incident Routing</li><li>Communication QC</li><li>Process Compliance</li></ul>
+<h3>Detailed Job Description</h3>
+<ul><li>Monitor active reservations, deadlines and operational states.</li><li>Detect missing data/documents and create bounded tasks.</li><li>Monitor hold/confirmation/pre-arrival deadlines.</li><li>Run deterministic QC checks against reservation/business invariants.</li><li>Detect stale, conflicting or anomalous workflow states.</li><li>Monitor operational incidents and unresolved tasks.</li><li>Prepare evidence/context for human resolution.</li></ul>
+<h3>May</h3><p>Create/assign tasks within rules; reminders; flag anomalies; generate checklists; SLA escalation; close deterministic tasks when evidence is satisfied; compile incident context.</p>
+<h3>Must Not</h3><p>Alter financial truth; mark funds received; fabricate task completion; improperly force reservation state; resolve serious complaints/safety incidents autonomously; change supplier contracts or commercial terms.</p>
+<h3>Reporting</h3><p>Operations Manager → GM. Material operational incident → GM and Owner according to severity policy.</p>
+<h3>KPI Families</h3><p>Process accuracy; SLA compliance; overdue-task rate; missing-data detection; duplicate-booking incidents; pre-arrival completeness; exception precision/recall; false-alert rate; incident escalation latency; SOP compliance; corrective-action closure; human rework.</p>
+</section>
+
+<section class="agent">
+<h2>11. Agent 5 — Finance Admin AI Agent</h2>
+<p><strong>Mission:</strong> Automate finance administration, matching, reconciliation assistance and financial intelligence while possessing zero authority to approve or move funds.</p>
+<h3>Workers / Capabilities</h3>
+<ul><li>Client AR Monitor</li><li>Supplier AP Monitor</li><li>Payment Matching</li><li>Reconciliation Assistance</li><li>Invoice Validation</li><li>Settlement Calculation</li><li>Payment Due Monitor</li><li>Unallocated Receipt Detection</li><li>Duplicate Invoice/Payment Detection</li><li>Financial Exception Detection</li><li>Cash/Exposure Reporting</li></ul>
+<h3>Detailed Job Description</h3>
+<ul><li>Monitor invoices, aging, due dates and verified payment events.</li><li>Match receipts to invoices using authoritative evidence and deterministic rules.</li><li>Identify partial/over/unmatched/duplicate payments and create exceptions.</li><li>Validate supplier invoice references and calculate settlement proposals.</li><li>Prepare payment requests and supporting evidence for human review.</li><li>Produce reconciliation and management reports.</li></ul>
+<div class="deny"><strong>ABSOLUTE DENY:</strong> approve/execute payment; approve/execute refund; change/approve bank details; change crypto destination; sign blockchain transaction; access private keys/seed phrases/signing credentials; control treasury wallets; mark unverified funds as received; bypass maker-checker/approval; alter evidence or audit records.</div>
+<h3>Payment Data Boundary</h3>
+<p>Raw PAN/card number, CVV/CVC, PIN/sensitive authentication data must not enter the AI context or ordinary application storage. Use hosted/tokenized provider flows. Provider/browser success pages are not authoritative settlement evidence; verified server-side events and reconciliation rules govern payment state.</p>
+<h3>Reporting</h3>
+<p><strong>Functional owner:</strong> Finance & Accounting Manager. <strong>Direct management/exception reporting:</strong> General Manager and Owner. Routine reports should be scheduled/configurable; critical exceptions are event-driven.</p>
+<h3>KPI Families</h3>
+<p>Reconciliation accuracy; matched-receipt rate; unmatched aging; duplicate-payment prevention; invoice validation; settlement accuracy; exception detection; AR aging; reporting timeliness; unauthorized payment/bank change/raw-card exposure (critical zero-tolerance defects); human correction rate.</p>
+</section>
+
+<section class="agent">
+<h2>12. Agent 6 — Revenue & Business Intelligence AI Agent</h2>
+<p><strong>Mission:</strong> Convert verified cross-functional data into explainable revenue, pricing, conversion and business intelligence without changing transactional truth.</p>
+<h3>Workers / Capabilities</h3>
+<ul><li>Revenue KPI</li><li>Conversion Analytics</li><li>Booking Pace</li><li>Demand Intelligence</li><li>Pricing Intelligence</li><li>Villa Performance</li><li>Partner Performance</li><li>Channel Performance</li><li>Forecasting</li><li>Margin Analysis</li><li>Anomaly Detection</li><li>Executive Reporting</li></ul>
+<h3>Detailed Job Description</h3>
+<ul><li>Analyze GBV, agency revenue, commission and contribution margin.</li><li>Analyze booking pace, seasonality, conversion, cancellation and average booking value.</li><li>Compare villa, partner, channel and campaign performance.</li><li>Generate forecasts with explicit assumptions and confidence/uncertainty where applicable.</li><li>Detect material anomalies and data-quality problems.</li><li>Recommend pricing/promotional opportunities without directly publishing unauthorized changes.</li><li>Generate explainable management reports with data lineage.</li></ul>
+<h3>May</h3><p>Analyze, forecast, compare, detect anomalies, recommend pricing, run scenarios, explain KPI, prepare management reports.</p>
+<h3>Policy-Gated / Human Decision</h3><p>Pricing changes, discount/promotion activation, commercial policy changes and any action affecting contractual rates.</p>
+<h3>Must Not</h3><p>Publish unauthorized rates; modify contract rates; fabricate competitor data; change ledgers; manipulate KPI definitions; hide unfavorable results; present forecast as actual; use analytics store as transactional source of truth.</p>
+<h3>Reporting</h3>
+<p>Revenue Manager when present; otherwise GM as functional owner. Direct executive reports to GM and Owner. Finance metrics that affect statutory/accounting truth must remain sourced from Finance/accounting systems.</p>
+<h3>KPI Families</h3>
+<p>Forecast accuracy; metric accuracy; data completeness; report timeliness; anomaly precision/recall; recommendation acceptance/outcome; management query accuracy; lineage completeness; actual-vs-forecast clarity; false-insight rate; executive-report SLA.</p>
+</section>
+
+<h2>13. Human Handoff State Machine</h2>
+<pre>
+AI_RUNNING
+   |
+ESCALATION_TRIGGERED
+   |
+HANDOFF_PENDING
+   |
+HUMAN_ASSIGNED
+   |
+AI_WRITE_SUSPENDED
+   |
+HUMAN_HANDLING
+   |
+RESOLUTION
+   |
+AI_RESUME_ALLOWED (only if explicitly safe)
+</pre>
+<ul><li>Once a human takes control of a customer conversation/case, conflicting AI outbound messages must stop.</li><li>Handoff package must include concise context, verified facts, current states, pending actions, reason for escalation and relevant evidence references.</li><li>Human action must not be silently overwritten when AI resumes.</li></ul>
+
+<h2>14. Inter-Agent Communication Contract</h2>
+<div class="warning"><strong>No free-form authority transfer.</strong> Agent A telling Agent B “payment is confirmed” is not evidence. Use typed, versioned events and re-check authoritative state.</div>
+<pre>
+event_id
+event_type
+schema_version
+agency_id
+actor_type
+actor_id
+source
+correlation_id
+causation_id
+reservation_id / entity_id
+risk_level
+occurred_at
+idempotency_key
+payload
+evidence_references
+</pre>
+<p>Critical events use transactional outbox/inbox or equivalent idempotent delivery. Consumers must tolerate duplicate delivery. Retries require bounded budgets and dead-letter/exception handling.</p>
+
+<h2>15. Source-of-Truth Matrix</h2>
+<table>
+<tr><th>Fact</th><th>Authoritative Source</th><th>Not Authoritative</th></tr>
+<tr><td>Villa facts</td><td>Verified Villa Master/version</td><td>LLM memory, marketing prose without provenance</td></tr>
+<tr><td>Rates/terms</td><td>Verified Contract/Rate version</td><td>Chat memory</td></tr>
+<tr><td>Availability</td><td>Current availability observation with source/time</td><td>Old conversation</td></tr>
+<tr><td>Hold</td><td>Hold record + supplier evidence</td><td>Request message alone</td></tr>
+<tr><td>Booking</td><td>Reservation domain state</td><td>Email/chat alone</td></tr>
+<tr><td>Client funds</td><td>Verified provider/bank/payment evidence</td><td>Customer claim/screenshot</td></tr>
+<tr><td>Supplier invoice</td><td>Verified supplier invoice record</td><td>LLM extraction alone</td></tr>
+<tr><td>Bank/wallet destination</td><td>Approved versioned profile</td><td>Email/PDF instruction alone</td></tr>
+<tr><td>KPI</td><td>Governed analytics pipeline over verified data</td><td>LLM-estimated numbers</td></tr>
+<tr><td>Conversation</td><td>Conversation store</td><td>Worker memory after termination</td></tr>
+</table>
+
+<h2>16. Critical Business Invariants</h2>
+<ul>
+<li><code>HOLD_REQUESTED != HOLD_CONFIRMED</code></li>
+<li><code>RELEASE_REQUESTED != RELEASED</code></li>
+<li><code>CLIENT_PAYMENT_REPORTED != CLIENT_FUNDS_RECEIVED</code></li>
+<li><code>AI_EXTRACTED != VERIFIED</code></li>
+<li><code>SOURCE_UNAVAILABLE != NOT_AVAILABLE</code></li>
+<li>Supplier route must be explicit for commercial truth.</li>
+<li>Historical booking/financial snapshots are immutable.</li>
+<li>Approval becomes invalid when its critical target/fingerprint changes.</li>
+<li>AI cannot move or approve money.</li>
+<li>AI cannot approve/change bank or crypto destinations.</li>
+<li>Analytics/search/LLM memory are not transactional sources of truth.</li>
+<li>Core booking operations must remain usable when AI is unavailable.</li>
+</ul>
+
+<h2>17. Failure, Degraded Mode and Kill Switch</h2>
+<table>
+<tr><th>State</th><th>Meaning</th></tr>
+<tr><td>ACTIVE</td><td>Normal bounded operation</td></tr>
+<tr><td>DEGRADED</td><td>Reduced capability; explicit user/operator indication where relevant</td></tr>
+<tr><td>READ_ONLY</td><td>Analysis/read allowed; write/tool actions blocked</td></tr>
+<tr><td>SUSPENDED</td><td>Agent temporarily blocked pending investigation/recovery</td></tr>
+<tr><td>DISABLED</td><td>No agent execution</td></tr>
+</table>
+<p>Support per-agent and global AI kill switches. Define bounded retries, timeouts, maximum tool calls, queue limits, rate limits, token/cost budgets and circuit breakers. Provider/tool failure must map to explicit exception/degraded states rather than fabricated success.</p>
+
+<h2>18. KPI Governance</h2>
+<p>Every AI KPI should be classified across six dimensions:</p>
+<pre>
+1. BUSINESS OUTCOME
+2. ACCURACY
+3. SAFETY
+4. CUSTOMER / USER EXPERIENCE
+5. RELIABILITY
+6. COST / EFFICIENCY
+</pre>
+<p>KPI definitions and thresholds must be configurable and versioned:</p>
+<pre>
+kpi_definition
+metric_formula
+data_source
+target
+warning_threshold
+critical_threshold
+effective_from
+policy_version
+owner
+review_frequency
+</pre>
+<div class="info">Targets such as 99%, 95% or zero critical errors are governance/control targets, not universal scientific constants. Business performance targets without historical baselines should be calibrated from actual operating data.</div>
+
+<h2>19. Mandatory Test Matrix Before Production</h2>
+<table>
+<tr><th>Category</th><th>Minimum Tests</th></tr>
+<tr><td>Functional</td><td>Inquiry, search, unavailable/alternatives, quote, hold, booking, payment-state communication, confirmation, amendment/cancellation, pre-arrival</td></tr>
+<tr><td>Concurrency</td><td>Competing guests for same inventory; rate change during quote; funds after hold expiry; duplicate events; concurrent updates</td></tr>
+<tr><td>Security</td><td>Cross-customer/tenant access, IDOR, prompt injection, tool abuse, privilege escalation, forged events, malicious email/PDF, PII exfiltration</td></tr>
+<tr><td>Finance</td><td>Duplicate webhook, partial/over/unmatched payment, wrong amount/currency, duplicate supplier invoice, bank-profile change after approval, approval invalidation</td></tr>
+<tr><td>AI Grounding</td><td>Hallucinated rate/availability/amenity/policy, conflicting sources, poisoned/untrusted retrieved content, uncertainty escalation</td></tr>
+<tr><td>Resilience</td><td>LLM/provider outage, payment provider outage, WhatsApp/email outage, supplier source unavailable, worker crash, queue retry/dead-letter, database failover/restore scenario</td></tr>
+<tr><td>Human Handoff</td><td>No conflicting AI message after takeover; correct context package; safe resume; human action preserved</td></tr>
+<tr><td>Audit</td><td>Actor/source/correlation/idempotency/evidence captured; immutable critical audit trail; no secrets/raw restricted PII in logs</td></tr>
+</table>
+
+<h2>20. Hermes Implementation Guardrails</h2>
+<ol>
+<li>Implement the six logical components as bounded capabilities; do not create extra autonomous agents without an approved ADR.</li>
+<li>Prefer deterministic code for authorization, state transitions, pricing arithmetic, finance rules, idempotency, validation and invariants.</li>
+<li>Use LLMs for language understanding/generation, classification, extraction with verification, summarization, reasoning assistance and recommendations—not as the authority for critical state.</li>
+<li>All tools require explicit schemas, least privilege and server-side authorization on every invocation.</li>
+<li>Do not expose arbitrary SQL, unrestricted filesystem/shell, unrestricted HTTP fetch, payment credentials or secrets to business agents.</li>
+<li>Persist durable workflow state outside LLM/worker memory.</li>
+<li>Every customer conversation and tenant context must be isolated.</li>
+<li>All critical writes require idempotency and concurrency controls.</li>
+<li>All external content is untrusted until validated/sanitized according to its use.</li>
+<li>Do not treat a screenshot, email, PDF, customer statement or another AI's statement as verified financial/commercial truth without authoritative verification.</li>
+<li>Implement observability for latency, errors, token/cost, tool use, exceptions, safety blocks and human corrections.</li>
+<li>Do not optimize for autonomy percentage. Optimize for safe task completion, accuracy, business outcome and controlled escalation.</li>
+</ol>
+
+<h2>21. Explicit Non-Agents in V1</h2>
+<table>
+<tr><th>Function</th><th>Decision</th><th>AI Support Allowed</th></tr>
+<tr><td>Partnership Manager</td><td>HUMAN</td><td>Research, meeting prep/summary, contract extraction, onboarding checklist, reminders, analytics</td></tr>
+<tr><td>General Manager / CEO</td><td>HUMAN</td><td>Decision support and management reports</td></tr>
+<tr><td>Owner / Shareholders</td><td>HUMAN</td><td>Executive intelligence/reports</td></tr>
+<tr><td>Finance Authority</td><td>HUMAN</td><td>AI administrative preparation/reconciliation only</td></tr>
+<tr><td>Legal / Compliance Authority</td><td>HUMAN</td><td>Extraction, comparison, checklist, monitoring</td></tr>
+<tr><td>Security Authority</td><td>HUMAN + deterministic controls</td><td>Monitoring/analysis; no autonomous privilege grant</td></tr>
+<tr><td>HR</td><td>No dedicated V1 AI agent</td><td>Workflow/templates/checklists if required</td></tr>
+</table>
+
+<h2>22. Definition of Done for Each Agent</h2>
+<ul>
+<li>Responsibility and data scope are explicit and non-overlapping.</li>
+<li>Tool allowlist and denylist are implemented server-side.</li>
+<li>Authority levels and human-approval points are executable controls, not prompt text only.</li>
+<li>Source-of-truth mappings are enforced.</li>
+<li>Concurrency/idempotency/retry/failure behavior is tested.</li>
+<li>Human handoff is tested.</li>
+<li>Security/adversarial tests pass.</li>
+<li>Observability and audit evidence exist.</li>
+<li>KPI telemetry exists before KPI targets are treated as operational truth.</li>
+<li>Agent can be degraded/suspended/disabled independently.</li>
+<li>Core system remains functional if the agent/LLM is unavailable.</li>
+</ul>
+
+<h2>23. Architecture Freeze — V1</h2>
+<div class="callout"><strong>Locked baseline:</strong> V1 contains exactly six logical AI components: (1) AI Control Tower / Orchestrator, (2) Commercial AI Agent, (3) AI Reservation Service, (4) Operations AI Agent, (5) Finance Admin AI Agent, and (6) Revenue & Business Intelligence AI Agent. Partnership remains human-led. Reservation scales through concurrent workers, not by proliferating permanent Reservation Agent identities. Finance and Revenue/BI provide direct management reporting to GM and Owner as defined above, while functional human ownership remains intact.</div>
+<p><strong>Change control:</strong> Any new autonomous agent, authority expansion, direct system credential, new financial capability, or bypass of human approval requires an explicit ADR, threat/risk analysis, test evidence and human approval before implementation.</p>
+
+<h2>24. Evidence and Design Basis</h2>
+<p class="small">This architecture is grounded in the supplied Bali Villa Marketing Agency organization/JD/KPI baseline and the existing Villa Agency OS locked business/security principles. External design guidance used during architecture analysis includes NIST AI Risk Management Framework concepts, OWASP guidance for AI/agent security and excessive agency, PCI SSC card-data minimization/tokenization principles, and hospitality-specific AI orchestration/governance patterns. External guidance informs control design; it does not replace the agency's verified contracts, business data, applicable law, provider requirements or approved internal policies.</p>
+
+</main>
+<footer>
+Villa Agency OS — AI Workforce Architecture V1.1 • Hermes Implementation Input<br>
+Human-governed • Security & Privacy First • Financial Authority Remains Human • Production Language: U.S. English
+</footer>
+</div></body></html>
