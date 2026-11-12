@@ -73,7 +73,7 @@ Tidak perlu mengetik satu per satu. Satu berkas = seluruh daftar Anda.
 python3 scripts/import_villas.py --template > villa-list.csv
 ```
 
-Berkas itu berheader 16 kolom; **satu baris = satu unit**, kolom properti diulang. Kolom yang
+Berkas itu berheader 20 kolom (12 properti + 8 unit); **satu baris = satu unit**, kolom properti diulang. Kolom yang
 boleh dikosongkan beserta bawaannya:
 
 | Kolom | Wajib | Bawaan bila kosong |

@@ -2,7 +2,7 @@
 
 **Nama sistem:** Villa Agency OS (Villa Management & Agency)
 **Tanggal dokumen:** 12 November 2026 · **Pemilik:** Owner (Mas Anas) · **Disusun oleh:** divisi Villa Management & Agency
-**Posisi repo saat dokumen ini ditulis:** `~/villa-agency-os`, 173 commit (pertama 2026-09-21, terakhir `5647b23`), 370 berkas ter-track, 58 modul `src/*.py` (±52.757 baris), 102 berkas `test_*.py` (104 berkas `.py` di `tests/` termasuk `conftest.py` dan `seed_support.py`), 67 berkas ADR.
+**Posisi repo saat dokumen ini ditulis:** `~/villa-agency-os`, 173 commit (pertama 2026-09-21, terakhir `5647b23`), 370 berkas ter-track, 58 modul `src/*.py` (±52.757 baris), 102 berkas `test_*.py` (104 berkas `.py` di `tests/` termasuk `conftest.py` dan `seed_support.py`), 68 berkas ADR (ADR-0068 ditambahkan 2026-11-13 setelah dokumen ini disusun).
 
 > **Cara membaca dokumen ini.** Dokumen ini adalah konsolidasi *bertanggal* dari seluruh sumber resmi di repo
 > (Charter, Peta Status & Gap, Panduan Alur Kerja, State Machine, Policy Matrix, Data Model, Runbook, Deployment,
@@ -26,7 +26,7 @@
 - Bagian VI — Kontrol: **20** Keamanan, privasi, audit · **21** Legal, pajak, kepatuhan · **22** Kualitas: tes, gerbang, CI
 - Bagian VII — Menjalankan: **23** Deployment, tenant, skalabilitas, backup
 - Bagian VIII — Status jujur: **24** Status hari ini · **25** Celah dan risiko terbuka · **26** Keputusan Owner dan langkah berikutnya
-- Lampiran: **A** Glosarium · **B** Indeks 67 ADR · **C** Indeks 58 modul `src/` · **D** Migrasi, skrip, target make · **E** Apa yang diverifikasi dan apa yang dikutip · **F** Ketidakkonsistenan yang ditemukan
+- Lampiran: **A** Glosarium · **B** Indeks 68 ADR · **C** Indeks 58 modul `src/` · **D** Migrasi, skrip, target make · **E** Apa yang diverifikasi dan apa yang dikutip · **F** Ketidakkonsistenan yang ditemukan
 
 ---
 
@@ -54,7 +54,7 @@ ia mengurus tiga hal yang paling sering menimbulkan kerugian di bisnis villa —
 | Migrasi lanjutan | 002 (PG) dan 003–008, 010–017 (tidak ada 009) | `ls src/schema` |
 | Halaman dashboard | 14 entri `PAGE_ROLES` (12 halaman navigasi + `case_detail` + `error`); 6 peran | `PAGE_ROLES` di `src/dashboard.py` |
 | Rute situs publik | `/`, `/villas`, `/villas/<id>`, `/destinations/bali`, `/destinations/yogyakarta`, `/owners`, `/inquiry`, `/favicon.ico` | `src/marketing_site.py` |
-| ADR | 67 berkas (`0001`–`0067`) | `ls docs/adr` |
+| ADR | 68 berkas (`0001`–`0068`) | `ls docs/adr` |
 | Tes terakhir | `make check` rc=0: **3.851 passed, 4 skipped, 4.008 subtests passed** | log gerbang 2026-11-12 |
 | Gerbang | SECRET-SCAN 0/370, UNSAFE-SCAN 0/370, PRE-DEPLOY GATE PASS | `make check` |
 | Properti di DB hidup | 3, semuanya `geo_precision=UNKNOWN` | query baca-saja 2026-11-12 |
@@ -391,7 +391,7 @@ Keduanya **loopback saja**. Membuka dashboard ke internet butuh lapisan login ta
 | `src/` | Seluruh logika domain, Python stdlib saja | 58 modul `.py`, 52.757 baris |
 | `src/schema/` | Skema SQLite + twin PostgreSQL + migrasi | `001_initial.sql`, `001_initial.pg.sql`, `002_pg_range_exclusions.pg.sql`, migrasi `003`–`008`, `010`–`017` (tidak ada `009`) |
 | `tests/` | Uji otomatis (pytest + subtests) | 102 berkas `test_*.py` + `conftest.py` + `seed_support.py`; 57.668 baris |
-| `docs/` | Dokumen kerja, ADR, keamanan, laporan desain | 29 berkas `.md` di akar `docs/` (42 entri termasuk HTML/PDF dan subfolder), `docs/adr/` (67 ADR), `docs/security/` |
+| `docs/` | Dokumen kerja, ADR, keamanan, laporan desain | 29 berkas `.md` di akar `docs/` (42 entri termasuk HTML/PDF dan subfolder), `docs/adr/` (68 ADR), `docs/security/` |
 | `scripts/` | CLI operator, gerbang, utilitas | 22 berkas |
 | `templates/` | HTML dashboard (`base`, `error`, dan halaman), `templates/marketing/` (9 berkas), `templates/messages/id-ID.json` (templat pesan) | 15 `.html` dashboard |
 | `deploy/systemd-user/` | Dua unit layanan | 2 berkas |
@@ -836,7 +836,7 @@ Empat kolom di `properties`: `latitude REAL`, `longitude REAL`, `geo_precision T
 
 Migrasi 017 diterapkan ke `data/villa.db` pada 2026-11-12 (setelah uji pada salinan + backup). DB hidup: 3 properti, **semuanya `UNKNOWN`, lintang/bujur NULL** → situs kini menampilkan peta area kosong-aman (tanpa pin). *Keputusan Owner:* mengisi koordinat + presisi + sumber untuk 3 villa pilot dari sumber terverifikasi (Bab 26).
 
-> **Dua cacat yang ditemukan saat menyusun bab ini (terbukti dengan `grep`, dirinci di Lampiran F):** (1) komentar di `001_initial.sql`, `001_initial.pg.sql`, dan `017_property_geo.sql` memberi label peta "ADR-0061", padahal `docs/adr/0061-agent-telemetry-tool-effects.md` adalah ADR tentang efek tool agen telemetri (dan memang itu yang dirujuk `control_tower.py`, `operations_agent.py`, `revenue_bi_agent.py`) — **peta geo belum punya ADR sendiri**; (2) komentar 017 menyatakan aturan "VERIFIED mengharuskan koordinat" ditegakkan di `villa_import.validate_geo_fields`, tetapi **fungsi itu tidak ada**: `src/villa_import.py` ada namun tidak menyentuh kolom geo sama sekali, jadi `scripts/import_villas.py` belum bisa mengisi koordinat/presisi/sumber. Pengaman yang nyata hanya `resolve_point` (VERIFIED tanpa koordinat → tidak tampil) dan CHECK rentang lintang/bujur serta daftar presisi di skema. Untuk mengisi 3 villa pilot sekarang dibutuhkan pembaruan SQL manual oleh manusia atau pekerjaan baru di jalur impor (Bab 25–26).
+> **Dua cacat yang ditemukan saat menyusun bab ini — keduanya sudah ditutup 2026-11-13, dirinci di Lampiran F:** (1) komentar di `001_initial.sql`, `001_initial.pg.sql`, dan `017_property_geo.sql` memberi label peta "ADR-0061", padahal `docs/adr/0061-agent-telemetry-tool-effects.md` adalah ADR tentang efek tool agen telemetri (dan memang itu yang dirujuk `control_tower.py`, `operations_agent.py`, `revenue_bi_agent.py`) — **peta geo kini punya ADR sendiri, ADR-0068**; (2) komentar 017 menyatakan aturan "VERIFIED mengharuskan koordinat" ditegakkan di `villa_import.validate_geo_fields`, tetapi **fungsi itu tidak ada**: `src/villa_import.py` ada namun tidak menyentuh kolom geo sama sekali, jadi `scripts/import_villas.py` belum bisa mengisi koordinat/presisi/sumber. Pengaman yang nyata hanya `resolve_point` (VERIFIED tanpa koordinat → tidak tampil) dan CHECK rentang lintang/bujur serta daftar presisi di skema. **Koreksi 2026-11-13:** aturan itu sekarang ada sebagai `geo.validate_geo_fields` dan dipanggil oleh jalur impor (`villa_import._geo`) serta kernel (`upsert_property`), dengan tes di `tests/test_geo.py` dan `tests/test_villa_import.py`. Mengisi 3 villa pilot tetap menunggu sumber terverifikasi (Bab 25 butir 10, Bab 26.1 butir 1) — yang sudah tersedia hanyalah jalannya, bukan datanya.
 
 ## 16. Dashboard internal
 
@@ -1082,7 +1082,7 @@ Larangan AI yang **ditegakkan mesin** (`security.ai.denied_actions`, daftar lara
 * **Perbaikan** (komit `bc4d2b9`): `src/dashboard.py` mendapat `--token-file`; `--token` bersama `--token-file` ditolak (fail-closed); berkas kosong/tak terbaca ditolak **tanpa** jatuh ke token acak; token yang dipasok operator tidak pernah dicetak (hanya token auto-mint). Berkas token `0600` di direktori `0700`; `villa.env` kini hanya komentar dan tidak direferensikan unit. Dokumen `DEPLOYMENT.md`, `README.md` dan uji `tests/test_dashboard.py` diperbarui.
 * **Gerbang diperkuat** (komit `5647b23`): `scripts/secret_scan.sh` kini menangkap `--token|--password|--secret|--api-key|--apikey <16+ karakter>` dan `Bearer <20+>`; `tests/test_secret_scan.py` adalah kontrol negatif. Dalam proses ini ditemukan bug lama: pola berawalan `--` tak pernah dieksekusi karena `grep` menganggapnya opsi → diperbaiki dengan `grep -e`.
 * **Bukti:** `make check` rc=0 setelahnya; 0 literal token di 370 berkas tracked dan 0 di riwayat git (diaudit dengan panjang/prefix hash, tanpa mencetak nilai).
-* **Catatan dokumen:** `docs/security/SESSION_AUTH.md` §1 dan §4 masih menyebut "`--token` saat menjalankan dashboard" dan "pasang di unit systemd"; itu tertinggal dari `--token-file` (Lampiran F).
+* **Catatan dokumen (diperbaiki 2026-11-13):** `docs/security/SESSION_AUTH.md` §1 dan §3 sudah memakai `--token-file`, dan `scripts/session_token.py rotate` menerima `--token-file` sehingga token sesi lama tidak perlu lewat argumen proses.
 
 ### 20.6 Pengerasan server HTTP
 
@@ -1232,7 +1232,7 @@ Sistem dijual/disewakan per agency (ADR-0037). `AgencySettings.readiness()` dan 
 | `payment.provider`, `payment.rails`, `messaging.whatsapp_number`, `tax.pbjt_source`, `operations.oncall_primary` | ✅ |
 | `payment.hosted_page`, `messaging.feedback_channel`, `operations.oncall_escalation`, `legal.review_weekday`, `retention.data_years` (bawaan 7) | — |
 
-Perubahan setelan hanya oleh Owner, GM/CEO, atau Technology-Security Manager; setiap perubahan masuk rantai audit; setelan **tidak** bisa menimpa pengaman platform (daftar larangan AI, ambang approval, peran wajib MFA). Impor villa massal: `scripts/import_villas.py` (CSV 16 kolom, satu baris = satu unit; rencana dulu, `--apply` baru menulis; satu baris salah = seluruh berkas ditolak; impor ulang memperbarui, tidak menggandakan; nama agency tak bisa ditulis di berkas; semua baris masuk audit dengan sidik jari berkas). Peran: `scripts/manage_roles.py` (`list/seed/rename/add/...`). Tersedia 12 template pesan id-ID (`templates/messages/id-ID.json`).
+Perubahan setelan hanya oleh Owner, GM/CEO, atau Technology-Security Manager; setiap perubahan masuk rantai audit; setelan **tidak** bisa menimpa pengaman platform (daftar larangan AI, ambang approval, peran wajib MFA). Impor villa massal: `scripts/import_villas.py` (CSV 20 kolom — 12 properti + 8 unit, satu baris = satu unit; rencana dulu, `--apply` baru menulis; satu baris salah = seluruh berkas ditolak; impor ulang memperbarui, tidak menggandakan; nama agency tak bisa ditulis di berkas; semua baris masuk audit dengan sidik jari berkas). Peran: `scripts/manage_roles.py` (`list/seed/rename/add/...`). Tersedia 12 template pesan id-ID (`templates/messages/id-ID.json`).
 
 ### 23.10 Skalabilitas terukur
 
@@ -1265,7 +1265,7 @@ Semua angka di bawah diambil langsung dari repo/DB pada hari penulisan, bukan da
 | Modul `src/` | 58 berkas `.py`, 52.757 baris | hitung berkas |
 | Tes | 102 `test_*.py` (+ `conftest.py`, `seed_support.py`), 57.668 baris | hitung berkas |
 | Hasil `make check` | rc=0 · 3.851 passed · 4 skipped · 4.008 subtests | Bab 22.2 |
-| ADR | 67 berkas di `docs/adr/` (Lampiran B) | `ls` |
+| ADR | 68 berkas di `docs/adr/` (Lampiran B) | `ls` |
 | Migrasi terpasang di DB hidup | 14 baris `schema_migrations` (003–008, 010–017; 001 dan 002 adalah skema dasar); **tidak ada nomor 009** | `select` baca-saja |
 | Properti di DB hidup | 3, semua `geo_precision = UNKNOWN` | `select` baca-saja |
 | Preflight | `VERDICT: GO` dengan 4 peringatan; audit chain utuh sampai seq 22; "1 agency(ies) ready"; tak ada kasus terbuka/approval tertunda/rekonsiliasi terbuka | `scripts/preflight.py --db data/villa.db` |
@@ -1310,10 +1310,10 @@ Daftar ini menggabungkan Status-Gap (potret), temuan hari ini, dan hasil membang
 | 5 | Outbox: worker latar yang memanggil `publish_due` berkala + transport nyata (email/WA/webhook) belum ada | pesan keluar belum benar-benar terkirim otomatis | Status-Gap §3.2 (potret) | Tech |
 | 6 | Status-Gap §3.5 (potret) menyatakan dokumen AI Workforce belum dipetakan ke repo; berkas `docs/AI_WORKFORCE_TRACEABILITY.md` kini **ada** (diperiksa 2026-09-28, memakai tanda DIIKUTI/SEBAGIAN) — pernyataan Status-Gap itu sudah usang, tetapi isi pemetaan belum diaudit ulang di dokumen ini | pemetaan mungkin tertinggal dari kode | Lampiran F | Owner |
 | 7 | MFA hanya untuk 3 peran; membuka dashboard ke internet butuh MFA semua peran + faktor kata sandi — belum ada | dashboard hanya boleh loopback/VPN | SESSION_AUTH §5 | Tech-Security |
-| 8 ♦ | **Peta geo belum punya ADR sendiri**; komentar SQL menyebutnya "ADR-0061" yang sebenarnya ADR telemetri agen | jejak keputusan menyesatkan | grep Bab 15.7 | Owner (tulis ADR-0068) |
-| 9 ♦ | `villa_import.validate_geo_fields` dirujuk di komentar 017 tetapi **tidak ada**; `villa_import.py` tidak menyentuh kolom geo | koordinat/presisi/sumber belum bisa diisi lewat impor; hanya SQL manual | grep Bab 15.7 | Tech |
+| 8 ♦ | ~~Peta geo belum punya ADR sendiri~~ **SELESAI 2026-11-13:** **ADR-0068** (presisi + sumber lokasi properti) ditulis; komentar SQL, `test_migrations.py`, dan `test_marketing_site.py` tidak lagi menyebut "ADR-0061" di konteks geo | jejak keputusan menunjuk dokumen yang benar | `docs/adr/0068-property-location-precision-and-source.md` | selesai |
+| 9 ♦ | ~~`villa_import.validate_geo_fields` dirujuk tetapi tidak ada~~ **SELESAI 2026-11-13:** aturan hidup di `geo.validate_geo_fields` dan dipanggil **dua** penulis (`villa_import._geo`, `reservation_kernel.upsert_property`); impor CSV menerima empat kolom geo (template 20 kolom) | `VERIFIED` tanpa kedua koordinat atau tanpa kalimat sumber ditolak sebelum menulis; impor ulang tanpa kolom geo tidak menghapus survei | `src/geo.py`, `src/villa_import.py`, `src/reservation_kernel.py`, `tests/test_geo.py`, `tests/test_villa_import.py` | selesai |
 | 10 ♦ | 3 villa pilot semuanya `UNKNOWN` → peta tanpa pin | tamu belum melihat lokasi area villa | DB hidup | Owner (sumber terverifikasi) |
-| 11 ♦ | `SESSION_AUTH.md` §1/§4 masih menyuruh `--token` untuk dashboard; sudah digantikan `--token-file`. Pengamatan terkait: `scripts/session_token.py rotate` menerima token sesi lama lewat `--token` di argumen (token sesi pendek: idle 30 menit; **belum dinilai/diperbaiki**) | operator bisa mengulang kebocoran argumen proses | Bab 20.5; `session_token.py` baris 224 | Tech |
+| 11 ♦ | ~~`SESSION_AUTH.md` menyuruh `--token`; `rotate` hanya menerima `--token` di argumen~~ **SELESAI 2026-11-13:** dokumen memakai `--token-file`; `rotate` menerima `--token-file` (berkas 0600) dan menolak bila dua opsi diberi bersamaan | kebocoran lewat `/proc/<pid>/cmdline` tidak lagi jalan termudah | `docs/security/SESSION_AUTH.md`, `scripts/session_token.py` | selesai |
 | 12 ♦ | Retensi: D9 = 7 tahun; tabel `RETENTION_AND_INCIDENT_RESPONSE` = 10 tahun untuk booking/audit/kontrak | dua angka untuk satu kebijakan | Bab 20.7 | Owner + GM/CEO |
 | 13 ♦ | Uji restore: `DEPLOYMENT` §5 bulanan vs D10 tiga bulanan | frekuensi tak jelas | Bab 23.5 | Owner |
 | 14 ♦ | Foto situs publik = stok Wikimedia, bukan foto properti | tamu tidak melihat villa sungguhan | Bab 14.2 | Owner (lewat `evidence_objects`) |
@@ -1329,7 +1329,7 @@ Daftar ini menggabungkan Status-Gap (potret), temuan hari ini, dan hasil membang
 ### 26.1 Keputusan yang menunggu Owner
 
 1. **Koordinat 3 villa pilot:** sumber terverifikasi (kunjungan atau pernyataan tertulis pemilik), presisi (`VERIFIED` atau `AREA_APPROX`), dan teks `geo_source`.
-2. **ADR peta geo** (usul nomor 0068) — memuat aturan pembulatan 2 desimal, tiga tingkat presisi, dan tanpa aset remote; sekaligus memperbaiki label "ADR-0061".
+2. ~~ADR peta geo~~ **sudah ditulis 2026-11-13** sebagai ADR-0068 (aturan pembulatan 2 desimal, tiga tingkat presisi, larangan aset remote). Tidak ada lagi yang menunggu Owner di butir ini.
 3. **Retensi:** satukan D9 (7 tahun) dengan tabel 10 tahun, atau tulis pengecualian per kelas.
 4. **Frekuensi uji restore:** bulanan atau tiga bulanan.
 5. **D15/D16** — apa yang dianggap bukti level A dan rate card apa yang tampil ke tamu.
@@ -1340,9 +1340,9 @@ Daftar ini menggabungkan Status-Gap (potret), temuan hari ini, dan hasil membang
 
 | Urut | Pekerjaan | Kriteria selesai |
 |---|---|---|
-| 1 | Perbarui `docs/security/SESSION_AUTH.md` (`--token-file`) | grep `--token ` hanya muncul sebagai larangan |
-| 2 | Tambah `validate_geo_fields` + kolom geo di `villa_import.py` dan `import_villas.py` + tes | impor CSV dengan VERIFIED tanpa koordinat ditolak; tes hijau; `make check` rc=0 |
-| 3 | Tulis ADR peta geo; perbaiki label di 3 berkas SQL (komentar saja; `make schema-parity` tetap lulus) | tak ada label "ADR-0061" pada konteks geo |
+| 1 ✅ | Perbarui `docs/security/SESSION_AUTH.md` (`--token-file`) + `rotate --token-file` di `session_token.py` — **selesai 2026-11-13** | opsi argumen token hanya tersisa sebagai kompatibilitas yang didokumentasikan |
+| 2 ✅ | `validate_geo_fields` + empat kolom geo di `villa_import.py` dan `reservation_kernel.py` — **selesai 2026-11-13** | impor CSV dengan VERIFIED tanpa koordinat/sumber ditolak; tes hijau; `make check` rc=0 |
+| 3 ✅ | ADR-0068 ditulis; label geo di berkas SQL dan tes diperbaiki (komentar saja) — **selesai 2026-11-13** | tak ada label "ADR-0061" pada konteks geo |
 | 4 | Audit ulang kategori tes §19 terhadap 102 berkas | tabel kategori → berkas |
 | 5 | Pasang anker + backup + uji restore di mesin target; ulangi preflight dengan `--anchor-dir`, `--backup` | tak ada WARN anker/backup |
 | 6 | Pasang reverse proxy TLS + HSTS; jalankan `access_matrix_probe.py` dan `perf_probe.py` | bukti pada berkas laporan |
@@ -1376,9 +1376,9 @@ Daftar ini menggabungkan Status-Gap (potret), temuan hari ini, dan hasil membang
 | `UNKNOWN` | presisi geo/ketersediaan tanpa klaim — tidak boleh dijual atau ditampilkan sebagai pasti |
 | Potret | isi dokumen sumber yang bertanggal dan bisa sudah usang |
 
-## Lampiran B — Indeks 67 ADR
+## Lampiran B — Indeks 68 ADR
 
-Semua 67 berkas berstatus *Accepted* (35 ditulis `Accepted`, 31 `ACCEPTED`, 1 `accepted`; dijaga `tests/test_adr_status.py`). Dibangkitkan dari judul tiap berkas.
+Semua 68 berkas berstatus *Accepted* (35 ditulis `Accepted`, 32 `ACCEPTED`, 1 `accepted`; dijaga `tests/test_adr_status.py`). Dibangkitkan dari judul tiap berkas.
 
 | No. | Judul |
 |---|---|
