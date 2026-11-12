@@ -43,23 +43,27 @@ import argparse
 import base64
 import functools
 import ipaddress
+import json
 import re
 import secrets
+import sqlite3
 import sys
+import traceback
 from collections import deque
 from types import MappingProxyType
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Sequence
 from urllib.parse import parse_qsl, urlsplit
 
 import fx as FX
+import geo as Geo
 import villa_showcase as Showcase
 
 from cases import CaseService, SLA_POLICIES
 from crm import CrmService, DuplicateGuest, CrmError
 from dashboard import Markup, SafeHeaderMixin, escape_value, render_page, serve
-from primitives import DomainError, IdFactory, SystemClock, require_ref, resolve_agency_id, to_iso
+from primitives import DomainError, IdFactory, SystemClock, require_ref, resolve_agency_id, sha256_hex, to_iso
 from schema_loader import connect_sqlite
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -286,11 +290,26 @@ class PublicReadModel:
     def __init__(self, conn: Any, agency_id: str) -> None:
         self.conn = conn
         self.agency_id = require_ref(agency_id, "agency_id")
+        #: Geometric columns arrive in migration 017. A database that has not been
+        #: migrated yet must still serve its catalogue — without pins, not with a 500.
+        self.has_geo = self._detect_geo()
+
+    def _detect_geo(self) -> bool:
+        try:
+            self.conn.execute("SELECT latitude, longitude, geo_precision FROM properties LIMIT 0")
+        except sqlite3.OperationalError:
+            return False
+        return True
+
+    def _geo_select(self) -> str:
+        if self.has_geo:
+            return " p.latitude AS latitude, p.longitude AS longitude, p.geo_precision AS geo_precision,"
+        return " NULL AS latitude, NULL AS longitude, 'UNKNOWN' AS geo_precision,"
 
     def sellable_villas(self, *, province: Optional[str] = None) -> list[dict[str, Any]]:
         sql = (
             "SELECT p.property_id AS property_id, p.name AS name, p.region AS region,"
-            " p.province AS province, p.property_type AS property_type,"
+            " p.province AS province, p.property_type AS property_type," + self._geo_select() +
             " COUNT(u.unit_id) AS active_units,"
             " COALESCE(MIN(NULLIF(u.bedrooms, 0)), 0) AS bedrooms_min,"
             " COALESCE(MAX(u.bedrooms), 0) AS bedrooms_max,"
@@ -306,15 +325,20 @@ class PublicReadModel:
             params.append(province)
         sql += (
             " GROUP BY p.property_id, p.name, p.region, p.province, p.property_type"
-            " ORDER BY p.province, p.region, p.name"
+            + (", p.latitude, p.longitude, p.geo_precision" if self.has_geo else "")
+            + " ORDER BY p.province, p.region, p.name"
         )
         return [dict(row) for row in self.conn.execute(sql, params)]
 
     def villa(self, property_id: str) -> Optional[dict[str, Any]]:
+        sql = (
+            "SELECT p.property_id AS property_id, p.name AS name, p.region AS region,"
+            " p.province AS province, p.property_type AS property_type,"
+            + self._geo_select().rstrip(",")
+            + " FROM properties p WHERE p.agency_id = ? AND p.property_id = ? AND p.status = ?"
+        )
         row = self.conn.execute(
-            "SELECT property_id, name, region, province, property_type"
-            " FROM properties WHERE agency_id = ? AND property_id = ? AND status = ?",
-            (self.agency_id, require_ref(property_id, "property_id"), SELLABLE_STATUS),
+            sql, (self.agency_id, require_ref(property_id, "property_id"), SELLABLE_STATUS)
         ).fetchone()
         return None if row is None else dict(row)
 
@@ -418,6 +442,10 @@ class InquiryIntake:
                 raise FormInvalid("unknown villa reference") from None
 
         guest = self.crm.find_guest(email=email)
+        body = compose_inquiry_body(name, message)
+        existing_result = self._existing_result(token, guest, body, property_ref)
+        if existing_result is not None:
+            return existing_result
         if guest is None:
             try:
                 guest_id = self.crm.register_guest(
@@ -435,14 +463,18 @@ class InquiryIntake:
             result = self.crm.open_inquiry(
                 guest_id=guest_id,
                 channel="website",
-                body=compose_inquiry_body(name, message),
+                body=body,
                 idempotency_key=idempotency_key,
                 content_class="P2",
                 channel_ref=property_ref,
             )
         except DomainError as exc:
             if exc.code == "DUPLICATE_CASE":
-                return self._existing_result(idempotency_key)
+                existing_result = self._existing_result(
+                    idempotency_key, self.crm.find_guest(email=email), body, property_ref
+                )
+                if existing_result is not None:
+                    return existing_result
             raise
 
         return {
@@ -451,16 +483,38 @@ class InquiryIntake:
             "guest_id": guest_id,
         }
 
-    def _existing_result(self, idempotency_key: str) -> dict[str, str]:
+    def _existing_result(self, idempotency_key: str, guest: Any, body: str,
+                         property_ref: Optional[str]) -> Optional[dict[str, str]]:
         row = self.cases.conn.execute(
-            "SELECT case_id, reference FROM cases"
+            "SELECT case_id, reference, guest_ref, channel, channel_ref FROM cases"
             " WHERE agency_id = ? AND idempotency_key = ?",
             (self.agency_id, idempotency_key),
         ).fetchone()
-        if row is None:  # pragma: no cover - the duplicate row must exist
-            raise CrmError("duplicate case reported but not found", code="STATE_INCONSISTENT")
+        if row is None:
+            return None
+        event = self.cases.conn.execute(
+            "SELECT refs FROM case_events WHERE case_id = ? AND seq = 1 AND kind = 'CREATED'",
+            (row["case_id"],),
+        ).fetchone()
+        try:
+            refs = json.loads(event["refs"]) if event else []
+            message_id = refs[0] if (isinstance(refs, list) and len(refs) == 1
+                                     and isinstance(refs[0], str)) else None
+        except (ValueError, TypeError):
+            message_id = None
+        message = self.cases.conn.execute(
+            "SELECT body_sha256 FROM case_messages WHERE case_id = ? AND case_message_id = ?"
+            " AND direction = 'INBOUND' AND channel = 'website'",
+            (row["case_id"], message_id),
+        ).fetchone()
+        if (guest is None or row["guest_ref"] != guest["guest_id"]
+                or row["channel"] != "website" or row["channel_ref"] != property_ref
+                or message is None or message["body_sha256"] != sha256_hex(body)):
+            raise FormInvalid("this form has already been used; please reload the page")
+        if not row["reference"]:
+            raise CrmError("inquiry reference is not yet available", code="STATE_INCONSISTENT")
         return {
-            "reference": str(row["reference"] or row["case_id"]),
+            "reference": str(row["reference"]),
             "case_id": str(row["case_id"]),
             "guest_id": "",
         }
@@ -487,6 +541,85 @@ def _places_line(villa: Mapping[str, Any], *extra: str) -> str:
         *extra,
     ]
     return " · ".join(part for part in parts if part)
+
+
+def _villa_point(villa: Mapping[str, Any]) -> Optional[tuple[float, float, str]]:
+    """The public point this row may publish, or ``None`` when it may publish nothing.
+
+    Rows come from databases that may predate migration 017, so a missing column reads
+    as "no coordinate" rather than raising: a page that renders without a map is
+    correct, a page that guesses a pin is not.
+    """
+    try:
+        return Geo.resolve_point(
+            villa.get("latitude"),
+            villa.get("longitude"),
+            villa.get("geo_precision") or "UNKNOWN",
+        )
+    except Geo.GeoError:
+        # A row that stores a broken pair (hand-edited database, half-finished import)
+        # must not take the whole catalogue page down with it.
+        return None
+
+
+def _area_map_html(villas: Sequence[Mapping[str, Any]]) -> Markup:
+    """A map of the published areas, or nothing at all.
+
+    Only villas with a publishable point are drawn; when none has one the page shows
+    words instead of an empty frame, because an empty map implies "we have no villas".
+    """
+    points = []
+    for villa in villas:
+        resolved = _villa_point(villa)
+        if resolved is None:
+            continue
+        lat, lon, precision = resolved
+        points.append(
+            {
+                "label": str(villa["name"]),
+                "latitude": lat,
+                "longitude": lon,
+                "detail": "area only" if precision == "AREA_APPROX" else "surveyed location",
+            }
+        )
+    if not points:
+        return Markup("")
+    return Markup(Geo.area_map_svg(points, caption=(
+        "Approximate areas only — pins show the village, not the gate. "
+        "The exact address is shared once a booking is confirmed."
+    )))
+
+
+def _locator_html(villa: Mapping[str, Any]) -> Markup:
+    """The detail page's "Where you'll be" block, with distances to public landmarks."""
+    resolved = _villa_point(villa)
+    if resolved is None:
+        return Markup(
+            '<h2>Where you\'ll be</h2>'
+            f"<p>{escape_value(_places_line(villa))}. We share the exact address and a "
+            "pin once your booking is confirmed.</p>"
+        )
+    lat, lon, _precision = resolved
+    try:
+        nearby = Geo.nearest_landmarks(lat, lon, str(villa["province"]))
+    except Geo.GeoError:
+        nearby = []
+    rows = "".join(
+        f"<tr><td>{escape_value(row['label'])}</td><td>{row['km']:g} km</td></tr>"
+        for row in nearby
+    )
+    table = (
+        "<table><thead><tr><th>Landmark</th><th>Straight-line</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table>"
+        if rows
+        else ""
+    )
+    return Markup(
+        "<h2>Where you'll be</h2>"
+        f"<p>{escape_value(_places_line(villa))}</p>"
+        + Geo.locator_map_svg(lat, lon, str(villa["province"]), label=str(villa["name"]))
+        + table
+    )
 
 
 def _card_html(villa: Mapping[str, Any]) -> Markup:
@@ -668,6 +801,7 @@ class MarketingSite:
             {
                 "page_title": "Villa Agency — Private Villas in Bali & Yogyakarta",
                 "villa_cards": Markup(cards),
+                "area_map": _area_map_html(villas),
                 "head_extra": hero_style,
             },
             base=base,
@@ -683,6 +817,7 @@ class MarketingSite:
             {
                 "page_title": "Villa Collection — Villa Agency",
                 "villa_cards": Markup(cards),
+                "area_map": _area_map_html(villas),
                 "villa_count": len(villas),
                 "head_extra": Markup(""),
             },
@@ -704,6 +839,7 @@ class MarketingSite:
                 "page_title": f"{label} Villas — Villa Agency",
                 "destination_name": escape_value(label),
                 "villa_cards": Markup(cards),
+                "area_map": _area_map_html(villas),
                 "head_extra": Markup(""),
             },
             base=base,
@@ -738,6 +874,7 @@ class MarketingSite:
                 "villa_highlights": _highlights_html(showcase),
                 "villa_gallery": _gallery_html(),
                 "units_table": _units_table(units),
+                "villa_locator": _locator_html(villa),
                 "property_ref": escape_value(property_id),
                 "availability_hint": escape_value(availability_hint),
                 "head_extra": Markup(""),
@@ -853,6 +990,9 @@ class _MarketingRequestHandler(SafeHeaderMixin, BaseHTTPRequestHandler):
     #: so a half-sent request dies instead of holding the single serving thread.
     timeout = CONNECTION_TIMEOUT_SECONDS
     site: MarketingSite
+    #: Set as soon as a response is committed, so the catch-all guard never
+    #: tries to prepend a 500 to a body that is already in flight.
+    _response_started = False
 
     # -- helpers ------------------------------------------------------------ #
     def _send_html(
@@ -865,6 +1005,7 @@ class _MarketingRequestHandler(SafeHeaderMixin, BaseHTTPRequestHandler):
     ) -> None:
         payload = html.encode("utf-8")
         cache = "no-store" if no_store else "public, max-age=300"
+        self._response_started = True
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
@@ -909,7 +1050,31 @@ class _MarketingRequestHandler(SafeHeaderMixin, BaseHTTPRequestHandler):
         )
 
     # -- GET ---------------------------------------------------------------- #
+    def _fail_safe(self, exc: BaseException) -> None:
+        """Answer with a 500 page instead of dropping the connection.
+
+        An uncaught exception inside ``http.server`` closes the socket with an
+        empty reply: the visitor sees a network error, a health check still sees
+        a running process, and the access log stays silent. The traceback goes
+        to the journal (never to the visitor), and the guest gets a plain page.
+        """
+        traceback.print_exception(type(exc), exc, exc.__traceback__)
+        if self._response_started:
+            return  # headers already on the wire: nothing safe left to send
+        try:
+            self._error(500, "Something went wrong on our side; please try again shortly.")
+        except Exception:  # noqa: BLE001 - the socket may already be gone
+            traceback.print_exc()
+
     def do_GET(self) -> None:  # noqa: N802 - http.server API
+        try:
+            self._dispatch_get()
+        except (BrokenPipeError, ConnectionResetError):
+            raise  # client vanished mid-response: not a rendering fault
+        except Exception as exc:  # noqa: BLE001 - a public page never drops the socket
+            self._fail_safe(exc)
+
+    def _dispatch_get(self) -> None:
         site = self.site
         path = urlsplit(self.path).path.rstrip("/") or "/"
         if path == "/":
@@ -950,7 +1115,7 @@ class _MarketingRequestHandler(SafeHeaderMixin, BaseHTTPRequestHandler):
                     require_ref(property_ref, "property")
                 except DomainError:
                     property_ref = ""
-            self._send_html(site.inquiry_form_html(property_ref))
+            self._send_html(site.inquiry_form_html(property_ref), no_store=True)
         elif path == "/favicon.ico":
             self.send_response(204)
             self.send_header("X-Content-Type-Options", "nosniff")
@@ -975,6 +1140,14 @@ class _MarketingRequestHandler(SafeHeaderMixin, BaseHTTPRequestHandler):
         return form
 
     def do_POST(self) -> None:  # noqa: N802 - http.server API
+        try:
+            self._dispatch_post()
+        except (BrokenPipeError, ConnectionResetError):
+            raise
+        except Exception as exc:  # noqa: BLE001 - a form post never drops the socket
+            self._fail_safe(exc)
+
+    def _dispatch_post(self) -> None:
         if urlsplit(self.path).path.rstrip("/") != "/inquiry":
             self._error(405, "Only the inquiry form accepts submissions.")
             return

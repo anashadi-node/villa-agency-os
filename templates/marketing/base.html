@@ -67,6 +67,10 @@ main .badges li{background:var(--sand);border-color:var(--line);color:#4a4327}
 
 /* ---------- villa cards ---------- */
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:1.3rem;margin-top:1.3rem}
+svg.area-map{display:block;width:100%;height:auto;margin:1.4rem 0 0;border:1px solid var(--line,#dcd3c2);border-radius:14px}
+.map-note{margin:.35rem 0 1.2rem;font-size:.86rem;color:#6b6455}
+.pin circle:first-child{transition:transform .15s ease}
+svg.area-map text{font-family:inherit}
 .card{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#fff;transition:transform .15s,box-shadow .15s;padding:1.1rem 1.2rem}
 .card:has(.photo){padding:0}
 .card:hover{transform:translateY(-3px);box-shadow:0 14px 30px rgba(30,45,30,.12)}

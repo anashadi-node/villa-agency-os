@@ -429,6 +429,24 @@ class TestIntake:
         assert first["case_id"] == replay["case_id"]
         assert first["reference"] == replay["reference"]
 
+    @pytest.mark.parametrize("changes", [
+        {"email": "another@example.com"},
+        {"name": "Someone Else"},
+        {"message": "A completely different vacation request."},
+        {"property_ref": "prop-1"},
+    ])
+    def test_reused_token_with_changed_details_is_rejected(self, clock, changes):
+        conn, site = _make_site(clock)
+        limiter = M.SlidingWindowRateLimiter(clock, max_events=10, window_seconds=600)
+        fields = _valid_fields()
+        site.intake.submit(form=fields, remote_addr="203.0.113.14", rate_limiter=limiter,
+                           expected_origin_host=None, origin_header=None)
+        with pytest.raises(M.FormInvalid):
+            site.intake.submit(form={**fields, **changes}, remote_addr="203.0.113.15",
+                               rate_limiter=limiter, expected_origin_host=None, origin_header=None)
+        assert conn.execute("SELECT COUNT(*) FROM cases").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM guests").fetchone()[0] == 1
+
     def test_honeypot_rejected(self, clock):
         conn, site = _make_site(clock)
         with pytest.raises(M.SpamRejected):
@@ -517,6 +535,13 @@ class TestIntake:
 
 
 class TestServedSite:
+    def test_inquiry_form_is_not_cacheable(self, clock, tmp_path):
+        with _live_site(tmp_path, clock) as (_site, base):
+            for path in ("/inquiry", "/inquiry?property=prop-1"):
+                status, headers, _html = _get(base, path)
+                assert status == 200
+                assert headers["Cache-Control"] == "no-store"
+
     def test_all_pages_serve_and_headers(self, clock, tmp_path):
         with _live_site(tmp_path, clock) as (_site, base):
             for path in ("/", "/villas", "/villas/prop-1", "/villas/prop-2",
@@ -578,6 +603,19 @@ class TestServedSite:
             cases = reader.execute("SELECT COUNT(*) AS n FROM cases").fetchone()["n"]
             reader.close()
             assert cases == 1
+
+    def test_post_reused_token_with_other_guest_does_not_disclose_reference(self, clock, tmp_path):
+        with _live_site(tmp_path, clock) as (_site, base):
+            fields = _valid_fields()
+            assert _post(base, "/inquiry", fields)[0] == 200
+            status, headers, html = _post(base, "/inquiry", {**fields, "email": "other@example.com"})
+            assert status == 400
+            assert headers["Cache-Control"] == "no-store"
+            assert "INQ-2026-" not in html
+            reader = M.connect_sqlite(_seeded_db(tmp_path, clock))
+            assert reader.execute("SELECT COUNT(*) FROM cases").fetchone()[0] == 1
+            assert reader.execute("SELECT COUNT(*) FROM guests").fetchone()[0] == 1
+            reader.close()
 
     def test_post_honeypot_400_no_case(self, clock, tmp_path):
         with _live_site(tmp_path, clock) as (_site, base):
@@ -920,3 +958,79 @@ class TestTrustedProxyFlag:
 
 
 
+# --------------------------------------------------------------------------- #
+# Property maps (ADR-0061)
+# --------------------------------------------------------------------------- #
+
+
+class TestPropertyMaps:
+    """A map is published only for a coordinate someone actually vouched for.
+
+    ``properties.geo_precision`` is the gate: ``UNKNOWN`` means nobody has
+    confirmed where the villa is, and the page must render without a map rather
+    than with a guessed pin. These tests hold that line in both directions.
+    """
+
+    def test_unknown_precision_renders_no_map_and_no_placeholder(self, clock):
+        _conn, site = _make_site(clock)
+        for html in (site.home_html(), site.villas_html(), site.villa_html("prop-2")):
+            assert html is not None
+            assert "<svg" not in html, "an unsourced coordinate must not become a pin"
+            assert "{{" not in html, "every map placeholder must be filled or absent"
+
+    def test_verified_coordinate_renders_area_map_and_named_locator(self, clock):
+        conn, site = _make_site(clock)
+        conn.execute(
+            "UPDATE properties SET latitude = ?, longitude = ?, geo_precision = 'VERIFIED',"
+            " geo_source = 'owner written confirmation' WHERE property_id = 'prop-2'",
+            (-8.5060, 115.2620),
+        )
+        conn.commit()
+
+        villas = site.villas_html()
+        assert '<svg' in villas and 'class="area-map"' in villas
+
+        detail = site.villa_html("prop-2")
+        assert detail is not None
+        assert 'aria-label="Map of the area around Joglo Merapi Private Pool"' in detail
+
+    def test_area_approx_coordinate_renders_a_map_marked_as_approximate(self, clock):
+        conn, site = _make_site(clock)
+        conn.execute(
+            "UPDATE properties SET latitude = ?, longitude = ?, geo_precision = 'AREA_APPROX',"
+            " geo_source = 'owner written confirmation' WHERE property_id = 'prop-2'",
+            (-8.5060, 115.2620),
+        )
+        conn.commit()
+
+        detail = site.villa_html("prop-2")
+        assert detail is not None
+        assert "<svg" in detail
+        assert "Approximate location only" in detail
+
+
+
+
+
+class TestRenderFailSafe:
+    """A page that cannot render must answer 500, never drop the socket.
+
+    Regression: an out-of-date module in memory raised ``TemplateError`` for
+    ``{{area_map}}`` in ``home.html``. ``http.server`` closed the connection with
+    an empty reply, so the visitor saw a network error and the unit still looked
+    healthy. The visitor now gets a plain page and the traceback goes to stderr.
+    """
+
+    def test_render_error_returns_a_500_page(self, clock):
+        _conn, site = _make_site(clock)
+
+        def boom() -> str:
+            raise RuntimeError("template explosion")
+
+        site.home_html = boom  # type: ignore[method-assign]
+        with _http_server(M.build_handler(site)) as base:
+            status, _headers, body = _get(base, "/")
+
+        assert status == 500
+        assert "Something went wrong on our side" in body
+        assert "template explosion" not in body  # internals never reach the guest

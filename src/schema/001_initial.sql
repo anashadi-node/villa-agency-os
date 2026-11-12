@@ -50,6 +50,13 @@ CREATE TABLE properties (
     region        TEXT    NOT NULL CHECK (length(region) >= 2),
     province      TEXT    NOT NULL CHECK (province IN ('Bali','DI Yogyakarta')),
     timezone      TEXT    NOT NULL CHECK (length(timezone) >= 3),
+    -- Where the villa is, and how much of it the public may see (ADR-0061). A coordinate
+    -- without a precision is never published: `geo.resolve_point` refuses it, so a row that
+    -- was never surveyed cannot leak a pin onto the marketing site.
+    latitude      REAL    CHECK (latitude IS NULL OR (latitude >= -90 AND latitude <= 90)),
+    longitude     REAL    CHECK (longitude IS NULL OR (longitude >= -180 AND longitude <= 180)),
+    geo_precision TEXT    NOT NULL DEFAULT 'UNKNOWN' CHECK (geo_precision IN ('UNKNOWN','AREA_APPROX','VERIFIED')),
+    geo_source    TEXT    CHECK (geo_source IS NULL OR length(geo_source) BETWEEN 2 AND 200),
     status        TEXT    NOT NULL CHECK (status IN ('SELLABLE','SELLABLE_WITH_REVIEW','NOT_SELLABLE','SUSPENDED')),
     contract_pack_status TEXT NOT NULL CHECK (contract_pack_status IN ('DRAFT','VERIFIED','ACTIVATED','EXPIRED')),
     contract_pack_evaluated_at TEXT,

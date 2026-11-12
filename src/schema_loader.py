@@ -51,6 +51,7 @@ _TYPE_FAMILIES: Mapping[str, str] = {
     "TEXT": "text",
     "VARCHAR": "text",
     "CHARACTER VARYING": "text",
+    "REAL": "real",
 }
 
 

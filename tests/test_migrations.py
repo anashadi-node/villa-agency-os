@@ -45,8 +45,9 @@ def _old_database(path: Path) -> None:
     ``policy_defs`` is append-only (a trigger rejects DELETE), so an old database cannot be
     faked by deleting rows from a new one. The schema *text* is pruned instead — which is
     what such a database was actually built from. The same holds for the added ``guests``
-    column: an old database has neither its ``ALTER TABLE`` migration (016) nor the
-    ``CREATE TABLE`` line, so the test prunes both from the schema text.
+    column and ``properties`` geo columns: an old database has neither their ``ALTER TABLE``
+    migrations (016, 017) nor the ``CREATE TABLE`` lines, so the test prunes both from the
+    schema text.
     """
     kept = [
         line
@@ -55,6 +56,11 @@ def _old_database(path: Path) -> None:
         and "preferred_currency" not in line
         # migration 016 itself carries the phrase in its header comment
         and not line.startswith("-- Migration 016")
+        # migration 017's columns (ADR-0061) — an old database predates all four
+        and "geo_precision" not in line
+        and "geo_source" not in line
+        and not line.strip().startswith(("latitude ", "longitude "))
+        and not line.startswith("-- Migration 017")
     ]
     conn = sqlite3.connect(str(path))
     try:
