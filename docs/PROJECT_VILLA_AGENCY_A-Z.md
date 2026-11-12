@@ -2,7 +2,7 @@
 
 **Nama sistem:** Villa Agency OS (Villa Management & Agency)  
 **Tanggal dokumen:** 12 November 2026 · **Pemilik:** Owner (Mas Anas) · **Disusun oleh:** divisi Villa Management & Agency  
-**Posisi repo saat dokumen ini ditulis:** `~/villa-agency-os`, 178 commit (pertama 2026-09-21, terakhir `0179850`), 372 berkas ter-track, 58 modul `src/*.py` (±52.757 baris), 102 berkas `test_*.py` (104 berkas `.py` di `tests/` termasuk `conftest.py` dan `seed_support.py`), 68 berkas ADR (ADR-0068 ditambahkan 2026-11-13 setelah dokumen ini disusun).
+**Posisi repo (potret, bukan angka hidup):** `~/villa-agency-os` pada commit `2cb0696` — 181 commit (pertama 2026-09-21), 375 berkas ter-track, 58 modul `src/*.py` (±52.924 baris), 102 berkas `test_*.py` (104 berkas `.py` di `tests/` termasuk `conftest.py` dan `seed_support.py`), 68 berkas ADR (ADR-0068 ditambahkan 2026-11-13 setelah dokumen ini disusun).
 
 > **Cara membaca dokumen ini.** Dokumen ini adalah konsolidasi *bertanggal* dari seluruh sumber resmi di repo
 > (Charter, Peta Status & Gap, Panduan Alur Kerja, State Machine, Policy Matrix, Data Model, Runbook, Deployment,
