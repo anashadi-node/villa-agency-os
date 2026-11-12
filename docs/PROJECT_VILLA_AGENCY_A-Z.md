@@ -388,7 +388,7 @@ Keduanya **loopback saja**. Membuka dashboard ke internet butuh lapisan login ta
 
 | Lokasi | Isi | Jumlah (diukur) |
 |---|---|---|
-| `src/` | Seluruh logika domain, Python stdlib saja | 58 modul `.py`, 52.757 baris |
+| `src/` | Seluruh logika domain, Python stdlib saja | 58 modul `.py`, 52.924 baris (potret `2cb0696`) |
 | `src/schema/` | Skema SQLite + twin PostgreSQL + migrasi | `001_initial.sql`, `001_initial.pg.sql`, `002_pg_range_exclusions.pg.sql`, migrasi `003`–`008`, `010`–`017` (tidak ada `009`) |
 | `tests/` | Uji otomatis (pytest + subtests) | 102 berkas `test_*.py` + `conftest.py` + `seed_support.py`; 57.668 baris |
 | `docs/` | Dokumen kerja, ADR, keamanan, laporan desain | 29 berkas `.md` di akar `docs/` (42 entri termasuk HTML/PDF dan subfolder), `docs/adr/` (68 ADR), `docs/security/` |
@@ -1262,7 +1262,7 @@ Semua angka di bawah diambil langsung dari repo/DB pada hari penulisan, bukan da
 | Ukuran | Nilai | Cara memeriksa |
 |---|---|---|
 | Komit | 173; pertama 2026-09-21 (`8c4c777`, "Phase 1 reservation kernel"); terakhir sebelum dokumen ini `5647b23` | `git log` |
-| Modul `src/` | 58 berkas `.py`, 52.757 baris | hitung berkas |
+| Modul `src/` | 58 berkas `.py`, 52.924 baris (potret `2cb0696`) | hitung berkas |
 | Tes | 102 `test_*.py` (+ `conftest.py`, `seed_support.py`), 57.668 baris | hitung berkas |
 | Hasil `make check` | rc=0 · 3.851 passed · 4 skipped · 4.008 subtests | Bab 22.2 |
 | ADR | 68 berkas di `docs/adr/` (Lampiran B) | `ls` |
