@@ -200,6 +200,21 @@ def main(argv: list[str] | None = None) -> int:
                 args.effective_to, args.effective_from, SystemClock().today().isoformat()
             )
 
+    # Granting a machine permission has to name its target. Every other CLI here falls back
+    # to ``data/villa.db``, which is the right default for a read or a seed — but an
+    # authority grant that lands silently in whatever ``data/villa.db`` happens to sit in
+    # the working directory is a permission nobody decided to give. Measured, not
+    # theorised: the documented publish command run without ``VILLA_DB`` wrote a revision
+    # into this repository's demo database. Checked before the file is looked up, so the
+    # operator is told "name the target", not "database not found".
+    if args.command == "publish" and not os.environ.get("VILLA_DB", "").strip():
+        print(
+            "VILLA_DB must be set explicitly for `publish`: granting a machine permission has "
+            "to name the database it applies to",
+            file=sys.stderr,
+        )
+        return 2
+
     db_path = _settings()
     if not db_path.exists():
         print(f"database not found: {db_path}", file=sys.stderr)
@@ -208,19 +223,6 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "--approved-by is required: a permission that names no approver is not a "
             "policy (and the store refuses it anyway)",
-            file=sys.stderr,
-        )
-        return 2
-    if args.command == "publish" and not os.environ.get("VILLA_DB", "").strip():
-        # Granting a machine permission has to name its target. Every other CLI here falls back
-        # to ``data/villa.db``, which is the right default for a read or a seed — but an
-        # authority grant that lands silently in whatever ``data/villa.db`` happens to sit in
-        # the working directory is a permission nobody decided to give. Measured, not
-        # theorised: the documented publish command run without ``VILLA_DB`` wrote a revision
-        # into this repository's demo database.
-        print(
-            "VILLA_DB must be set explicitly for `publish`: granting a machine permission has "
-            "to name the database it applies to",
             file=sys.stderr,
         )
         return 2

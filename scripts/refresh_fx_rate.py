@@ -380,16 +380,20 @@ def main(argv: list[str] | None = None) -> int:
         print(f"--pair must read BASE/QUOTE: {args.pair!r} ({bad_pair})", file=sys.stderr)
         return 2
 
-    db_path = Path(os.environ.get("VILLA_DB", "").strip() or DEFAULT_DB)
-    if not db_path.exists():
-        print(f"database not found: {db_path}", file=sys.stderr)
-        return 2
+    # The target must be named before anything is looked up: on a checkout with no
+    # data/villa.db the existence check used to answer first, so a write without VILLA_DB
+    # was refused with "database not found" — the operator could not tell a missing file
+    # from a missing target, and the default path had already been chosen for them.
     if not os.environ.get("VILLA_DB", "").strip():
         print(
             "VILLA_DB must be set explicitly: a rate that lands silently in whatever "
             "data/villa.db happens to sit in the working directory is a rate nobody chose",
             file=sys.stderr,
         )
+        return 2
+    db_path = Path(os.environ.get("VILLA_DB", "").strip() or DEFAULT_DB)
+    if not db_path.exists():
+        print(f"database not found: {db_path}", file=sys.stderr)
         return 2
     if not args.dry_run and not (args.approved_by or "").strip():
         print(

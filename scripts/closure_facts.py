@@ -134,6 +134,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--agency", default=DEFAULT_AGENCY, help="agency scope")
     args = parser.parse_args(argv)
 
+    # A write names its target before anything is looked up. The existence check used to
+    # answer first on a checkout without data/villa.db, so the operator saw "database not
+    # found" while the CLI had already fallen back to a default path a write must not guess.
+    if args.command != "status" and not os.environ.get("VILLA_DB", "").strip():
+        print(
+            "VILLA_DB must be set explicitly for a write: a §30 fact that lands silently in "
+            "whatever data/villa.db happens to sit in the working directory is a decision "
+            "nobody made",
+            file=sys.stderr,
+        )
+        return 2
+
     db_path = _db_path()
     if not db_path.exists():
         print(f"database not found: {db_path}", file=sys.stderr)
@@ -166,15 +178,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.amount is not None and args.amount <= 0:
         print("--amount must be a positive integer in minor units", file=sys.stderr)
         return 2
-    if not os.environ.get("VILLA_DB", "").strip():
-        print(
-            "VILLA_DB must be set explicitly for a write: a §30 fact that lands silently in "
-            "whatever data/villa.db happens to sit in the working directory is a decision "
-            "nobody made",
-            file=sys.stderr,
-        )
-        return 2
-
     conn = _connect(db_path)
     try:
         return _record(conn, args.agency, args)

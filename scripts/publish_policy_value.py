@@ -226,6 +226,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    # `set` names its target before anything is looked up: see refresh_fx_rate.py for the
+    # checkout-without-data/villa.db case that made the existence check answer first.
+    if args.command == "set" and not os.environ.get("VILLA_DB", "").strip():
+        print(
+            "VILLA_DB must be set explicitly for `set`: a policy value that lands "
+            "silently in whatever data/villa.db happens to sit in the working "
+            "directory is a decision nobody made",
+            file=sys.stderr,
+        )
+        return 2
+
     db_path = _db_path()
     if not db_path.exists():
         print(f"database not found: {db_path}", file=sys.stderr)
@@ -246,14 +257,6 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"{', '.join(missing)} required for `set`: a value with no document and no "
                 "approver is not a policy decision (the store refuses it anyway)",
-                file=sys.stderr,
-            )
-            return 2
-        if not os.environ.get("VILLA_DB", "").strip():
-            print(
-                "VILLA_DB must be set explicitly for `set`: a policy value that lands "
-                "silently in whatever data/villa.db happens to sit in the working "
-                "directory is a decision nobody made",
                 file=sys.stderr,
             )
             return 2

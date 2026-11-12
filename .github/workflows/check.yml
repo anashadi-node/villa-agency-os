@@ -3,7 +3,7 @@ name: check
 # Gerbang yang sama dengan `make check` di mesin lokal. Tujuannya bukan "CI hijau"
 # sebagai hiasan, melainkan memastikan klaim di README dan dokumen A-Z (jumlah tes,
 # secret-scan, paritas twin PostgreSQL) diuji ulang oleh mesin yang tidak menyimpan
-# keadaan lokal: tanpa DB live, tanpa venv, tanpa berkas token.
+# keadaan lokal: tanpa DB live, tanpa venv, tanpa berkas token, tanpa data/villa.db.
 on:
   push:
     branches: [master]
@@ -22,7 +22,7 @@ jobs:
   check:
     name: pre-deploy gate (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -34,15 +34,21 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
-      # pyflakes untuk `make lint`; pytest untuk suite. Keduanya satu-satunya
-      # dependensi di luar stdlib — `src/` sendiri tidak mengimpor pihak ketiga.
+      # `src/` hanya memakai stdlib. Yang dipasang di sini adalah perkakas gerbang:
+      # pytest untuk suite, pyflakes untuk `make lint`, markdown untuk
+      # `scripts/build_deliverables.py` (dua tesnya merender dokumen sungguhan).
       - name: Install gate dependencies
-        run: python -m pip install --upgrade pip pytest pyflakes
+        run: python -m pip install --upgrade pip pytest pyflakes markdown
 
+      # `set -o pipefail` wajib: tanpa itu status `make check` tertelan `tee`, dan run
+      # yang gagal berakhir "success". Diukur pada run pertama workflow ini: gerbang
+      # merah (6 tes gagal) tetapi job dilaporkan sukses.
       - name: Run make check
         env:
           PYTHON: python
-        run: make check 2>&1 | tee check.log
+        run: |
+          set -o pipefail
+          make check 2>&1 | tee check.log
 
       - name: Upload gate log
         if: always()

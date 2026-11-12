@@ -62,8 +62,14 @@ def db(tmp_path: Path) -> Path:
     return path
 
 
-def _run(db: Path | None, *args: str) -> subprocess.CompletedProcess[str]:
-    """Run the CLI. ``db=None`` leaves VILLA_DB unset — the case a write must refuse."""
+def _run(
+    db: Path | None, *args: str, cwd: Path | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run the CLI. ``db=None`` leaves VILLA_DB unset — the case a write must refuse.
+
+    ``cwd`` defaults to the repository. Pointing it at a directory with no
+    ``data/villa.db`` reproduces a fresh checkout: the target must still be named first.
+    """
 
     env = dict(os.environ)
     env.pop("VILLA_DB", None)
@@ -72,7 +78,7 @@ def _run(db: Path | None, *args: str) -> subprocess.CompletedProcess[str]:
     env["PYTHONPATH"] = str(REPO / "src")
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args],
-        capture_output=True, text=True, env=env, cwd=str(REPO), timeout=120,
+        capture_output=True, text=True, env=env, cwd=str(cwd or REPO), timeout=120,
     )
 
 
@@ -89,6 +95,24 @@ def test_a_write_without_villa_db_is_a_configuration_error(db: Path):
                   "--amount", "2000000", "--currency", "IDR")
     assert result.returncode == 2
     assert "VILLA_DB" in result.stderr
+
+
+def test_a_write_without_villa_db_names_the_target_even_with_no_default_database(
+    db: Path, tmp_path: Path
+):
+    """A fresh checkout has no data/villa.db. The refusal must name VILLA_DB, not the file.
+
+    The existence check used to answer first, so the operator was told "database not
+    found" while the CLI had already fallen back to a default path a write must not guess.
+    GitHub Actions caught this on a checkout with no data/villa.db; this test catches it
+    anywhere.
+    """
+
+    result = _run(None, "deposit", *BASE_ARGS, "--action", "APPLIED",
+                  "--amount", "2000000", "--currency", "IDR", cwd=tmp_path)
+    assert result.returncode == 2
+    assert "VILLA_DB must be set explicitly" in result.stderr
+    assert "database not found" not in result.stderr
 
 
 def test_a_write_with_no_evidence_is_refused_before_anything_is_written(db: Path):
