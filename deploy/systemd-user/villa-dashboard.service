@@ -1,5 +1,6 @@
 [Unit]
 Description=Villa Agency OS — Internal Staff Dashboard (127.0.0.1:8085)
+Documentation=file:///home/anashadi/villa-agency-os/docs/DEPLOYMENT.md
 After=network.target
 
 [Service]
@@ -9,6 +10,31 @@ EnvironmentFile=/home/anashadi/.config/systemd/user/villa.env
 ExecStart=/usr/bin/python3 /home/anashadi/villa-agency-os/src/dashboard.py --db /home/anashadi/villa-agency-os/data/villa.db --port 8085 --role owner --token ${VILLA_DASHBOARD_TOKEN}
 Restart=on-failure
 RestartSec=3
+
+# Hardening: parity with villa-marketing.service. The server answers GETs by reading
+# templates and one SQLite file; the only file writes in dashboard.py belong to the
+# ``--dump`` CLI (a separate, non-service invocation), so the service needs no writable
+# path except the database directory — which it needs anyway because a WAL database is
+# read through its -shm/-wal siblings.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/anashadi/villa-agency-os/data
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+# The same three lines are absent here for the same reason they are absent in
+# villa-marketing.service, verified on this host rather than assumed: in a *user* unit,
+# PrivateDevices/ProtectKernelModules and CapabilityBoundingSet fail with
+# status=218/CAPABILITIES because the user manager has no capabilities to drop. The
+# port is unprivileged, so there is nothing to drop either way.
+UMask=0077
 
 [Install]
 WantedBy=default.target
