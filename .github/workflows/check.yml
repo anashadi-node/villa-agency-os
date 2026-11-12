@@ -1,0 +1,53 @@
+name: check
+
+# Gerbang yang sama dengan `make check` di mesin lokal. Tujuannya bukan "CI hijau"
+# sebagai hiasan, melainkan memastikan klaim di README dan dokumen A-Z (jumlah tes,
+# secret-scan, paritas twin PostgreSQL) diuji ulang oleh mesin yang tidak menyimpan
+# keadaan lokal: tanpa DB live, tanpa venv, tanpa berkas token.
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: pre-deploy gate (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      # pyflakes untuk `make lint`; pytest untuk suite. Keduanya satu-satunya
+      # dependensi di luar stdlib — `src/` sendiri tidak mengimpor pihak ketiga.
+      - name: Install gate dependencies
+        run: python -m pip install --upgrade pip pytest pyflakes
+
+      - name: Run make check
+        env:
+          PYTHON: python
+        run: make check 2>&1 | tee check.log
+
+      - name: Upload gate log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-log-python-${{ matrix.python }}
+          path: check.log
+          if-no-files-found: ignore
