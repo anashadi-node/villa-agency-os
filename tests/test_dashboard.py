@@ -1614,6 +1614,70 @@ def test_every_documented_dashboard_server_command_passes_a_token():
     assert offenders == [], "a documented dashboard server command without --token"
 
 
+class _FakeDashboardServer:
+    """Enough of a server for main() to print its banner and exit on KeyboardInterrupt."""
+
+    server_address = ("127.0.0.1", 0)
+
+    def serve_forever(self) -> None:
+        raise KeyboardInterrupt
+
+    def server_close(self) -> None:
+        pass
+
+
+def test_token_file_is_read_and_its_value_is_never_printed(tmp_path, monkeypatch, conn, capsys):
+    """A token must be able to arrive through a 0600 file, and must not leak to stdout.
+
+    ``--token`` puts the value in ``/proc/<pid>/cmdline``, which every local user can read;
+    a file on disk is the deployment path that avoids it.
+    """
+    planted = "file-token-4a91c7"
+    path = tmp_path / "dashboard.token"
+    path.write_text(planted + "\n", encoding="utf-8")
+    seen: dict = {}
+    real_create_app = D.create_app
+
+    def spy(*args, **kwargs):
+        seen.update(kwargs)
+        return real_create_app(*args, **kwargs)
+
+    monkeypatch.setattr(D, "create_app", spy)
+    monkeypatch.setattr(D, "_open_db", lambda _path: conn)
+    monkeypatch.setattr(
+        D, "serve", lambda handler, host, port, allow_remote=False: _FakeDashboardServer()
+    )
+    code = D.main(["--db", "abaikan.db", "--role", "owner", "--token-file", str(path)])
+    captured = capsys.readouterr()
+    assert code == 0
+    assert tuple(seen["tokens"]) == (planted,)
+    assert planted not in captured.out
+    assert planted not in captured.err
+
+
+def test_token_and_token_file_together_refuse_to_start(tmp_path, capsys):
+    path = tmp_path / "dashboard.token"
+    path.write_text("apa-saja", encoding="utf-8")
+    code = D.main(["--token", "satu", "--token-file", str(path)])
+    assert code == 2
+    assert "mutually exclusive" in capsys.readouterr().err
+
+
+def test_missing_token_file_refuses_to_start_instead_of_minting_one(tmp_path, capsys):
+    """A typo in the path must not silently fall back to an auto-minted token."""
+    code = D.main(["--token-file", str(tmp_path / "tidak-ada.token")])
+    assert code == 2
+    assert "cannot read --token-file" in capsys.readouterr().err
+
+
+def test_empty_token_file_refuses_to_start(tmp_path, capsys):
+    path = tmp_path / "dashboard.token"
+    path.write_text("   \n", encoding="utf-8")
+    code = D.main(["--token-file", str(path)])
+    assert code == 2
+    assert "--token-file is empty" in capsys.readouterr().err
+
+
 def test_finance_summary_states_each_currency_separately(seeded_app, conn, clock):
     """Pin the defect: one SUM across currencies is a figure nobody can read back.
 

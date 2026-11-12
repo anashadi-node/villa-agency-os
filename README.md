@@ -162,10 +162,13 @@ python3 scripts/seed_demo.py --db /tmp/demo/villa.db
 # Dashboard internal (read-only; POST hanya untuk approval lewat ApprovalService).
 # Setiap halaman butuh token. Tanpa token server tetap start, tapi SEMUA permintaan dijawab
 # 401 — token dibaca dari header `X-Dashboard-Token` (atau `Authorization: Bearer ...`).
-# Tanpa `--token`, token dibuat acak per peran tiap kali server start dan hanya muncul di
-# stdout, jadi URL/konfigurasi proxy mati tiap restart. Patok tokennya:
+# Tanpa token, token dibuat acak per peran tiap kali server start dan hanya muncul di
+# stdout, jadi URL/konfigurasi proxy mati tiap restart. Patok tokennya lewat berkas 0600
+# (`--token-file`), bukan `--token`: argumen proses terbaca pengguna lokal lain di
+# `/proc/<pid>/cmdline`, berkas tidak. Token yang dipasok operator juga tidak dicetak.
+(umask 077 && printf '%s\n' "$VILLA_DASHBOARD_TOKEN" > ~/.config/villa/dashboard.token)
 python3 src/dashboard.py --db /tmp/demo/villa.db --host 127.0.0.1 --port 8080 --role owner \
-    --token "$VILLA_DASHBOARD_TOKEN"
+    --token-file ~/.config/villa/dashboard.token
 curl -s -H "X-Dashboard-Token: $VILLA_DASHBOARD_TOKEN" http://127.0.0.1:8080/
 
 # Snapshot HTML statis: menulis berkas lalu keluar, tidak membuka port, tidak butuh token

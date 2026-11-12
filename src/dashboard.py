@@ -3160,7 +3160,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dump", default=None, metavar="DIR", help="tulis halaman statis lalu keluar")
     parser.add_argument("--anchor-dir", default=None, help="direktori anker rantai audit")
     parser.add_argument("--templates-dir", default=None, help="direktori template alternatif")
-    parser.add_argument("--token", default=None, help="token tetap untuk peran operator")
+    parser.add_argument("--token", default=None, help="fixed token for the operator role")
+    parser.add_argument(
+        "--token-file",
+        default=None,
+        metavar="PATH",
+        help=(
+            "read the token from a file (mode 0600) instead of --token: process "
+            "arguments are readable by any local user through /proc/<pid>/cmdline"
+        ),
+    )
     parser.add_argument(
         "--agency",
         default=None,
@@ -3190,6 +3199,25 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     """CLI: ``python3 src/dashboard.py --db data/villa.db --port 8080 --role owner``."""
     parser = build_arg_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
+    # A token on the command line is readable by every local user through
+    # /proc/<pid>/cmdline, so a deployment may hand it over in a 0600 file instead.
+    supplied_token = args.token is not None
+    if args.token_file:
+        if args.token:
+            print("dashboard: --token and --token-file are mutually exclusive", file=sys.stderr)
+            return 2
+        try:
+            args.token = Path(args.token_file).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            print(f"dashboard: cannot read --token-file: {redact_pii(exc)}", file=sys.stderr)
+            return 2
+        if not args.token:
+            print(
+                "dashboard: --token-file is empty — a dashboard without a token answers 401 to everyone",
+                file=sys.stderr,
+            )
+            return 2
+        supplied_token = True
     if args.pg_dsn and args.db != DEFAULT_DB:
         print(
             "dashboard: --pg-dsn and --db are mutually exclusive; choose one data source",
@@ -3241,7 +3269,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 2
     host, port = server.server_address[0], server.server_address[1]
     print(f"dashboard: http://{host}:{port}/ (peran {args.role}, baca-saja kecuali approval)")
-    if token:
+    if token and not supplied_token:
+        # Only auto-minted tokens are printed: an operator-supplied token already
+        # lives in a file or a flag, and a printed token outlives the console in
+        # the journal.
         print(f"dashboard: token {args.role}: {token}")
     try:
         server.serve_forever()

@@ -82,10 +82,9 @@ After=network-online.target
 Type=simple
 User=villa
 WorkingDirectory=/opt/villa-agency-os
-EnvironmentFile=/etc/villa/villa.env
 ExecStart=/usr/bin/python3 src/dashboard.py --db /var/lib/villa/villa.db \
           --host 127.0.0.1 --port 8080 --role owner \
-          --token "${VILLA_DASHBOARD_TOKEN}"
+          --token-file /etc/villa/dashboard.token
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
@@ -95,13 +94,16 @@ ProtectHome=true
 ReadWritePaths=/var/lib/villa
 ```
 
-`VILLA_DASHBOARD_TOKEN` dibaca dari `EnvironmentFile` di atas (systemd memperluas `${...}` di
-`ExecStart`). **Jangan menghilangkannya:** tanpa `--token`, dashboard membuat token acak tiap
-kali start dan hanya mencetaknya ke journal, jadi setiap restart mencabut akses semua URL yang
-sudah dipakai dan setiap konfigurasi reverse proxy harus diubah. Token juga terlihat di
-`systemctl status` dan `ps`; karena dashboard hanya bind ke loopback, yang bisa melihatnya
-adalah pengguna lokal — kalau itu tidak dapat diterima, taruh token di proxy dan batasi akses
-ke unit-nya.
+Token disimpan di `/etc/villa/dashboard.token` (mode `0600`, pemilik user unit) dan dibaca
+dengan `--token-file`. **Jangan menghilangkannya:** tanpa token, dashboard membuat token acak
+tiap start dan hanya mencetaknya ke journal, jadi setiap restart mencabut akses semua URL yang
+sudah dipakai dan setiap konfigurasi reverse proxy harus diubah.
+
+Pakai `--token-file`, bukan `--token`: argumen proses terbaca pengguna lokal lain lewat
+`/proc/<pid>/cmdline`, sedangkan berkas `0600` tidak. Token yang diberikan operator (lewat
+`--token` maupun `--token-file`) tidak pernah dicetak ke journal — hanya token acak hasil
+auto-mint yang dicetak. Untuk merotasi: tulis nilai baru ke berkas, lalu
+`systemctl restart villa-dashboard`.
 
 > Dashboard **read-only** untuk data. Satu-satunya aksi tulis adalah approval,
 > dan itu lewat `ApprovalService` (satu penulis) dengan `idempotency_key` wajib.

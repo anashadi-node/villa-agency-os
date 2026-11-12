@@ -48,7 +48,7 @@ MARKERS = re.compile(
 RECORDED_SRC = {
     "cases.py": 42,
     "connectors.py": 90,
-    "dashboard.py": 158,
+    "dashboard.py": 156,
     "documents.py": 7,
     "identity.py": 26,
     "incidents.py": 74,
