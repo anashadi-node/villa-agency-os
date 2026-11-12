@@ -1,12 +1,12 @@
 # Project Villa Agency — Dokumen Update Lengkap A–Z
 
-**Nama sistem:** Villa Agency OS (Villa Management & Agency)
-**Tanggal dokumen:** 12 November 2026 · **Pemilik:** Owner (Mas Anas) · **Disusun oleh:** divisi Villa Management & Agency
-**Posisi repo saat dokumen ini ditulis:** `~/villa-agency-os`, 173 commit (pertama 2026-09-21, terakhir `5647b23`), 370 berkas ter-track, 58 modul `src/*.py` (±52.757 baris), 102 berkas `test_*.py` (104 berkas `.py` di `tests/` termasuk `conftest.py` dan `seed_support.py`), 68 berkas ADR (ADR-0068 ditambahkan 2026-11-13 setelah dokumen ini disusun).
+**Nama sistem:** Villa Agency OS (Villa Management & Agency)  
+**Tanggal dokumen:** 12 November 2026 · **Pemilik:** Owner (Mas Anas) · **Disusun oleh:** divisi Villa Management & Agency  
+**Posisi repo saat dokumen ini ditulis:** `~/villa-agency-os`, 178 commit (pertama 2026-09-21, terakhir `0179850`), 372 berkas ter-track, 58 modul `src/*.py` (±52.757 baris), 102 berkas `test_*.py` (104 berkas `.py` di `tests/` termasuk `conftest.py` dan `seed_support.py`), 68 berkas ADR (ADR-0068 ditambahkan 2026-11-13 setelah dokumen ini disusun).
 
 > **Cara membaca dokumen ini.** Dokumen ini adalah konsolidasi *bertanggal* dari seluruh sumber resmi di repo
 > (Charter, Peta Status & Gap, Panduan Alur Kerja, State Machine, Policy Matrix, Data Model, Runbook, Deployment,
-> Tenant Setup, ADR 0001–0067, kode `src/`, skema `src/schema/`, templat, dan gerbang `make check`).
+> Tenant Setup, ADR 0001–0068, kode `src/`, skema `src/schema/`, templat, dan gerbang `make check`).
 > Setiap fakta berasal dari berkas yang dibaca langsung pada sesi ini, bukan dari ingatan. Bila sebuah angka berasal dari
 > potret lama, itu ditandai **[potret]** beserta tanggalnya. Bagian yang **belum ada / belum diputuskan** ditulis terang-terangan di Bab 24–26,
 > bukan disembunyikan. Nilai kredensial (token, kata sandi, kunci) **tidak pernah** dimuat di sini; jika perlu disebut, ditulis `[REDACTED]`.
