@@ -243,8 +243,9 @@ class BookingStatusAnswer:
     """Where a reservation stands, and which of §9's gates are still open (RES-W08).
 
     Read-only by construction. ``status`` is the row's own word, ``booking_id`` stays empty
-    until a booking exists, and nothing in this object is a confirmation: the only writer of a
-    booking is :meth:`reservation_kernel.ReservationKernel.confirm_from_hold`, called by a human.
+    until a booking exists, and nothing in this object is a confirmation: bookings are written
+    only by the kernel's ``reserve_from_hold`` / ``mark_paid`` / ``confirm_booking``, each
+    called by a human (ADR-0033; audit 2026-11-13, K2).
     """
 
     case_id: str

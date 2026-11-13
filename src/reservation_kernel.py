@@ -69,6 +69,7 @@ from hold_states import (
     HOLD_EXPIRED_PENDING_VERIFICATION,
     HOLD_EXTENSION_REQUESTED,
     HOLD_RELEASE_CONFIRMED,
+    HOLD_RELEASE_REQUESTED,
     LIVE_HOLD_STATES,
     OCCUPYING_HOLD_STATES,
     can_transition,
@@ -1603,7 +1604,28 @@ class ReservationKernel:
         return tuple(row["hold_id"] for row in rows)
 
     # -- bookings ----------------------------------------------------------- #
-    def confirm_from_hold(
+    def confirm_from_hold(self, **_: Any) -> BookingOutcome:
+        """Retired (audit 2026-11-13, finding K2). Always refuses.
+
+        This command turned a hold straight into ``CONFIRMED``: no payment, no block
+        proof, and over an edge (``HOLD_ACTIVE -> CONFIRMED``) the canonical state
+        machine in ``booking_states`` does not have. ADR-0033 decided the order the
+        owner described, and the platform now follows it:
+
+        1. :meth:`reserve_from_hold` — ``HOLD_ACTIVE -> PAYMENT_PENDING``; the hold
+           keeps the slot, an invoice can now be issued against the booking;
+        2. :meth:`mark_paid` — Finance, with a ``SUCCEEDED`` payment on that invoice
+           (``-> DEPOSIT_PAID`` / ``PAID_IN_FULL``);
+        3. :meth:`confirm_booking` — Reservation, with the villa's block proof
+           (level A/B evidence captured after the reservation) ``-> CONFIRMED``.
+        """
+        raise DomainError(
+            "confirm_from_hold is retired: reserve_from_hold, then mark_paid with a verified "
+            "payment, then confirm_booking with the villa's block proof (ADR-0033)",
+            code="CONFIRM_REQUIRES_PAYMENT_AND_BLOCK_PROOF",
+        )
+
+    def reserve_from_hold(
         self,
         *,
         hold_id: str,
@@ -1615,12 +1637,14 @@ class ReservationKernel:
         infants: int = 0,
         actor: Optional[str] = None,
         actor_role: Optional[str] = None,
-        amount_paid_minor: int = 0,
     ) -> BookingOutcome:
-        """Convert an active hold into a confirmed booking.
+        """Turn a confirmed hold into a booking awaiting payment (``PAYMENT_PENDING``).
 
-        The booking's money comes from the *quote*, never from the request: the
-        guest sees a price, the system stores that price.
+        The booking row exists so an invoice can be issued against it; the slot stays
+        held by the hold (still ``CONFIRMED``, still occupying) until
+        :meth:`confirm_booking` converts it. Every commercial check that used to guard
+        ``confirm_from_hold`` runs here: same quote, same unit, same policy, an
+        accepted version for these exact dates, capacity.
         """
         hold_id = require_ref(hold_id, "hold_id")
         quote_id = require_ref(quote_id, "quote_id")
@@ -1634,11 +1658,11 @@ class ReservationKernel:
         if adults < 1:
             raise DomainError("at least one adult is required", code="GUESTS_INVALID")
 
-        request_hash = sha256_hex("confirm_from_hold", hold_id, quote_id, command_id)
+        request_hash = sha256_hex("reserve_from_hold", hold_id, quote_id, command_id)
         now = self._now()
 
         with self.transaction() as conn:
-            replay = self._idempotent_lookup(conn, "confirm_from_hold", idempotency_key, request_hash)
+            replay = self._idempotent_lookup(conn, "reserve_from_hold", idempotency_key, request_hash)
             if replay is not None:
                 row = conn.execute(
                     "SELECT * FROM bookings WHERE booking_id = ? AND agency_id = ?",
@@ -1652,118 +1676,18 @@ class ReservationKernel:
                     )
                 return self._booking_outcome(conn, row, replayed=True)
 
-            hold = self._require_hold(conn, hold_id)
-            if hold["status"] == HOLD_CONVERTED:
-                existing = conn.execute(
-                    "SELECT * FROM bookings WHERE hold_ref = ? AND agency_id = ? ORDER BY created_at LIMIT 1",
-                    (hold_id, self.agency_id),
-                ).fetchone()
-                if existing is not None:
-                    return self._booking_outcome(conn, existing, replayed=True)
-            if hold["status"] != HOLD_CONFIRMED:
-                raise DomainError(
-                    "only a confirmed hold can be confirmed into a booking",
-                    code="HOLD_NOT_ACTIVE",
-                    hold_id=hold_id,
-                    status=hold["status"],
-                )
-            if hold["expires_at"] <= now:
-                raise DomainError(
-                    "hold expired before confirmation",
-                    code="HOLD_ALREADY_EXPIRED",
-                    hold_id=hold_id,
-                    expires_at=hold["expires_at"],
-                )
-
-            quote = conn.execute(
-                "SELECT * FROM quotes WHERE quote_id = ? AND agency_id = ?",
-                (quote_id, self.agency_id),
+            existing = conn.execute(
+                "SELECT * FROM bookings WHERE hold_ref = ? AND agency_id = ?"
+                " AND status NOT IN ('CANCELLED','CLOSED') ORDER BY created_at LIMIT 1",
+                (hold_id, self.agency_id),
             ).fetchone()
-            if quote is None:
-                raise DomainError(f"unknown quote: {quote_id}", code="QUOTE_NOT_FOUND", quote_id=quote_id)
-            if quote["unit_id"] != hold["unit_id"]:
-                raise DomainError(
-                    "quote and hold refer to different units",
-                    code="QUOTE_UNIT_MISMATCH",
-                    quote_unit=quote["unit_id"],
-                    hold_unit=hold["unit_id"],
-                )
-            if quote["policy_version_id"] != hold["policy_version_id"]:
-                raise DomainError(
-                    "quote and hold were priced with different policy versions",
-                    code="QUOTE_POLICY_MISMATCH",
-                    quote_policy=quote["policy_version_id"],
-                    hold_policy=hold["policy_version_id"],
-                )
-            if quote["status"] == "VOID":
-                raise DomainError("quote was voided", code="QUOTE_VOID")
-            if quote["expires_at"] <= now:
-                raise DomainError(
-                    "quote expired before confirmation",
-                    code="QUOTE_EXPIRED",
-                    expires_at=quote["expires_at"],
-                )
+            if existing is not None:
+                return self._booking_outcome(conn, existing, replayed=True)
 
-            # §9's commercial gate: a booking rests on a price the guest *said yes to* — the
-            # accepted version of this quote, for this stay. Without it a confirmation turns an
-            # unanswered offer into a contract. The check sits before the booking row exists, and
-            # names its two refusals apart: nobody answered, or somebody answered other dates.
-            accepted = conn.execute(
-                "SELECT unit_id, check_in, check_out FROM quotation_versions"
-                " WHERE quote_id = ? AND agency_id = ? AND status = 'ACCEPTED'"
-                " ORDER BY version DESC",
-                (quote_id, self.agency_id),
-            ).fetchall()
-            if not accepted:
-                raise DomainError(
-                    f"quote {quote_id} carries no accepted version: a booking needs the version "
-                    "the guest accepted, not an offer that was only sent",
-                    code="CONFIRM_NOT_ACCEPTED",
-                    quote_id=quote_id,
-                )
-            if not any(
-                row["unit_id"] == hold["unit_id"]
-                and row["check_in"] == hold["check_in"]
-                and row["check_out"] == hold["check_out"]
-                for row in accepted
-            ):
-                raise DomainError(
-                    "the accepted version of this quote covers another stay: a yes for other "
-                    "dates is not a yes for these",
-                    code="CONFIRM_ACCEPTED_OTHER_STAY",
-                    quote_id=quote_id,
-                    unit_id=hold["unit_id"],
-                    check_in=hold["check_in"],
-                    check_out=hold["check_out"],
-                )
-
-            unit = conn.execute(
-                "SELECT * FROM units WHERE unit_id = ? AND agency_id = ?",
-                (hold["unit_id"], self.agency_id),
-            ).fetchone()
-            if unit is None:  # pragma: no cover - FK guarantees this
-                raise DomainError("hold references an unknown unit", code="UNIT_NOT_FOUND")
-            guests = adults + children
-            if guests > unit["max_guests"]:
-                raise DomainError(
-                    "party exceeds the unit's maximum occupancy",
-                    code="CAPACITY_EXCEEDED",
-                    guests=guests,
-                    max_guests=unit["max_guests"],
-                )
-
-            total = int(quote["total_minor"])
-            if amount_paid_minor < 0 or amount_paid_minor > total:
-                raise DomainError(
-                    "amount_paid_minor must be between 0 and the quote total",
-                    code="PAYMENT_INVALID_AMOUNT",
-                    amount_paid_minor=amount_paid_minor,
-                    total_minor=total,
-                )
-
-            # The slot is already ours via the hold, but re-check the range: another
-            # booking may have been created directly (import, ops tool) since.
-            # Our own hold is excluded — it is being converted right here.
+            hold, quote, total = self._conversion_facts(
+                conn, hold_id=hold_id, quote_id=quote_id,
+                adults=adults, children=children, infants=infants, now=now,
+            )
             self._assert_no_overlap(
                 conn,
                 unit_id=hold["unit_id"],
@@ -1771,6 +1695,13 @@ class ReservationKernel:
                 check_out=hold["check_out"],
                 exclude_hold_id=hold_id,
             )
+            if not self._transition_gate("HOLD_ACTIVE", "PAYMENT_PENDING", "reserve_booking"):
+                raise DomainError(
+                    "state machine refuses this transition",
+                    code="BOOKING_TRANSITION_REFUSED",
+                    from_state="HOLD_ACTIVE",
+                    to_state="PAYMENT_PENDING",
+                )
 
             booking_id = self.ids.new("book")
             conn.execute(
@@ -1781,7 +1712,7 @@ class ReservationKernel:
                     policy_fingerprint, quote_ref, hold_ref, total_minor, amount_paid_minor,
                     security_deposit_minor, payment_status, idempotency_key, version_lock,
                     created_at, updated_at, confirmed_at, cancelled_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, NULL)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'UNPAID', ?, 1, ?, ?, NULL, NULL)
                 """,
                 (
                     booking_id,
@@ -1791,7 +1722,7 @@ class ReservationKernel:
                     hold["check_in"],
                     hold["check_out"],
                     hold["nights"],
-                    "CONFIRMED",
+                    "PAYMENT_PENDING",
                     hold["guest_ref"],
                     adults,
                     children,
@@ -1802,28 +1733,18 @@ class ReservationKernel:
                     quote_id,
                     hold_id,
                     total,
-                    amount_paid_minor,
                     int(quote["security_deposit_minor"]),
-                    _payment_status(amount_paid_minor, total),
                     idempotency_key,
                     now,
                     now,
-                    now,
                 ),
-            )
-            conn.execute(
-                """
-                UPDATE holds SET status = ?, closed_at = ?, close_reason = ?
-                WHERE hold_id = ?
-                """,
-                (HOLD_CONVERTED, now, "converted_to_booking", hold_id),
             )
             self._append_state_event(
                 conn,
                 booking_id=booking_id,
                 from_state="HOLD_ACTIVE",
-                to_state="CONFIRMED",
-                command="confirm_booking",
+                to_state="PAYMENT_PENDING",
+                command="reserve_booking",
                 command_id=command_id,
                 actor=actor or self.actor,
                 actor_role=actor_role or self.actor_role,
@@ -1831,15 +1752,15 @@ class ReservationKernel:
                 evidence_ref=hold["evidence_id"],
             )
             self._record_idempotency(
-                conn, "confirm_from_hold", idempotency_key, request_hash, booking_id
+                conn, "reserve_from_hold", idempotency_key, request_hash, booking_id
             )
             self._audit(
                 conn,
-                action="booking.confirmed",
+                action="booking.reserved",
                 entity_type="booking",
                 entity_id=booking_id,
                 after={
-                    "status": "CONFIRMED",
+                    "status": "PAYMENT_PENDING",
                     "unit_id": hold["unit_id"],
                     "total_minor": total,
                     "quote_id": quote_id,
@@ -1855,6 +1776,346 @@ class ReservationKernel:
                 (booking_id, self.agency_id),
             ).fetchone()
             return self._booking_outcome(conn, row, replayed=False)
+
+    def mark_paid(
+        self,
+        *,
+        booking_id: str,
+        payment_id: str,
+        command_id: str,
+        actor: Optional[str] = None,
+        actor_role: Optional[str] = None,
+    ) -> BookingOutcome:
+        """Finance's step (ADR-0033 §2): verified money moves the booking to
+        ``DEPOSIT_PAID`` or ``PAID_IN_FULL``.
+
+        ``payment_id`` must name a ``SUCCEEDED`` payment on an invoice of *this*
+        booking. ``SUCCEEDED`` is only ever written by ``payments.PaymentService``
+        from a verified provider event or a reconciled bank line — never from a
+        screenshot or a guest's word. The amount comes from the booking's own mirror
+        of its settled invoices (``amount_paid_minor``), not from the caller.
+        """
+        booking_id = require_ref(booking_id, "booking_id")
+        payment_id = require_ref(payment_id, "payment_id")
+        command_id = require_ref(command_id, "command_id")
+        _require_min_length(command_id, "command_id", 8)
+        with self.transaction() as conn:
+            booking = self._require_booking(conn, booking_id)
+            current = booking["status"]
+            if current in ("PAID_IN_FULL",) or (
+                current == "DEPOSIT_PAID" and booking["amount_paid_minor"] < booking["total_minor"]
+            ):
+                return self._booking_outcome(conn, booking, replayed=True)
+            if current not in ("PAYMENT_PENDING", "PAYMENT_PARTIAL", "DEPOSIT_PAID"):
+                raise DomainError(
+                    "only a booking awaiting payment can be marked paid",
+                    code="BOOKING_NOT_AWAITING_PAYMENT",
+                    status=current,
+                )
+            payment = conn.execute(
+                "SELECT p.status AS status FROM payments p JOIN invoices i ON i.invoice_id = p.invoice_id"
+                " WHERE p.payment_id = ? AND p.agency_id = ? AND i.booking_id = ?",
+                (payment_id, self.agency_id, booking_id),
+            ).fetchone()
+            if payment is None:
+                raise DomainError(
+                    "the payment does not belong to an invoice of this booking",
+                    code="PAYMENT_NOT_FOR_BOOKING",
+                    payment_id=payment_id,
+                )
+            if payment["status"] != "SUCCEEDED":
+                raise DomainError(
+                    "only a verified (SUCCEEDED) payment can move a booking",
+                    code="PAYMENT_NOT_VERIFIED",
+                    payment_id=payment_id,
+                    status=payment["status"],
+                )
+            paid = int(booking["amount_paid_minor"])
+            total = int(booking["total_minor"])
+            deposit_pct = _policy_deposit_pct(conn, booking["policy_version_id"])
+            required = max(1, Money.from_minor(total, booking["currency"]).pct(deposit_pct).minor_units)
+            if paid >= total:
+                target = "PAID_IN_FULL"
+            elif paid >= required:
+                target = "DEPOSIT_PAID"
+            else:
+                raise DomainError(
+                    "the verified amount is below the deposit the policy requires",
+                    code="PAYMENT_BELOW_DEPOSIT",
+                    amount_paid_minor=paid,
+                    deposit_required_minor=required,
+                )
+            if target == current:
+                return self._booking_outcome(conn, booking, replayed=True)
+            if not self._transition_gate(current, target, "mark_paid"):
+                raise DomainError(
+                    "state machine refuses this transition",
+                    code="BOOKING_TRANSITION_REFUSED",
+                    from_state=current,
+                    to_state=target,
+                )
+            now = self._now()
+            conn.execute(
+                "UPDATE bookings SET status = ?, updated_at = ?, version_lock = version_lock + 1"
+                " WHERE booking_id = ? AND agency_id = ?",
+                (target, now, booking_id, self.agency_id),
+            )
+            self._append_state_event(
+                conn,
+                booking_id=booking_id,
+                from_state=current,
+                to_state=target,
+                command="mark_paid",
+                command_id=command_id,
+                actor=actor or self.actor,
+                actor_role=actor_role or self.actor_role,
+                reason=None,
+                evidence_ref=payment_id,
+            )
+            self._audit(
+                conn,
+                action="booking.paid",
+                entity_type="booking",
+                entity_id=booking_id,
+                before={"status": current},
+                after={"status": target, "amount_paid_minor": paid},
+                reason=None,
+                policy_version_id=booking["policy_version_id"],
+                evidence_ref=payment_id,
+                actor=actor,
+            )
+            row = self._require_booking(conn, booking_id)
+            return self._booking_outcome(conn, row, replayed=False)
+
+    def confirm_booking(
+        self,
+        *,
+        booking_id: str,
+        block_evidence_id: str,
+        command_id: str,
+        actor: Optional[str] = None,
+        actor_role: Optional[str] = None,
+    ) -> BookingOutcome:
+        """Reservation's closing step (ADR-0033 §2.6): the villa's block proof
+        turns a paid booking into ``CONFIRMED`` and converts its hold.
+
+        ``block_evidence_id`` must be availability evidence for the same unit, from an
+        authoritative source (level A/B, ``can_confirm``), captured **after** the
+        booking was reserved — a proof obtained before the agency asked for the block
+        cannot prove the block.
+        """
+        booking_id = require_ref(booking_id, "booking_id")
+        block_evidence_id = require_ref(block_evidence_id, "block_evidence_id")
+        command_id = require_ref(command_id, "command_id")
+        _require_min_length(command_id, "command_id", 8)
+        with self.transaction() as conn:
+            booking = self._require_booking(conn, booking_id)
+            current = booking["status"]
+            if current == "CONFIRMED":
+                return self._booking_outcome(conn, booking, replayed=True)
+            if current not in ("DEPOSIT_PAID", "PAID_IN_FULL"):
+                raise DomainError(
+                    "a booking is confirmed only after its payment is verified",
+                    code="PAYMENT_REQUIRED",
+                    status=current,
+                )
+            evidence = conn.execute(
+                "SELECT * FROM availability_evidence WHERE evidence_id = ? AND agency_id = ?",
+                (block_evidence_id, self.agency_id),
+            ).fetchone()
+            if evidence is None or evidence["unit_id"] != booking["unit_id"]:
+                raise DomainError(
+                    "block proof must be evidence for this booking's unit",
+                    code="BLOCK_PROOF_REQUIRED",
+                    block_evidence_id=block_evidence_id,
+                )
+            if (
+                evidence["evidence_level"] not in ("A", "B")
+                or not int(evidence["can_confirm"])
+                or evidence["result"] not in ("AVAILABLE", "AVAILABLE_BUT_RESTRICTED")
+            ):
+                raise DomainError(
+                    "block proof must be level A/B evidence that authorises confirmation",
+                    code="BLOCK_PROOF_NOT_AUTHORITATIVE",
+                    evidence_level=evidence["evidence_level"],
+                    can_confirm=int(evidence["can_confirm"]),
+                )
+            if evidence["captured_at"] < booking["created_at"]:
+                raise DomainError(
+                    "block proof predates the reservation it is meant to close",
+                    code="BLOCK_PROOF_PREDATES_BOOKING",
+                    captured_at=evidence["captured_at"],
+                    booking_created_at=booking["created_at"],
+                )
+            hold_id = booking["hold_ref"]
+            hold = self._require_hold(conn, hold_id) if hold_id else None
+            if hold is None or hold["status"] != HOLD_CONFIRMED:
+                raise DomainError(
+                    "the hold that keeps this slot is no longer confirmed; extend or "
+                    "re-hold before confirming",
+                    code="HOLD_NOT_ACTIVE",
+                    hold_id=hold_id,
+                    status=None if hold is None else hold["status"],
+                )
+            self._assert_no_overlap(
+                conn,
+                unit_id=booking["unit_id"],
+                check_in=booking["check_in"],
+                check_out=booking["check_out"],
+                exclude_hold_id=hold_id,
+                exclude_booking_id=booking_id,
+            )
+            if not self._transition_gate(current, "CONFIRMED", "confirm_booking"):
+                raise DomainError(
+                    "state machine refuses this transition",
+                    code="BOOKING_TRANSITION_REFUSED",
+                    from_state=current,
+                    to_state="CONFIRMED",
+                )
+            now = self._now()
+            conn.execute(
+                "UPDATE bookings SET status = 'CONFIRMED', confirmed_at = ?, updated_at = ?,"
+                " version_lock = version_lock + 1 WHERE booking_id = ? AND agency_id = ?",
+                (now, now, booking_id, self.agency_id),
+            )
+            self._transition_hold(
+                conn, hold_id, HOLD_CONVERTED, reason="converted_to_booking", actor=actor,
+                evidence_ref=block_evidence_id, action="hold.converted",
+            )
+            self._append_state_event(
+                conn,
+                booking_id=booking_id,
+                from_state=current,
+                to_state="CONFIRMED",
+                command="confirm_booking",
+                command_id=command_id,
+                actor=actor or self.actor,
+                actor_role=actor_role or self.actor_role,
+                reason=None,
+                evidence_ref=block_evidence_id,
+            )
+            self._audit(
+                conn,
+                action="booking.confirmed",
+                entity_type="booking",
+                entity_id=booking_id,
+                before={"status": current},
+                after={"status": "CONFIRMED", "hold_id": hold_id},
+                reason=None,
+                policy_version_id=booking["policy_version_id"],
+                evidence_ref=block_evidence_id,
+                actor=actor,
+            )
+            row = self._require_booking(conn, booking_id)
+            return self._booking_outcome(conn, row, replayed=False)
+
+    def _conversion_facts(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        hold_id: str,
+        quote_id: str,
+        adults: int,
+        children: int,
+        infants: int,
+        now: str,
+    ) -> tuple[sqlite3.Row, sqlite3.Row, int]:
+        """Every check a hold must pass before a booking may rest on it."""
+        hold = self._require_hold(conn, hold_id)
+        if hold["status"] != HOLD_CONFIRMED:
+            raise DomainError(
+                "only a confirmed hold can be confirmed into a booking",
+                code="HOLD_NOT_ACTIVE",
+                hold_id=hold_id,
+                status=hold["status"],
+            )
+        if hold["expires_at"] <= now:
+            raise DomainError(
+                "hold expired before confirmation",
+                code="HOLD_ALREADY_EXPIRED",
+                hold_id=hold_id,
+                expires_at=hold["expires_at"],
+            )
+
+        quote = conn.execute(
+            "SELECT * FROM quotes WHERE quote_id = ? AND agency_id = ?",
+            (quote_id, self.agency_id),
+        ).fetchone()
+        if quote is None:
+            raise DomainError(f"unknown quote: {quote_id}", code="QUOTE_NOT_FOUND", quote_id=quote_id)
+        if quote["unit_id"] != hold["unit_id"]:
+            raise DomainError(
+                "quote and hold refer to different units",
+                code="QUOTE_UNIT_MISMATCH",
+                quote_unit=quote["unit_id"],
+                hold_unit=hold["unit_id"],
+            )
+        if quote["policy_version_id"] != hold["policy_version_id"]:
+            raise DomainError(
+                "quote and hold were priced with different policy versions",
+                code="QUOTE_POLICY_MISMATCH",
+                quote_policy=quote["policy_version_id"],
+                hold_policy=hold["policy_version_id"],
+            )
+        if quote["status"] == "VOID":
+            raise DomainError("quote was voided", code="QUOTE_VOID")
+        if quote["expires_at"] <= now:
+            raise DomainError(
+                "quote expired before confirmation",
+                code="QUOTE_EXPIRED",
+                expires_at=quote["expires_at"],
+            )
+
+        # §9's commercial gate: a booking rests on a price the guest *said yes to* — the
+        # accepted version of this quote, for this stay. Without it a confirmation turns an
+        # unanswered offer into a contract. The check sits before the booking row exists, and
+        # names its two refusals apart: nobody answered, or somebody answered other dates.
+        accepted = conn.execute(
+            "SELECT unit_id, check_in, check_out FROM quotation_versions"
+            " WHERE quote_id = ? AND agency_id = ? AND status = 'ACCEPTED'"
+            " ORDER BY version DESC",
+            (quote_id, self.agency_id),
+        ).fetchall()
+        if not accepted:
+            raise DomainError(
+                f"quote {quote_id} carries no accepted version: a booking needs the version "
+                "the guest accepted, not an offer that was only sent",
+                code="CONFIRM_NOT_ACCEPTED",
+                quote_id=quote_id,
+            )
+        if not any(
+            row["unit_id"] == hold["unit_id"]
+            and row["check_in"] == hold["check_in"]
+            and row["check_out"] == hold["check_out"]
+            for row in accepted
+        ):
+            raise DomainError(
+                "the accepted version of this quote covers another stay: a yes for other "
+                "dates is not a yes for these",
+                code="CONFIRM_ACCEPTED_OTHER_STAY",
+                quote_id=quote_id,
+                unit_id=hold["unit_id"],
+                check_in=hold["check_in"],
+                check_out=hold["check_out"],
+            )
+
+        unit = conn.execute(
+            "SELECT * FROM units WHERE unit_id = ? AND agency_id = ?",
+            (hold["unit_id"], self.agency_id),
+        ).fetchone()
+        if unit is None:  # pragma: no cover - FK guarantees this
+            raise DomainError("hold references an unknown unit", code="UNIT_NOT_FOUND")
+        guests = adults + children
+        if guests > unit["max_guests"]:
+            raise DomainError(
+                "party exceeds the unit's maximum occupancy",
+                code="CAPACITY_EXCEEDED",
+                guests=guests,
+                max_guests=unit["max_guests"],
+            )
+
+        total = int(quote["total_minor"])
+        return hold, quote, total
 
     def cancel_booking(
         self,
@@ -1896,6 +2157,20 @@ class ReservationKernel:
                 """,
                 ("CANCELLED", now, now, booking_id),
             )
+            # A booking cancelled before confirmation still has its hold keeping the
+            # slot (reserve_from_hold leaves it CONFIRMED). The villa is asked to
+            # release it; the slot stays occupied until it does (ADR-0034, "Batal").
+            hold_ref = booking["hold_ref"]
+            if hold_ref:
+                hold = conn.execute(
+                    "SELECT status FROM holds WHERE hold_id = ? AND agency_id = ?",
+                    (hold_ref, self.agency_id),
+                ).fetchone()
+                if hold is not None and hold["status"] == HOLD_CONFIRMED:
+                    self._transition_hold(
+                        conn, hold_ref, HOLD_RELEASE_REQUESTED, reason="booking_cancelled",
+                        actor=actor, action="hold.release_requested",
+                    )
             self._append_state_event(
                 conn,
                 booking_id=booking_id,
@@ -2852,7 +3127,18 @@ _KERNEL_TRANSITIONS: frozenset[tuple[str, str, str]] = frozenset(
         ("QUOTE_EXPIRED", "CANCELLED", "cancel_booking"),
         ("HOLD_REQUESTED", "CANCELLED", "cancel_booking"),
         ("HOLD_ACTIVE", "CANCELLED", "cancel_booking"),
-        ("HOLD_ACTIVE", "CONFIRMED", "confirm_booking"),
+        # ADR-0033 (audit 2026-11-13, K2): a hold becomes a booking awaiting payment;
+        # verified money and then the villa's block proof close it. There is no
+        # HOLD_ACTIVE -> CONFIRMED edge, here or in ``booking_states``.
+        ("HOLD_ACTIVE", "PAYMENT_PENDING", "reserve_booking"),
+        ("PAYMENT_PENDING", "DEPOSIT_PAID", "mark_paid"),
+        ("PAYMENT_PENDING", "PAID_IN_FULL", "mark_paid"),
+        ("PAYMENT_PARTIAL", "DEPOSIT_PAID", "mark_paid"),
+        ("PAYMENT_PARTIAL", "PAID_IN_FULL", "mark_paid"),
+        ("DEPOSIT_PAID", "PAID_IN_FULL", "mark_paid"),
+        ("DEPOSIT_PAID", "CONFIRMED", "confirm_booking"),
+        ("PAID_IN_FULL", "CONFIRMED", "confirm_booking"),
+        ("PAID_IN_FULL", "CANCELLED", "cancel_booking"),
         ("PAYMENT_PENDING", "CANCELLED", "cancel_booking"),
         ("PAYMENT_PARTIAL", "CANCELLED", "cancel_booking"),
         ("DEPOSIT_PAID", "CANCELLED", "cancel_booking"),

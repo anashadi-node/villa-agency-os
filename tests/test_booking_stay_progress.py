@@ -19,6 +19,7 @@ from __future__ import annotations
 import unittest
 
 import reservation_kernel as RK
+from booking_support import confirm_through_payment
 from primitives import DomainError
 from test_reservation_kernel import KernelTestCase
 
@@ -46,7 +47,7 @@ class StayProgressTestCase(KernelTestCase):
             adults=2,
         )
         params.update(overrides)
-        return quote, self.kernel.confirm_from_hold(**params)
+        return quote, confirm_through_payment(self.kernel, **params)
 
     # -- helpers ------------------------------------------------------------ #
 
@@ -99,7 +100,10 @@ class TestTheThreeSteps(StayProgressTestCase):
         self.assertEqual(
             self.transitions(),
             [
-                ("HOLD_ACTIVE", "CONFIRMED", "confirm_booking"),
+                # ADR-0033 (audit 2026-11-13, K2): reserve, verified money, block proof.
+                ("HOLD_ACTIVE", "PAYMENT_PENDING", "reserve_booking"),
+                ("PAYMENT_PENDING", "PAID_IN_FULL", "mark_paid"),
+                ("PAID_IN_FULL", "CONFIRMED", "confirm_booking"),
                 ("CONFIRMED", "PRE_ARRIVAL", "prepare_arrival"),
                 ("PRE_ARRIVAL", "IN_STAY", "check_in"),
                 ("IN_STAY", "COMPLETED", "complete_stay"),

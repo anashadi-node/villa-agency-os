@@ -79,6 +79,7 @@ AGENCY = "agency_default"
 OWNER = "user:owner_anas"
 MANAGER = "user:manager_dewi"
 FRONT_DESK = "user:staff_ayu"
+FINANCE = "user:finance_fam"
 GUEST = "user:guest_marco"
 
 CHANNEL = "whatsapp_business"
@@ -366,7 +367,7 @@ class Smoke:
     # -- 5. availability, on evidence -------------------------------------- #
 
     def availability(self) -> None:
-        self.kernel.record_evidence(
+        self.facts["availability_evidence_id"] = self.kernel.record_evidence(
             unit_id=UNIT,
             source_type="manager_written",
             evidence_level="A",
@@ -464,11 +465,13 @@ class Smoke:
     # -- 9. the booking ---------------------------------------------------- #
 
     def booking(self) -> None:
-        outcome = self.kernel.confirm_from_hold(
+        # ADR-0033 (audit 2026-11-13, K2): the hold becomes a booking *awaiting payment*.
+        # CONFIRMED only comes after verified money and the villa's block proof (step 12).
+        outcome = self.kernel.reserve_from_hold(
             hold_id=self.facts["hold_id"],
             quote_id=self.facts["quote_id"],
-            idempotency_key="cmd_smoke_confirm_1",
-            command_id="cmd_smoke_confirm_1",
+            idempotency_key="cmd_smoke_reserve_1",
+            command_id="cmd_smoke_reserve_1",
             adults=ADULTS,
             children=CHILDREN,
             actor=MANAGER,
@@ -532,6 +535,52 @@ class Smoke:
                 "the ledger does not verify after settlement", code="SMOKE_LEDGER_UNVERIFIED"
             )
         self.facts["payment_id"] = str(intent.payment_id)
+        paid = self.kernel.mark_paid(
+            booking_id=self.facts["booking_id"],
+            payment_id=self.facts["payment_id"],
+            command_id="cmd_smoke_paid_1",
+            actor=FINANCE,
+            actor_role="finance",
+        )
+        self.facts["paid_status"] = str(paid.status)
+
+    # -- 12. the villa's block proof closes the booking (ADR-0033 §2.6) ---- #
+
+    def confirmation(self) -> None:
+        self.at(9)  # the villa answers the block request
+        proof = self.kernel.record_evidence(
+            unit_id=UNIT,
+            source_type="manager_written",
+            evidence_level="B",
+            result="AVAILABLE",
+            can_quote=True,
+            can_hold=True,
+            can_confirm=True,
+            source_ref="villa_block_letter_2026_10",
+            notes="the villa confirms the unit is blocked for the agency's booking",
+        )
+        refused = False
+        try:  # the pre-quote availability check is not a block proof (no can_confirm, too old)
+            self.kernel.confirm_booking(
+                booking_id=self.facts["booking_id"],
+                block_evidence_id=self.facts["availability_evidence_id"],
+                command_id="cmd_smoke_confirm_early",
+                actor=MANAGER,
+                actor_role="manager",
+            )
+        except DomainError:
+            refused = True
+        if not refused:
+            raise DomainError("an old proof confirmed the booking", code="SMOKE_STALE_BLOCK_PROOF")
+        outcome = self.kernel.confirm_booking(
+            booking_id=self.facts["booking_id"],
+            block_evidence_id=proof,
+            command_id="cmd_smoke_confirm_1",
+            actor=MANAGER,
+            actor_role="manager",
+        )
+        self.facts["block_proof"] = str(proof)
+        self.facts["confirmed_status"] = str(outcome.status)
 
     # -- 12. the stay ------------------------------------------------------ #
 
@@ -680,11 +729,12 @@ class Smoke:
             (9, "booking", self.booking),
             (10, "invoice", self.invoice),
             (11, "payment", self.payment),
-            (12, "documents", self.documents),
-            (13, "stay", self.stay),
-            (14, "settlement", self.settlement),
-            (15, "closure §30", self.closure),
-            (16, "evidence", self.evidence),
+            (12, "block proof", self.confirmation),
+            (13, "documents", self.documents),
+            (14, "stay", self.stay),
+            (15, "settlement", self.settlement),
+            (16, "closure §30", self.closure),
+            (17, "evidence", self.evidence),
         )
         for number, name, action in steps:
             with self.step(number, name):

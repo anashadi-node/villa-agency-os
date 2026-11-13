@@ -13,6 +13,7 @@ import unittest
 import policy_engine as PE
 import quote_calculator as QC
 import reservation_kernel as RK
+from booking_support import confirm_through_payment
 from primitives import DomainError, FrozenClock
 
 NOW = "2026-09-21T00:00:00+00:00"
@@ -393,7 +394,7 @@ class TestNoDoubleBooking(KernelTestCase):
     def test_booking_blocks_a_later_hold_on_the_same_window(self):
         quote = self.persist_quote()
         hold = self.hold(quote_ref=quote.quote_id)
-        self.kernel.confirm_from_hold(
+        confirm_through_payment(self.kernel,
             hold_id=hold.hold_id,
             quote_id=quote.quote_id,
             idempotency_key="idem_book_0001",
@@ -446,7 +447,7 @@ class TestNoDoubleBooking(KernelTestCase):
     def test_cancelled_booking_releases_the_slot(self):
         quote = self.persist_quote()
         hold = self.hold(quote_ref=quote.quote_id)
-        booking = self.kernel.confirm_from_hold(
+        booking = confirm_through_payment(self.kernel,
             hold_id=hold.hold_id,
             quote_id=quote.quote_id,
             idempotency_key="idem_book_0001",
@@ -462,7 +463,7 @@ class TestNoDoubleBooking(KernelTestCase):
     def test_occupancy_reports_holds_and_bookings(self):
         quote = self.persist_quote()
         hold = self.hold(quote_ref=quote.quote_id)
-        self.kernel.confirm_from_hold(
+        confirm_through_payment(self.kernel,
             hold_id=hold.hold_id,
             quote_id=quote.quote_id,
             idempotency_key="idem_book_0001",
@@ -483,7 +484,7 @@ class TestCommercialGate(KernelTestCase):
         hold = self.hold(quote_ref=quote.quote_id)
 
         with self.assertRaises(DomainError) as ctx:
-            self.kernel.confirm_from_hold(
+            self.kernel.reserve_from_hold(
                 hold_id=hold.hold_id,
                 quote_id=quote.quote_id,
                 idempotency_key="idem_gate_0001",
@@ -502,7 +503,7 @@ class TestCommercialGate(KernelTestCase):
         hold = self.hold(quote_ref=quote.quote_id)
 
         with self.assertRaises(DomainError) as ctx:
-            self.kernel.confirm_from_hold(
+            self.kernel.reserve_from_hold(
                 hold_id=hold.hold_id,
                 quote_id=quote.quote_id,
                 idempotency_key="idem_gate_0002",
@@ -516,7 +517,7 @@ class TestCommercialGate(KernelTestCase):
         quote = self.persist_quote()
         hold = self.hold(quote_ref=quote.quote_id)
 
-        booking = self.kernel.confirm_from_hold(
+        booking = confirm_through_payment(self.kernel,
             hold_id=hold.hold_id,
             quote_id=quote.quote_id,
             idempotency_key="idem_gate_0003",
@@ -630,7 +631,7 @@ class TestIdempotency(KernelTestCase):
         quote = self.persist_quote()
         hold = self.hold(quote_ref=quote.quote_id, key="shared_key_1")
         with self.assertRaises(DomainError) as ctx:
-            self.kernel.confirm_from_hold(
+            self.kernel.reserve_from_hold(
                 hold_id=hold.hold_id,
                 quote_id=quote.quote_id,
                 idempotency_key="shared_key_1",
@@ -642,11 +643,11 @@ class TestIdempotency(KernelTestCase):
     def test_confirmation_replay_returns_the_same_booking(self):
         quote = self.persist_quote()
         hold = self.hold(quote_ref=quote.quote_id)
-        first = self.kernel.confirm_from_hold(
+        first = self.kernel.reserve_from_hold(
             hold_id=hold.hold_id, quote_id=quote.quote_id,
             idempotency_key="idem_book_0001", command_id="cmd_0001", adults=2,
         )
-        replay = self.kernel.confirm_from_hold(
+        replay = self.kernel.reserve_from_hold(
             hold_id=hold.hold_id, quote_id=quote.quote_id,
             idempotency_key="idem_book_0001", command_id="cmd_0001", adults=2,
         )
@@ -668,7 +669,7 @@ class TestConfirmation(KernelTestCase):
             adults=2,
         )
         params.update(overrides)
-        return quote, self.kernel.confirm_from_hold(**params)
+        return quote, confirm_through_payment(self.kernel, **params)
 
     def test_confirmation_creates_a_confirmed_booking_with_quote_money(self):
         quote, booking = self.confirm()
@@ -676,7 +677,7 @@ class TestConfirmation(KernelTestCase):
         self.assertEqual(booking.total_minor, quote.total.minor_units)
         self.assertEqual(booking.deposit_due_minor + booking.balance_due_minor, booking.total_minor)
         row = self.kernel.get_booking(booking.booking_id)
-        self.assertEqual(row["payment_status"], "UNPAID")
+        self.assertEqual(row["payment_status"], "CLEARED_FULL")  # money arrived before CONFIRMED
         self.assertEqual(row["policy_fingerprint"], quote.policy_fingerprint)
         self.assertEqual(row["quote_ref"], quote.quote_id)
         self.assertIsNotNone(row["confirmed_at"])
@@ -690,17 +691,24 @@ class TestConfirmation(KernelTestCase):
     def test_confirmation_journals_the_state_change(self):
         quote, booking = self.confirm()
         events = self.kernel.state_events(booking.booking_id)
-        self.assertEqual(len(events), 1)
         self.assertEqual(
-            (events[0]["seq"], events[0]["from_state"], events[0]["to_state"], events[0]["command"]),
-            (1, "HOLD_ACTIVE", "CONFIRMED", "confirm_booking"),
+            [(e["seq"], e["from_state"], e["to_state"], e["command"]) for e in events],
+            [
+                (1, "HOLD_ACTIVE", "PAYMENT_PENDING", "reserve_booking"),
+                (2, "PAYMENT_PENDING", "PAID_IN_FULL", "mark_paid"),
+                (3, "PAID_IN_FULL", "CONFIRMED", "confirm_booking"),
+            ],
         )
         self.assertEqual(events[0]["command_id"], "cmd_0001")
 
     def test_confirmation_is_audited_and_the_chain_verifies(self):
         self.confirm()
         actions = [row["action"] for row in self.kernel.audit_trail()]
-        self.assertEqual(actions, ["hold.requested", "booking.confirmed"])
+        booking_actions = [a for a in actions if a.startswith(("hold.", "booking."))]
+        self.assertEqual(
+            booking_actions,
+            ["hold.requested", "booking.reserved", "booking.paid", "hold.converted", "booking.confirmed"],
+        )
         self.assertTrue(self.kernel.verify_audit_chain())
 
     def test_expired_hold_cannot_be_confirmed(self):
@@ -708,7 +716,7 @@ class TestConfirmation(KernelTestCase):
         hold = self.hold(quote_ref=quote.quote_id)
         self.kernel.clock.set("2026-09-21T13:00:00+00:00")
         with self.assertRaises(DomainError) as ctx:
-            self.kernel.confirm_from_hold(
+            self.kernel.reserve_from_hold(
                 hold_id=hold.hold_id, quote_id=quote.quote_id,
                 idempotency_key="idem_book_0001", command_id="cmd_0001", adults=2,
             )
@@ -730,7 +738,7 @@ class TestConfirmation(KernelTestCase):
         hold = self.hold(quote_ref=quote.quote_id, policy_version_id="policy_short")
         self.kernel.clock.set("2026-09-21T06:00:00+00:00")  # quote valid 1h, hold valid 24h
         with self.assertRaises(DomainError) as ctx:
-            self.kernel.confirm_from_hold(
+            self.kernel.reserve_from_hold(
                 hold_id=hold.hold_id, quote_id=quote.quote_id,
                 idempotency_key="idem_book_0001", command_id="cmd_0001", adults=2,
             )
@@ -740,7 +748,7 @@ class TestConfirmation(KernelTestCase):
         quote = self.persist_quote()
         hold = self.hold(quote_ref=quote.quote_id)
         with self.assertRaises(DomainError) as ctx:
-            self.kernel.confirm_from_hold(
+            self.kernel.reserve_from_hold(
                 hold_id=hold.hold_id, quote_id=quote.quote_id,
                 idempotency_key="idem_book_0001", command_id="cmd_0001", adults=7,
             )
@@ -750,30 +758,19 @@ class TestConfirmation(KernelTestCase):
         quote = self.persist_quote()
         hold = self.hold(quote_ref=quote.quote_id)
         with self.assertRaises(DomainError) as ctx:
-            self.kernel.confirm_from_hold(
+            self.kernel.reserve_from_hold(
                 hold_id=hold.hold_id, quote_id=quote.quote_id,
                 idempotency_key="idem_book_0001", command_id="cmd_0001", adults=0,
             )
         self.assertEqual(ctx.exception.code, "GUESTS_INVALID")
 
-    def test_payment_cannot_exceed_the_quote_total(self):
-        quote = self.persist_quote()
-        hold = self.hold(quote_ref=quote.quote_id)
-        with self.assertRaises(DomainError) as ctx:
-            self.kernel.confirm_from_hold(
-                hold_id=hold.hold_id, quote_id=quote.quote_id,
-                idempotency_key="idem_book_0001", command_id="cmd_0001", adults=2,
-                amount_paid_minor=quote.total.minor_units + 1,
-            )
-        self.assertEqual(ctx.exception.code, "PAYMENT_INVALID_AMOUNT")
-
     def test_payment_status_tracks_the_amount_paid(self):
+        """The paid amount is the booking's mirror of verified settlements, never a caller value."""
         quote = self.persist_quote()
         hold = self.hold(quote_ref=quote.quote_id)
-        booking = self.kernel.confirm_from_hold(
+        booking = confirm_through_payment(self.kernel,
             hold_id=hold.hold_id, quote_id=quote.quote_id,
             idempotency_key="idem_book_0001", command_id="cmd_0001", adults=2,
-            amount_paid_minor=quote.total.minor_units,
         )
         self.assertEqual(self.kernel.get_booking(booking.booking_id)["payment_status"], "CLEARED_FULL")
 
@@ -781,7 +778,7 @@ class TestConfirmation(KernelTestCase):
         quote = self.persist_quote(unit_id="unit_2", quote_id="quote_u2")
         hold = self.hold(unit_id="unit_1")
         with self.assertRaises(DomainError) as ctx:
-            self.kernel.confirm_from_hold(
+            self.kernel.reserve_from_hold(
                 hold_id=hold.hold_id, quote_id=quote.quote_id,
                 idempotency_key="idem_book_0001", command_id="cmd_0001", adults=2,
             )
@@ -790,7 +787,7 @@ class TestConfirmation(KernelTestCase):
     def test_unknown_quote_is_refused(self):
         hold = self.hold()
         with self.assertRaises(DomainError) as ctx:
-            self.kernel.confirm_from_hold(
+            self.kernel.reserve_from_hold(
                 hold_id=hold.hold_id, quote_id="quote_missing",
                 idempotency_key="idem_book_0001", command_id="cmd_0001", adults=2,
             )
@@ -853,7 +850,7 @@ class TestCancellation(KernelTestCase):
         super().setUp()
         quote = self.persist_quote()
         hold = self.hold(quote_ref=quote.quote_id)
-        self.booking = self.kernel.confirm_from_hold(
+        self.booking = confirm_through_payment(self.kernel,
             hold_id=hold.hold_id, quote_id=quote.quote_id,
             idempotency_key="idem_book_0001", command_id="cmd_0001", adults=2,
         )
@@ -866,7 +863,10 @@ class TestCancellation(KernelTestCase):
         self.assertEqual(row["status"], "CANCELLED")
         self.assertIsNotNone(row["cancelled_at"])
         events = self.kernel.state_events(self.booking.booking_id)
-        self.assertEqual([event["to_state"] for event in events], ["CONFIRMED", "CANCELLED"])
+        self.assertEqual(
+            [event["to_state"] for event in events],
+            ["PAYMENT_PENDING", "PAID_IN_FULL", "CONFIRMED", "CANCELLED"],
+        )
         self.assertEqual(events[-1]["reason"], "guest cancelled")
 
     def test_cancelling_twice_is_a_no_op(self):
@@ -876,7 +876,7 @@ class TestCancellation(KernelTestCase):
         self.kernel.cancel_booking(
             booking_id=self.booking.booking_id, reason="second", command_id="cmd_0003"
         )
-        self.assertEqual(len(self.kernel.state_events(self.booking.booking_id)), 2)
+        self.assertEqual(len(self.kernel.state_events(self.booking.booking_id)), 4)
 
     def test_completed_booking_cannot_be_cancelled(self):
         self.kernel.conn.execute(
@@ -935,7 +935,7 @@ class TestAppendOnlyGuarantees(KernelTestCase):
     def test_state_events_cannot_be_updated(self):
         quote = self.persist_quote()
         hold = self.hold(quote_ref=quote.quote_id)
-        booking = self.kernel.confirm_from_hold(
+        booking = confirm_through_payment(self.kernel,
             hold_id=hold.hold_id, quote_id=quote.quote_id,
             idempotency_key="idem_book_0001", command_id="cmd_0001", adults=2,
         )

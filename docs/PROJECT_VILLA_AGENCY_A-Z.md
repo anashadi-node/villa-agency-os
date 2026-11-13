@@ -26,7 +26,7 @@
 - Bagian VI — Kontrol: **20** Keamanan, privasi, audit · **21** Legal, pajak, kepatuhan · **22** Kualitas: tes, gerbang, CI
 - Bagian VII — Menjalankan: **23** Deployment, tenant, skalabilitas, backup
 - Bagian VIII — Status jujur: **24** Status hari ini · **25** Celah dan risiko terbuka · **26** Keputusan Owner dan langkah berikutnya
-- Lampiran: **A** Glosarium · **B** Indeks 68 ADR · **C** Indeks 58 modul `src/` · **D** Migrasi, skrip, target make · **E** Apa yang diverifikasi dan apa yang dikutip · **F** Ketidakkonsistenan yang ditemukan
+- Lampiran: **A** Glosarium · **B** Indeks 69 ADR · **C** Indeks 58 modul `src/` · **D** Migrasi, skrip, target make · **E** Apa yang diverifikasi dan apa yang dikutip · **F** Ketidakkonsistenan yang ditemukan
 
 ---
 
@@ -391,7 +391,7 @@ Keduanya **loopback saja**. Membuka dashboard ke internet butuh lapisan login ta
 | `src/` | Seluruh logika domain, Python stdlib saja | 58 modul `.py`, 52.924 baris (potret `2cb0696`) |
 | `src/schema/` | Skema SQLite + twin PostgreSQL + migrasi | `001_initial.sql`, `001_initial.pg.sql`, `002_pg_range_exclusions.pg.sql`, migrasi `003`–`008`, `010`–`017` (tidak ada `009`) |
 | `tests/` | Uji otomatis (pytest + subtests) | **104** berkas `test_*.py` (57.995 baris) + `conftest.py` + `seed_support.py` → seluruh `.py` di `tests/`: **106 berkas / 58.235 baris**. Diukur 2026-11-13; pada potret `2cb0696` terukur 102 / 57.649 (seluruh `.py`: 104 / 57.881) |
-| `docs/` | Dokumen kerja, ADR, keamanan, laporan desain | 29 berkas `.md` di akar `docs/` (42 entri termasuk HTML/PDF dan subfolder), `docs/adr/` (68 ADR), `docs/security/` |
+| `docs/` | Dokumen kerja, ADR, keamanan, laporan desain | 29 berkas `.md` di akar `docs/` (42 entri termasuk HTML/PDF dan subfolder), `docs/adr/` (69 ADR), `docs/security/` |
 | `scripts/` | CLI operator, gerbang, utilitas | 22 berkas |
 | `templates/` | HTML dashboard (`base`, `error`, dan halaman), `templates/marketing/` (9 berkas), `templates/messages/id-ID.json` (templat pesan) | 15 `.html` dashboard |
 | `deploy/systemd-user/` | Dua unit layanan | 2 berkas |
@@ -562,7 +562,9 @@ Urutan evaluasi: `evidence` → `reason` → `approval` (bukti dulu: pergerakan 
 
 | Perintah | Dari → ke | Oleh |
 |---|---|---|
-| `confirm_from_hold` | `HOLD_ACTIVE` → `CONFIRMED` | reservation, setelah bukti blok villa (ADR-0033) |
+| `reserve_from_hold` | `HOLD_ACTIVE` → `PAYMENT_PENDING` | reservation (hold tetap memegang slot) |
+| `mark_paid` | `PAYMENT_PENDING` → `DEPOSIT_PAID`/`PAID_IN_FULL` | finance, dengan pembayaran `SUCCEEDED` |
+| `confirm_booking` | `DEPOSIT_PAID`/`PAID_IN_FULL` → `CONFIRMED` | reservation, dengan bukti blok villa A/B sesudah reservasi (ADR-0033; audit 2026-11-13 K2 — `confirm_from_hold` dipensiunkan) |
 | `prepare_arrival` | `CONFIRMED` → `PRE_ARRIVAL` | tim reservasi |
 | `check_in` | `PRE_ARRIVAL` → `IN_STAY` | reservasi/greeting saat tamu tiba |
 | `complete_stay` | `IN_STAY` → `COMPLETED` | tim operasi |
@@ -1412,7 +1414,7 @@ Daftar ini menggabungkan Status-Gap (potret), temuan hari ini, dan hasil membang
 | `UNKNOWN` | presisi geo/ketersediaan tanpa klaim — tidak boleh dijual atau ditampilkan sebagai pasti |
 | Potret | isi dokumen sumber yang bertanggal dan bisa sudah usang |
 
-## Lampiran B — Indeks 68 ADR
+## Lampiran B — Indeks 69 ADR
 
 Semua 68 berkas berstatus *Accepted* (35 ditulis `Accepted`, 32 `ACCEPTED`, 1 `accepted`; dijaga `tests/test_adr_status.py`). Dibangkitkan dari judul tiap berkas.
 
@@ -1485,6 +1487,8 @@ Semua 68 berkas berstatus *Accepted* (35 ditulis `Accepted`, 32 `ACCEPTED`, 1 `a
 | 0065 | Copy villa publik: menggambarkan wilayah, bukan properti |
 | 0066 | Dataset demo di-anchor saat seed, bukan tanggal kalender beku |
 | 0067 | Alamat pengunjung dipercaya hanya dari hop yang ditulis proxy sendiri |
+| 0068 | Lokasi villa: presisi, sumber, dan satu aturan untuk dua penulis |
+| 0069 | `CONFIRMED` hanya setelah pembayaran terverifikasi dan bukti blok villa (PROPOSED, audit K2) |
 
 ## Lampiran C — Indeks 58 modul `src/`
 
