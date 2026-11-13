@@ -25,6 +25,7 @@ Fail-closed rules
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 from datetime import timedelta
 from typing import Any, Mapping, Optional, Sequence
 
@@ -33,6 +34,7 @@ from primitives import (
     DomainError,
     Money,
     canonical_json,
+    decimal_of,
     nights_between,
     parse_iso_date,
     require_ref,
@@ -430,7 +432,8 @@ def calculate_quote(
     2. price every night from the winning season,
     3. add extra-guest, cleaning and extra line fees,
     4. apply the length-of-stay discount to room revenue, then the requested discount,
-    5. service fee on the discounted subtotal, tax (PBJT) on subtotal + service fee,
+    5. service fee on the discounted subtotal, tax (PBJT) on the base the policy names
+       (default subtotal + service fee), backed out instead when rates include it,
     6. split the deposit; ``deposit_due + balance_due == total`` exactly.
     """
     require_ref(quote_id, "quote_id")
@@ -463,6 +466,13 @@ def calculate_quote(
         )
     nights = request.nights
     night_dates = request.night_dates()
+    blocked = sorted(set(night_dates) & set(rules.blackout_dates))
+    if blocked:
+        raise DomainError(
+            "the stay covers a date the policy closes to sale",
+            code="BLACKOUT_DATE",
+            dates=blocked,
+        )
     required_min = max(rules.min_stay_nights, rate_card.min_stay_over(night_dates))
     if nights < required_min:
         raise DomainError(
@@ -529,9 +539,31 @@ def calculate_quote(
             code="DISCOUNT_EXCEEDS_SUBTOTAL",
             subtotal_minor=subtotal.minor_units,
         )
-    service_fee = subtotal.pct(rules.service_fee_pct)
-    tax = (subtotal + service_fee).pct(rules.tax_pbjt_pct)
-    total = subtotal + service_fee + tax
+    # Tax rules (POLICY_MATRIX §Pajak & fee; audit 2026-11-13, T1). The default —
+    # PBJT on subtotal + service fee, rates exclusive of tax — is the arithmetic
+    # every policy was priced with before these keys existed, so no old price moves.
+    # ``tax_included_in_rate``: the subtotal already holds PBJT, which is backed out
+    # once (rounded once) instead of charged twice; the service fee is then taken on
+    # the net amount, and only tax on the service fee (when the base includes it) is
+    # added on top.
+    tax_ratio = decimal_of(rules.tax_pbjt_pct) / Decimal(100)
+    if rules.tax_included_in_rate:
+        net_subtotal = subtotal.scale(Decimal(1) / (Decimal(1) + tax_ratio))
+        included_tax = subtotal - net_subtotal
+        service_fee = net_subtotal.pct(rules.service_fee_pct)
+        service_tax = (
+            service_fee.pct(rules.tax_pbjt_pct)
+            if rules.tax_applies_to == "subtotal_plus_service"
+            else Money.zero(currency)
+        )
+        tax = included_tax + service_tax
+        total = subtotal + service_fee + service_tax
+        warnings.append("TAX_INCLUDED_IN_RATE")
+    else:
+        service_fee = subtotal.pct(rules.service_fee_pct)
+        tax_base = subtotal + service_fee if rules.tax_applies_to == "subtotal_plus_service" else subtotal
+        tax = tax_base.pct(rules.tax_pbjt_pct)
+        total = subtotal + service_fee + tax
 
     # 6. deposit split — exact by construction
     deposit_due = total.pct(rules.deposit_pct)
@@ -553,6 +585,7 @@ def calculate_quote(
         security_deposit=rules.security_deposit,
         service_fee_pct=rules.service_fee_pct,
         tax_pct=rules.tax_pbjt_pct,
+        tax_included=rules.tax_included_in_rate,
     )
 
     fingerprint = _fingerprint(
@@ -626,6 +659,7 @@ def _build_lines(
     security_deposit: Money,
     service_fee_pct: str,
     tax_pct: str,
+    tax_included: bool = False,
 ) -> list[dict[str, Any]]:
     """Ordered line items: nights first, then fees, discounts, then totals."""
     lines: list[dict[str, Any]] = []
@@ -664,7 +698,12 @@ def _build_lines(
     lines.append(
         _line(currency, "service_fee", f"Service fee {service_fee_pct}%", service_fee)
     )
-    lines.append(_line(currency, "tax_pbjt", f"PBJT {tax_pct}%", tax))
+    if tax_included:
+        lines.append(
+            _line(currency, "tax_pbjt", f"PBJT {tax_pct}% (included in rate)", tax, included=True)
+        )
+    else:
+        lines.append(_line(currency, "tax_pbjt", f"PBJT {tax_pct}%", tax))
     lines.append(_line(currency, "total", "Total", total))
     if security_deposit.is_positive:
         lines.append(

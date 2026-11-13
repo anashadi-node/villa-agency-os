@@ -52,8 +52,8 @@ Tier yang berlaku = **tier pertama yang `days_before_arrival >= days_before_arri
 | Field | Default | Guardrail |
 |---|---|---|
 | `no_show_penalty_pct` | 100 | 0–100 |
-| `force_majeure_clause` | teks wajib | harus menyebut minimal 1 skenario lokal + mekanisme refund/kredit |
-| `blackout_dates` | [] | daftar tanggal tertutup; booking pada tanggal ini ditolak (`BLACKOUT_DATE`) |
+| `force_majeure_clause` | teks wajib | harus menyebut minimal 1 skenario lokal + mekanisme refund/kredit — **belum ditegakkan kode** (audit 2026-11-13, T1) |
+| `blackout_dates` | [] | daftar tanggal tertutup; booking pada tanggal ini ditolak (`BLACKOUT_DATE`) — payload policy, ditegakkan `quote_calculator` sejak audit 2026-11-13 |
 
 ## 4. Harga & biaya
 
@@ -76,6 +76,11 @@ Tier yang berlaku = **tier pertama yang `days_before_arrival >= days_before_arri
 | `service_fee_pct` | 10 | 0–25 |
 | `tax_included_in_rate` | false | jika true, PBJT dikeluarkan (dihitung mundur) dari tarif agar tidak dobel |
 
+Sejak audit 2026-11-13 (T1), `tax_applies_to` dan `tax_included_in_rate` adalah kunci
+opsional di `payload` policy dan dipakai `quote_calculator`. Policy yang tidak menyebutnya
+memakai default di atas, sehingga harga dan fingerprint lama tidak bergeser. Contoh
+angka emas: `tests/test_audit_t1_tax_rules.py`.
+
 > **Jangan hard-code tarif PBJT.** Bali dan Yogyakarta, bahkan antar
 > kabupaten/kota, berbeda. Tarif disimpan per policy dan wajib punya dasar hukum bertanggal.
 
@@ -87,7 +92,7 @@ Tier yang berlaku = **tier pertama yang `days_before_arrival >= days_before_arri
 | `availability_freshness_B_seconds` | 86400 (24 j) | ≤ 172800 | tulisan resmi manajer properti |
 | `availability_freshness_C_seconds` | 172800 (48 j) | ≤ 604800 | iCal/OTA publik (indikatif) |
 | `confirm_requires_level` | `A_or_B` | tidak boleh `C`/`D` | level yang boleh mengonfirmasi |
-| `channel_quota` | {} | — | alokasi unit per kanal |
+| `channel_quota` | {} | — | alokasi unit per kanal — **belum ditegakkan kode** (audit 2026-11-13, T1) |
 
 Level bukti (dipakai konsisten di kode, dokumen, dan UI):
 

@@ -24,7 +24,7 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Iterable, Mapping, NoReturn, Optional, Sequence
 
@@ -218,6 +218,20 @@ class PolicyRules:
         return decimal_of(self.tax_pbjt_pct) / Decimal(100)
 
     @property
+    def tax_applies_to(self) -> str:
+        """``subtotal`` or ``subtotal_plus_service`` (POLICY_MATRIX; default the latter)."""
+        return str(self.payload.get("tax_applies_to", DEFAULT_TAX_APPLIES_TO))
+
+    @property
+    def tax_included_in_rate(self) -> bool:
+        """True when published rates already contain PBJT (it is then backed out)."""
+        return bool(self.payload.get("tax_included_in_rate", False))
+
+    @property
+    def blackout_dates(self) -> tuple[str, ...]:
+        return tuple(self.payload.get("blackout_dates", ()))
+
+    @property
     def max_discount_ratio(self) -> Decimal:
         return decimal_of(self.max_discount_pct) / Decimal(100)
 
@@ -372,6 +386,7 @@ def _validate_payload(payload: Mapping[str, Any]) -> Mapping[str, Any]:
             field_name="cancellation.refund_pct",
             bounds=("0", "100"),
         )
+    _validate_optional_tax_keys(payload)
     return _freeze({key: payload[key] for key in sorted(payload)})
 
 
@@ -416,7 +431,56 @@ _ALLOWED_PAYLOAD_KEYS: tuple[str, ...] = (
     "checkin_time",
     "checkout_time",
     "notes",
+    "tax_applies_to",
+    "tax_included_in_rate",
+    "blackout_dates",
 )
+
+#: Optional tax rules (POLICY_MATRIX §Pajak & fee; audit 2026-11-13, T1). Absent keys
+#: keep the behaviour every existing policy was priced with, so no fingerprint and
+#: no published price moves until a tenant publishes a new version that names them.
+TAX_APPLIES_TO_VALUES: tuple[str, ...] = ("subtotal", "subtotal_plus_service")
+DEFAULT_TAX_APPLIES_TO = "subtotal_plus_service"
+_ISO_DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+
+
+def _validate_optional_tax_keys(payload: Mapping[str, Any]) -> None:
+    applies_to = payload.get("tax_applies_to", DEFAULT_TAX_APPLIES_TO)
+    if applies_to not in TAX_APPLIES_TO_VALUES:
+        raise DomainError(
+            f"payload.tax_applies_to must be one of {list(TAX_APPLIES_TO_VALUES)}",
+            code="POLICY_PAYLOAD_INVALID",
+            field="tax_applies_to",
+        )
+    included = payload.get("tax_included_in_rate", False)
+    if not isinstance(included, bool):
+        raise DomainError(
+            "payload.tax_included_in_rate must be true or false",
+            code="POLICY_PAYLOAD_INVALID",
+            field="tax_included_in_rate",
+        )
+    blackout = payload.get("blackout_dates", [])
+    if isinstance(blackout, (str, bytes)) or not isinstance(blackout, Sequence):
+        raise DomainError(
+            "payload.blackout_dates must be a list of YYYY-MM-DD dates",
+            code="POLICY_PAYLOAD_INVALID",
+            field="blackout_dates",
+        )
+    for day in blackout:
+        if not isinstance(day, str) or not _ISO_DATE_RE.match(day):
+            raise DomainError(
+                "payload.blackout_dates must be a list of YYYY-MM-DD dates",
+                code="POLICY_PAYLOAD_INVALID",
+                field="blackout_dates",
+            )
+        try:
+            date.fromisoformat(day)
+        except ValueError as exc:
+            raise DomainError(
+                f"payload.blackout_dates holds an impossible date: {day}",
+                code="POLICY_PAYLOAD_INVALID",
+                field="blackout_dates",
+            ) from exc
 
 
 # --------------------------------------------------------------------------- #
