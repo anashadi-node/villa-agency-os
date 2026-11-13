@@ -91,11 +91,19 @@ def make_request(check_in="2026-10-01", check_out="2026-10-03", **overrides):
 
 
 class KernelTestCase(unittest.TestCase):
-    """Shared fixture: one property, two units, one policy, one rate card."""
+    """Shared fixture: one property, two units, one policy, one rate card.
+
+    ``db_path`` is a class attribute so a subclass can point the same fixture at a
+    file-backed database. A file is what makes a *second writer* possible: two
+    connections to one database are the only way to exercise the overlap guarantee
+    under real concurrency (``:memory:`` is private per connection).
+    """
+
+    db_path: str = ":memory:"
 
     def setUp(self):
         self.kernel = RK.ReservationKernel.open(
-            ":memory:",
+            self.db_path,
             clock=FrozenClock.at(NOW),
             ids=__import__("primitives").IdFactory(deterministic=True, seed="t"),
         )
