@@ -1050,12 +1050,15 @@ class TestDataClass(DocumentTestBase):
         self.assert_no_trace(before)
 
     def test_a_card_like_run_redact_misses_is_still_refused(self):
-        self.assertEqual(P.redact(CARD_LIKE), CARD_LIKE)  # redact alone lets this through
+        # A Luhn-invalid card-shaped run is left alone by ``redact`` (audit 2026-11-13
+        # taught it Luhn-valid grouped cards), so the document gate must still refuse it.
+        card_like_invalid = "4111 1111 1111 1112"
+        self.assertEqual(P.redact(card_like_invalid), card_like_invalid)
         before = self.trace()
         self.refuse(
             DOC.DOCUMENT_IDENTIFIER_LEAK,
             self.generate,
-            subject={"booking_id": "book_1", "notes": CARD_LIKE},
+            subject={"booking_id": "book_1", "notes": card_like_invalid},
         )
         self.assert_no_trace(before)
 

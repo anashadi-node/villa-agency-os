@@ -1452,11 +1452,18 @@ class TestGateOutbound(GateTestCase):
                 self.assertNotIn("+6281234567890", str(field.value))
 
     def test_an_unredactable_value_never_leaves(self):
+        # A card-shaped run that fails Luhn is not masked by ``redact`` (amounts and
+        # references must survive it), so the gate's own pattern still has to stop it.
         decision = gate_outbound(
-            {field.name: field for field in apply_redaction({"card": self.classified("card", "P2", "4111 1111 1111 1111")})},
+            {field.name: field for field in apply_redaction({"card": self.classified("card", "P2", "4111 1111 1111 1112")})},
             destination="llm",
         )
         self.assertDenied(decision, "REDACTION_NOT_APPLIED", GATE_CLASSIFICATION)
+
+    def test_a_grouped_card_number_is_now_redacted_before_it_leaves(self):
+        # Audit 2026-11-13 (K1): ``redact`` masks a Luhn-valid card typed with spaces.
+        fields = apply_redaction({"card": self.classified("card", "P2", "4111 1111 1111 1111")})
+        self.assertNotIn("4111", fields[0].value)
 
     def test_a_non_string_p2_value_cannot_be_redacted(self):
         decision = gate_outbound(
