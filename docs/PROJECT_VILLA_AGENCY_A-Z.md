@@ -54,7 +54,7 @@ ia mengurus tiga hal yang paling sering menimbulkan kerugian di bisnis villa —
 | Migrasi lanjutan | 002 (PG) dan 003–008, 010–017 (tidak ada 009) | `ls src/schema` |
 | Halaman dashboard | 14 entri `PAGE_ROLES` (12 halaman navigasi + `case_detail` + `error`); 6 peran | `PAGE_ROLES` di `src/dashboard.py` |
 | Rute situs publik | `/`, `/villas`, `/villas/<id>`, `/destinations/bali`, `/destinations/yogyakarta`, `/owners`, `/inquiry`, `/favicon.ico` | `src/marketing_site.py` |
-| ADR | 70 berkas (`0001`–`0070`; 68 Accepted + 2 Proposed) | `ls docs/adr` |
+| ADR | 70 berkas (`0001`–`0070`; 69 Accepted + 1 Proposed) | `ls docs/adr` |
 | Tes terakhir | `make check` rc=0: **4.007 passed, 4 skipped, 4.016 subtests passed** (309,84 s) | log gerbang 2026-11-13, pohon `master` = `95ce7d3` |
 | Gerbang | SECRET-SCAN 0/402, UNSAFE-SCAN 0/402, PII-SCAN 0/377, PRE-DEPLOY GATE PASS | `make check` |
 | Properti di DB hidup | 3, semuanya `geo_precision=UNKNOWN` | query baca-saja 2026-11-12 |
@@ -1416,7 +1416,7 @@ Daftar ini menggabungkan Status-Gap (potret), temuan hari ini, dan hasil membang
 
 ## Lampiran B — Indeks 69 ADR
 
-68 berkas berstatus *Accepted* dan 2 berstatus *Proposed* — ADR-0069 (`CONFIRMED` menunggu pembayaran terverifikasi, temuan K2) dan ADR-0070 (rupiah dengan rujukan USD); kedua status itu dibaca `tests/test_adr_status.py` dari tiga ejaan yang pernah dipakai repo. Dibangkitkan dari judul tiap berkas.
+69 berkas berstatus *Accepted* dan 1 berstatus *Proposed* — ADR-0069 (`CONFIRMED` menunggu pembayaran terverifikasi, temuan K2). ADR-0070 (rupiah dengan rujukan USD) disetujui owner 2026-11-13; kedua status itu dibaca `tests/test_adr_status.py` dari tiga ejaan yang pernah dipakai repo. Dibangkitkan dari judul tiap berkas.
 
 | No. | Judul |
 |---|---|
