@@ -44,7 +44,7 @@ hr { border: none; border-top: 0.5pt solid #c9cfcb; margin: 6mm 0; }
   <h1>Project Villa Agency — Dokumen Update Lengkap A–Z</h1>
   <div class="sub">Reservation &amp; Operations Control Plane</div>
   <div class="meta">Dokumen kerja internal · dirender dari
-  <code>docs/PROJECT_VILLA_AGENCY_A-Z.md</code> · 139,851 karakter</div>
+  <code>docs/PROJECT_VILLA_AGENCY_A-Z.md</code> · 141,996 karakter</div>
 </section>
 <p><strong>Nama sistem:</strong> Villa Agency OS (Villa Management &amp; Agency)<br />
 <strong>Tanggal dokumen:</strong> 12 November 2026 · <strong>Pemilik:</strong> Owner (Mas Anas) · <strong>Disusun oleh:</strong> divisi Villa Management &amp; Agency<br />
@@ -2831,11 +2831,55 @@ python3 src/marketing_site.py --db /tmp/demo/villa.db --dump /tmp/demo/site   # 
 <p><strong>Tidak diklaim:</strong> dokumen ini tidak menyatakan sistem "comply" dengan regulasi tertentu. Ia hanya menunjukkan di mana kontrol dan bukti disimpan.</p>
 <h2 id="22-kualitas-tes-gerbang-dan-bukti">22. Kualitas: tes, gerbang, dan bukti</h2>
 <h3 id="221-gerbang-make-check">22.1 Gerbang <code>make check</code></h3>
-<p>Berjalan pada <strong>interpreter produksi</strong> <code>/usr/bin/python3</code> (bukan <code>python3</code> venv yang kebetulan pertama di PATH — komentar Makefile menjelaskan: di mesin ini venv = Python 3.11.16/SQLite 3.53.1, unit systemd = 3.12.3/SQLite 3.45.1; tes yang bergantung interpreter dulu hijau berbulan-bulan sambil menguji Python yang tak dipakai produksi). Target <code>check</code> (Makefile) = <code>interpreter syntax lint test secret-scan unsafe-scan schema-parity</code>, lalu mencetak <code>=== PRE-DEPLOY GATE: PASS ===</code>. <code>schema-parity</code> memeriksa bahwa twin PostgreSQL sama dengan hasil regenerasi dari sumber SQLite. Standar bahasa dijaga oleh tes pytest (<code>tests/test_language_standard.py</code>), bukan target make sendiri. <code>scripts/preflight.py</code> (verdict GO/NO-GO terhadap DB, anker, dan keputusan Go-Live) adalah langkah <strong>terpisah</strong> pada checklist go-live, bukan bagian <code>make check</code>. Sengaja bukan target make: menerbitkan allowance §56, menetapkan policy, menerapkan migrasi — itu tindakan Owner/ops.</p>
+<p>Berjalan pada <strong>interpreter produksi</strong> <code>/usr/bin/python3</code> (bukan <code>python3</code> venv yang kebetulan pertama di PATH — komentar Makefile menjelaskan: di mesin ini venv = Python 3.11.16/SQLite 3.53.1, unit systemd = 3.12.3/SQLite 3.45.1; tes yang bergantung interpreter dulu hijau berbulan-bulan sambil menguji Python yang tak dipakai produksi). Target <code>check</code> (Makefile) = <code>interpreter syntax lint test secret-scan unsafe-scan pii-scan schema-parity</code>, lalu mencetak <code>=== PRE-DEPLOY GATE: PASS ===</code>. <code>schema-parity</code> memeriksa bahwa twin PostgreSQL sama dengan hasil regenerasi dari sumber SQLite. Standar bahasa dijaga oleh tes pytest (<code>tests/test_language_standard.py</code>), bukan target make sendiri. <code>scripts/preflight.py</code> (verdict GO/NO-GO terhadap DB, anker, dan keputusan Go-Live) adalah langkah <strong>terpisah</strong> pada checklist go-live, bukan bagian <code>make check</code>. Sengaja bukan target make: menerbitkan allowance §56, menetapkan policy, menerapkan migrasi — itu tindakan Owner/ops.</p>
 <p>Catatan desain gerbang: <code>-q</code> sudah ada di <code>pytest.ini</code>; menambah satu lagi (<code>-qq</code>) membuat pytest 9 tidak mencetak baris hitungan, dan gerbang yang tak bisa menyebut jumlah tes akan tetap "PASS" meski berkas tes diam-diam tak terkumpul.</p>
-<h3 id="222-hasil-terakhir-2026-11-12-setelah-komit-5647b23">22.2 Hasil terakhir (2026-11-12, setelah komit <code>5647b23</code>)</h3>
-<p><code>make check</code> rc=0 · <strong>3.875 passed, 4 skipped, 4.008 subtests passed</strong> (305,67 s) · SECRET-SCAN PASS (0 temuan / 377 berkas) · UNSAFE-SCAN PASS (0/377) · baris penutup <code>PRE-DEPLOY GATE: PASS</code> — gerbang dijalankan ulang 2026-11-13 pada commit <code>8280c93</code>, pohon yang sudah memuat dokumen A–Z, ADR-0068, migrasi geo 017, <code>src/schema/README.md</code>, dan <code>tests/test_schema_adr_citations.py</code>; interpreter gerbang Python 3.12.3 / SQLite 3.45.1.</p>
-<h3 id="223-standar-bahasa">22.3 Standar bahasa</h3>
+<h3 id="222-hasil-terakhir-2026-11-13">22.2 Hasil terakhir (2026-11-13)</h3>
+<p><code>make check</code> rc=0 · <strong>3.894 passed, 4 skipped, 4.008 subtests passed</strong> (303,65 s) · SECRET-SCAN PASS (0 temuan / 386 berkas) · UNSAFE-SCAN PASS (0/386) · PII-SCAN PASS (0 temuan / 361 berkas teks) · <code>schema-parity</code> OK · baris penutup <code>PRE-DEPLOY GATE: PASS</code> — dijalankan pada pohon yang memuat dokumen A–Z, ADR-0068, migrasi geo 017, <code>scripts/pii_scan.py</code>, dan <code>tests/test_pii_scan.py</code>; interpreter gerbang Python 3.12.3 / SQLite 3.45.1. Sebelum gerbang PII dipasang, run yang sama mencatat 3.882 passed (komit <code>8280c93</code>).</p>
+<h3 id="223-gerbang-pii-make-pii-scan">22.3 Gerbang PII (<code>make pii-scan</code>)</h3>
+<p>Repo ini <strong>publik</strong>, jadi "bebas kredensial" belum cukup: kredensial dan data tamu adalah dua kelas
+risiko berbeda. <code>scripts/pii_scan.py</code> menutup celah itu dan berjalan di dalam <code>make check</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Kelas</th>
+<th>Pola yang dicari</th>
+<th>Boleh muncul bila</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>e-mail</td>
+<td>alamat di luar domain dokumentasi (<code>example.com</code>, <code>example.org</code>, <code>.invalid</code>, <code>localhost</code>)</td>
+<td>placeholder terdokumentasi</td>
+</tr>
+<tr>
+<td>telepon</td>
+<td>nomor Indonesia 10–14 digit (<code>08…</code>, <code>628…</code>, <code>+62 8…</code>)</td>
+<td>nomor test yang terdaftar di <code>PLACEHOLDER_PHONES</code></td>
+</tr>
+<tr>
+<td>identitas</td>
+<td>deret 16 digit (NIK)</td>
+<td>placeholder terdokumentasi</td>
+</tr>
+<tr>
+<td>kartu</td>
+<td>deret 13–19 digit yang lolos Luhn</td>
+<td>nomor test card (<code>4111…</code>, <code>4242…</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>Sifat gerbang: <strong>fail-closed</strong> — temuan apa pun → <code>rc=1</code>, satu baris per temuan (<code>berkas:baris</code>).
+Allowlist bersifat per nilai dan beralasan, bukan pelonggaran regex senyap, supaya setiap penambahan
+terlihat saat review. Gerbang ini punya <strong>kontrol positif dan negatif</strong> di
+<code>tests/test_pii_scan.py</code> (12 uji): nilai sintetis yang ditanam harus tertangkap, sedangkan
+placeholder, domain reserved, koordinat SVG, dan potongan hex di dalam digest harus tetap bersih.
+Pemindai yang selalu PASS tidak membuktikan apa pun; tesnya menuntut pemindai bisa gagal.</p>
+<p><strong>Batas cakupan yang harus dibaca bersama kata PASS:</strong> hanya <strong>berkas teks</strong> yang dipindai.
+Biner, PDF, gambar, serta atribut non-pola — nama orang, alamat, nomor paspor, tanggal lahir —
+<strong>tidak</strong> tercakup dan tetap bergantung pada review manusia sebelum publikasi. Gate ini menaikkan
+biaya kesalahan, bukan menggantikan kehati-hatian.</p>
+<h3 id="224-standar-bahasa">22.4 Standar bahasa</h3>
 <p><code>tests/test_language_standard.py</code> menjaga anggaran string non-Inggris per berkas; teks CLI/help/galat di <code>src/dashboard.py</code> berbahasa Inggris (anggaran 156). Salinan publik situs = en-US (ADR-0011).</p>
 <h3 id="224-rentang-interpreter-yang-diuji-scaling_and_upgrade-62-potret-2026-10-25">22.4 Rentang interpreter yang diuji (<code>SCALING_AND_UPGRADE</code> §6.2, potret 2026-10-25)</h3>
 <p>3.11.16 → seluruh suite lulus · 3.12.3 → seluruh suite lulus · 3.14.9 → <strong>58/58 modul <code>src/</code> berhasil diimpor</strong> (diukur ulang 2026-11-13), suite belum dijalankan di bawah 3.14.9. Aturan naik versi: jalankan <code>make check</code> dengan interpreter baru; bukti = lulus, bukan asumsi. Tidak ada <code>pip install</code> di produksi.</p>
@@ -3265,9 +3309,9 @@ python3 src/marketing_site.py --db /tmp/demo/villa.db --dump /tmp/demo/site   # 
 <td>tak ada label "ADR-0061" pada konteks geo</td>
 </tr>
 <tr>
-<td>4</td>
-<td>Audit ulang kategori tes §19 terhadap 103 berkas</td>
-<td>tabel kategori → berkas</td>
+<td>4 ✅</td>
+<td>Audit ulang kategori tes §19 terhadap 105 berkas <code>test_*.py</code> — <strong>selesai 2026-11-13</strong>; dihitung per badan fungsi uji, bukan per nama berkas</td>
+<td>tabel kategori → berkas: injeksi-sebagai-data 2 berkas/6 uji, penolakan tool 7/15, tenant-IDOR 5/11, handoff 10/43, konkurensi 1/7, privasi-PII 1/12; <code>grounding</code> 16/86 dan <code>retry</code>/<code>idempoten</code>/<code>replay</code> 42/302 hanya batas atas (token longgar). Rincian di §3.4 <code>STATUS_AND_GAP_MAP.md</code> dan Lampiran G</td>
 </tr>
 <tr>
 <td>5</td>
@@ -3946,8 +3990,8 @@ python3 src/marketing_site.py --db /tmp/demo/villa.db --dump /tmp/demo/site   # 
 </table>
 <h2 id="lampiran-d-migrasi-skrip-dan-target-make">Lampiran D — Migrasi, skrip, dan target make</h2>
 <p><strong>Berkas <code>src/schema/</code>:</strong> <code>001_initial.sql</code> (+ <code>.pg.sql</code>), <code>002_pg_range_exclusions.pg.sql</code> (khusus PostgreSQL), <code>003_policy_catalogue_and_deny_registry</code>, <code>004_currency_aware_margin_floor</code>, <code>005_fx_rate_max_age_hours</code>, <code>006_outbox_and_integration_inbox</code>, <code>007_exception_fingerprints</code>, <code>008_agency_settings</code>, <code>010_agency_roles</code>, <code>011_ai_ladder</code>, <code>012_reservation_service</code>, <code>013_deposit_resolutions</code>, <code>014_supplier_settlements</code>, <code>015_shadow_bars</code>, <code>016_guest_preferred_currency</code>, <code>017_property_geo</code>. <strong>Nomor 009 tidak ada</strong> sebagai berkas — dijelaskan 2026-11-13 di <code>src/schema/README.md</code>: riwayat git membuktikan <code>009_*.sql</code> tidak pernah ada dan tidak ada migrasi yang dihapus, jadi nomor itu dilompati sejak awal dan tidak boleh dipakai ulang (lihat Lampiran F butir 9).</p>
-<p><strong><code>scripts/</code> (22 berkas + <code>__pycache__</code>):</strong> <code>access_matrix_probe</code>, <code>ai_mode</code>, <code>apply_migrations</code>, <code>audit_structure</code>, <code>build_deliverables</code>, <code>closure_facts</code>, <code>generate_pg_twin</code>, <code>go_live_smoke</code>, <code>import_villas</code>, <code>manage_roles</code>, <code>perf_probe</code>, <code>phishing_drill_score</code>, <code>preflight</code>, <code>publish_ai_allowance</code>, <code>publish_anchor</code>, <code>publish_policy_value</code>, <code>refresh_fx_rate</code>, <code>reservation_kpi</code>, <code>secret_scan.sh</code>, <code>seed_demo</code>, <code>session_token</code>, <code>unsafe_config_scan.sh</code>.</p>
-<p><strong>Target make:</strong> <code>help test syntax secret-scan unsafe-scan schema-parity pg-twin check interpreter lint anchor-publish anchor-verify allowance-status policy-status migrate-check audit-structure</code>.</p>
+<p><strong><code>scripts/</code> (24 berkas + <code>__pycache__</code>):</strong> <code>access_matrix_probe</code>, <code>ai_mode</code>, <code>apply_migrations</code>, <code>audit_structure</code>, <code>build_deliverables</code>, <code>closure_facts</code>, <code>generate_pg_twin</code>, <code>go_live_smoke</code>, <code>import_villas</code>, <code>manage_roles</code>, <code>perf_probe</code>, <code>phishing_drill_score</code>, <code>pii_scan</code>, <code>preflight</code>, <code>publish_ai_allowance</code>, <code>publish_anchor</code>, <code>publish_policy_value</code>, <code>refresh_fx_rate</code>, <code>render_az_doc</code>, <code>reservation_kpi</code>, <code>secret_scan.sh</code>, <code>seed_demo</code>, <code>session_token</code>, <code>unsafe_config_scan.sh</code>.</p>
+<p><strong>Target make:</strong> <code>test verify syntax lint secret-scan unsafe-scan pii-scan check interpreter schema-parity pg-twin anchor-publish anchor-verify allowance-status policy-status migrate-check render-az audit-structure</code> (daftar <code>.PHONY</code> di <code>Makefile</code>; <code>make help</code> mencetak deskripsinya).</p>
 <h2 id="lampiran-e-apa-yang-diverifikasi-dan-apa-yang-hanya-dikutip">Lampiran E — Apa yang diverifikasi dan apa yang hanya dikutip</h2>
 <p><strong>Dihitung/dibaca ulang dari repo/DB pada 2026-11-12 (dan 2026-11-13 untuk: 58/58 modul <code>src/</code> berhasil diimpor pada 3.14.9; isi <code>src/schema/README.md</code>; riwayat <code>git log --all -- src/schema/009*</code> yang kosong; byte vs karakter <code>STATUS_AND_GAP_MAP.md</code>; dan, diukur ulang 2026-11-13: 72 tabel/62 indeks/64 trigger/</strong>106 enum<strong>/77 <code>INSERT</code> seed pada model skema, 183 indeks DB hidup (122 <code>sqlite_autoindex</code>), 103 berkas <code>test_*.py</code> (57.723 baris, dihitung pada <code>1c0dd2f</code> yang sama), </strong>187 komit pada commit <code>1c0dd2f</code><strong> — dihitung pada SHA itu supaya angkanya stabil, bukan bergeser tiap kali ada commit dokumen):</strong> jumlah komit dan komit pertama; jumlah modul/baris <code>src/</code>; berkas dan baris tes; jumlah ADR dan status; <code>PAGE_ROLES</code> (14 entri) dan 6 peran; 73 nama tabel §9.2 vs <code>sqlite_master</code> DB hidup (73/73 cocok; 72 tabel model + <code>schema_migrations</code>); nama tabel/kolom Bab 13 (semua ada, kecuali <code>approvals</code> yang adalah modul); 14 baris <code>schema_migrations</code>; 3 properti <code>UNKNOWN</code>; keluaran preflight; target make; isi <code>GO_LIVE_DECISIONS.md</code>; CSP/rate limit/honeypot/token form pada <code>marketing_site.py</code>; keberadaan/ketiadaan <code>validate_geo_fields</code>; rujukan "ADR-0061".</p>
 <p><strong>Dikutip dari dokumen sumber (tidak diuji ulang di sini):</strong> angka SLA/retensi/RPO-RTO; isi 6 playbook insiden; ambang shadow-mode (agreement ≥ 95%, ≥ 100 kasus); ukuran performa (3,42 ms, 292 req/s, 20 pengunjung 1.248,2→74,3 ms); hasil uji interpreter 3.11/3.12 (3.14 sudah diukur ulang ke 3.14.9, impor saja); census dependency (dikutip, lalu <strong>dikoreksi</strong> 2026-11-13: bukan "0" mutlak — <code>psycopg</code>/<code>psycopg2</code> diimpor lazy di jalur PostgreSQL); daftar 27 <code>denied_actions</code>; isi tabel §9 selain nama tabel.</p>
@@ -4101,17 +4145,17 @@ bawah dihitung dari repo/DB pada 2026-11-13, bukan dikutip.</p>
 </tr>
 <tr>
 <td>Berkas uji</td>
-<td><code>tests/test_*.py</code> <strong>104 berkas / 57.995 baris</strong>; seluruh <code>.py</code> di <code>tests/</code> <strong>106 / 58.235</strong></td>
+<td><code>tests/test_*.py</code> <strong>105 berkas / 58.120 baris</strong>; seluruh <code>.py</code> di <code>tests/</code> <strong>107 / 58.352</strong></td>
 <td><code>git ls-tree</code> + <code>wc -l</code> per berkas</td>
 </tr>
 <tr>
 <td>Fungsi uji</td>
-<td><strong>2.719</strong> <code>def test_</code></td>
+<td><strong>2.731</strong> <code>def test_</code></td>
 <td><code>grep -rhcE '^\s+def test_' tests/test_*.py</code></td>
 </tr>
 <tr>
 <td>Berkas ter-track</td>
-<td><strong>384</strong></td>
+<td><strong>386</strong></td>
 <td><code>git ls-files \| wc -l</code></td>
 </tr>
 <tr>

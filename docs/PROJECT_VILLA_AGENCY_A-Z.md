@@ -1151,15 +1151,39 @@ Tidak menyalin data tamu ke spreadsheet pribadi/grup chat; tidak mengirim daftar
 
 ### 22.1 Gerbang `make check`
 
-Berjalan pada **interpreter produksi** `/usr/bin/python3` (bukan `python3` venv yang kebetulan pertama di PATH — komentar Makefile menjelaskan: di mesin ini venv = Python 3.11.16/SQLite 3.53.1, unit systemd = 3.12.3/SQLite 3.45.1; tes yang bergantung interpreter dulu hijau berbulan-bulan sambil menguji Python yang tak dipakai produksi). Target `check` (Makefile) = `interpreter syntax lint test secret-scan unsafe-scan schema-parity`, lalu mencetak `=== PRE-DEPLOY GATE: PASS ===`. `schema-parity` memeriksa bahwa twin PostgreSQL sama dengan hasil regenerasi dari sumber SQLite. Standar bahasa dijaga oleh tes pytest (`tests/test_language_standard.py`), bukan target make sendiri. `scripts/preflight.py` (verdict GO/NO-GO terhadap DB, anker, dan keputusan Go-Live) adalah langkah **terpisah** pada checklist go-live, bukan bagian `make check`. Sengaja bukan target make: menerbitkan allowance §56, menetapkan policy, menerapkan migrasi — itu tindakan Owner/ops.
+Berjalan pada **interpreter produksi** `/usr/bin/python3` (bukan `python3` venv yang kebetulan pertama di PATH — komentar Makefile menjelaskan: di mesin ini venv = Python 3.11.16/SQLite 3.53.1, unit systemd = 3.12.3/SQLite 3.45.1; tes yang bergantung interpreter dulu hijau berbulan-bulan sambil menguji Python yang tak dipakai produksi). Target `check` (Makefile) = `interpreter syntax lint test secret-scan unsafe-scan pii-scan schema-parity`, lalu mencetak `=== PRE-DEPLOY GATE: PASS ===`. `schema-parity` memeriksa bahwa twin PostgreSQL sama dengan hasil regenerasi dari sumber SQLite. Standar bahasa dijaga oleh tes pytest (`tests/test_language_standard.py`), bukan target make sendiri. `scripts/preflight.py` (verdict GO/NO-GO terhadap DB, anker, dan keputusan Go-Live) adalah langkah **terpisah** pada checklist go-live, bukan bagian `make check`. Sengaja bukan target make: menerbitkan allowance §56, menetapkan policy, menerapkan migrasi — itu tindakan Owner/ops.
 
 Catatan desain gerbang: `-q` sudah ada di `pytest.ini`; menambah satu lagi (`-qq`) membuat pytest 9 tidak mencetak baris hitungan, dan gerbang yang tak bisa menyebut jumlah tes akan tetap "PASS" meski berkas tes diam-diam tak terkumpul.
 
-### 22.2 Hasil terakhir (2026-11-12, setelah komit `5647b23`)
+### 22.2 Hasil terakhir (2026-11-13)
 
-`make check` rc=0 · **3.875 passed, 4 skipped, 4.008 subtests passed** (305,67 s) · SECRET-SCAN PASS (0 temuan / 377 berkas) · UNSAFE-SCAN PASS (0/377) · baris penutup `PRE-DEPLOY GATE: PASS` — gerbang dijalankan ulang 2026-11-13 pada commit `8280c93`, pohon yang sudah memuat dokumen A–Z, ADR-0068, migrasi geo 017, `src/schema/README.md`, dan `tests/test_schema_adr_citations.py`; interpreter gerbang Python 3.12.3 / SQLite 3.45.1.
+`make check` rc=0 · **3.894 passed, 4 skipped, 4.008 subtests passed** (303,65 s) · SECRET-SCAN PASS (0 temuan / 386 berkas) · UNSAFE-SCAN PASS (0/386) · PII-SCAN PASS (0 temuan / 361 berkas teks) · `schema-parity` OK · baris penutup `PRE-DEPLOY GATE: PASS` — dijalankan pada pohon yang memuat dokumen A–Z, ADR-0068, migrasi geo 017, `scripts/pii_scan.py`, dan `tests/test_pii_scan.py`; interpreter gerbang Python 3.12.3 / SQLite 3.45.1. Sebelum gerbang PII dipasang, run yang sama mencatat 3.882 passed (komit `8280c93`).
 
-### 22.3 Standar bahasa
+### 22.3 Gerbang PII (`make pii-scan`)
+
+Repo ini **publik**, jadi "bebas kredensial" belum cukup: kredensial dan data tamu adalah dua kelas
+risiko berbeda. `scripts/pii_scan.py` menutup celah itu dan berjalan di dalam `make check`.
+
+| Kelas | Pola yang dicari | Boleh muncul bila |
+|---|---|---|
+| e-mail | alamat di luar domain dokumentasi (`example.com`, `example.org`, `.invalid`, `localhost`) | placeholder terdokumentasi |
+| telepon | nomor Indonesia 10–14 digit (`08…`, `628…`, `+62 8…`) | nomor test yang terdaftar di `PLACEHOLDER_PHONES` |
+| identitas | deret 16 digit (NIK) | placeholder terdokumentasi |
+| kartu | deret 13–19 digit yang lolos Luhn | nomor test card (`4111…`, `4242…`) |
+
+Sifat gerbang: **fail-closed** — temuan apa pun → `rc=1`, satu baris per temuan (`berkas:baris`).
+Allowlist bersifat per nilai dan beralasan, bukan pelonggaran regex senyap, supaya setiap penambahan
+terlihat saat review. Gerbang ini punya **kontrol positif dan negatif** di
+`tests/test_pii_scan.py` (12 uji): nilai sintetis yang ditanam harus tertangkap, sedangkan
+placeholder, domain reserved, koordinat SVG, dan potongan hex di dalam digest harus tetap bersih.
+Pemindai yang selalu PASS tidak membuktikan apa pun; tesnya menuntut pemindai bisa gagal.
+
+**Batas cakupan yang harus dibaca bersama kata PASS:** hanya **berkas teks** yang dipindai.
+Biner, PDF, gambar, serta atribut non-pola — nama orang, alamat, nomor paspor, tanggal lahir —
+**tidak** tercakup dan tetap bergantung pada review manusia sebelum publikasi. Gate ini menaikkan
+biaya kesalahan, bukan menggantikan kehati-hatian.
+
+### 22.4 Standar bahasa
 
 `tests/test_language_standard.py` menjaga anggaran string non-Inggris per berkas; teks CLI/help/galat di `src/dashboard.py` berbahasa Inggris (anggaran 156). Salinan publik situs = en-US (ADR-0011).
 
@@ -1343,7 +1367,7 @@ Daftar ini menggabungkan Status-Gap (potret), temuan hari ini, dan hasil membang
 | 1 ✅ | Perbarui `docs/security/SESSION_AUTH.md` (`--token-file`) + `rotate --token-file` di `session_token.py` — **selesai 2026-11-13** | opsi argumen token hanya tersisa sebagai kompatibilitas yang didokumentasikan |
 | 2 ✅ | `validate_geo_fields` + empat kolom geo di `villa_import.py` dan `reservation_kernel.py` — **selesai 2026-11-13** | impor CSV dengan VERIFIED tanpa koordinat/sumber ditolak; tes hijau; `make check` rc=0 |
 | 3 ✅ | ADR-0068 ditulis; label geo di berkas SQL dan tes diperbaiki (komentar saja) — **selesai 2026-11-13** | tak ada label "ADR-0061" pada konteks geo |
-| 4 | Audit ulang kategori tes §19 terhadap 103 berkas | tabel kategori → berkas |
+| 4 ✅ | Audit ulang kategori tes §19 terhadap 105 berkas `test_*.py` — **selesai 2026-11-13**; dihitung per badan fungsi uji, bukan per nama berkas | tabel kategori → berkas: injeksi-sebagai-data 2 berkas/6 uji, penolakan tool 7/15, tenant-IDOR 5/11, handoff 10/43, konkurensi 1/7, privasi-PII 1/12; `grounding` 16/86 dan `retry`/`idempoten`/`replay` 42/302 hanya batas atas (token longgar). Rincian di §3.4 `STATUS_AND_GAP_MAP.md` dan Lampiran G |
 | 5 | Pasang anker + backup + uji restore di mesin target; ulangi preflight dengan `--anchor-dir`, `--backup` | tak ada WARN anker/backup |
 | 6 | Pasang reverse proxy TLS + HSTS; jalankan `access_matrix_probe.py` dan `perf_probe.py` | bukti pada berkas laporan |
 | 7 ✅ | Penjaga rujukan ADR di komentar skema (`tests/test_schema_adr_citations.py`) + `src/schema/README.md` (urutan migrasi, larangan pakai ulang nomor, penjelasan kenapa `009` tidak ada) — **selesai 2026-11-13** | mengembalikan `(ADR-0061)` di baris geo menggagalkan `make check`; aturan migrasi terbaca tanpa bertanya |
@@ -1520,9 +1544,9 @@ Dibangkitkan dari AST: nama berkas, jumlah baris, kalimat pertama docstring modu
 
 **Berkas `src/schema/`:** `001_initial.sql` (+ `.pg.sql`), `002_pg_range_exclusions.pg.sql` (khusus PostgreSQL), `003_policy_catalogue_and_deny_registry`, `004_currency_aware_margin_floor`, `005_fx_rate_max_age_hours`, `006_outbox_and_integration_inbox`, `007_exception_fingerprints`, `008_agency_settings`, `010_agency_roles`, `011_ai_ladder`, `012_reservation_service`, `013_deposit_resolutions`, `014_supplier_settlements`, `015_shadow_bars`, `016_guest_preferred_currency`, `017_property_geo`. **Nomor 009 tidak ada** sebagai berkas — dijelaskan 2026-11-13 di `src/schema/README.md`: riwayat git membuktikan `009_*.sql` tidak pernah ada dan tidak ada migrasi yang dihapus, jadi nomor itu dilompati sejak awal dan tidak boleh dipakai ulang (lihat Lampiran F butir 9).
 
-**`scripts/` (22 berkas + `__pycache__`):** `access_matrix_probe`, `ai_mode`, `apply_migrations`, `audit_structure`, `build_deliverables`, `closure_facts`, `generate_pg_twin`, `go_live_smoke`, `import_villas`, `manage_roles`, `perf_probe`, `phishing_drill_score`, `preflight`, `publish_ai_allowance`, `publish_anchor`, `publish_policy_value`, `refresh_fx_rate`, `reservation_kpi`, `secret_scan.sh`, `seed_demo`, `session_token`, `unsafe_config_scan.sh`.
+**`scripts/` (24 berkas + `__pycache__`):** `access_matrix_probe`, `ai_mode`, `apply_migrations`, `audit_structure`, `build_deliverables`, `closure_facts`, `generate_pg_twin`, `go_live_smoke`, `import_villas`, `manage_roles`, `perf_probe`, `phishing_drill_score`, `pii_scan`, `preflight`, `publish_ai_allowance`, `publish_anchor`, `publish_policy_value`, `refresh_fx_rate`, `render_az_doc`, `reservation_kpi`, `secret_scan.sh`, `seed_demo`, `session_token`, `unsafe_config_scan.sh`.
 
-**Target make:** `help test syntax secret-scan unsafe-scan schema-parity pg-twin check interpreter lint anchor-publish anchor-verify allowance-status policy-status migrate-check audit-structure`.
+**Target make:** `test verify syntax lint secret-scan unsafe-scan pii-scan check interpreter schema-parity pg-twin anchor-publish anchor-verify allowance-status policy-status migrate-check render-az audit-structure` (daftar `.PHONY` di `Makefile`; `make help` mencetak deskripsinya).
 
 ## Lampiran E — Apa yang diverifikasi dan apa yang hanya dikutip
 
@@ -1572,9 +1596,9 @@ bawah dihitung dari repo/DB pada 2026-11-13, bukan dikutip.
 | Kontrol negatif | pada salinan terpisah: `BEGIN IMMEDIATE`→`BEGIN`, guard overlap dilewati, index dihapus → uji **gagal** (bukti uji tidak hampa) | `/tmp/negctl` (salinan, bukan repo kerja) |
 | Stabilitas | 1×, 5×, 12×, 20×, 20×, 10× run berulang; tiap run `7 passed` | log run; `pytest.ini` tanpa `addopts` penutup kegagalan |
 | Model skema | **72 tabel · 62 indeks · 64 trigger · 106 enum · 77 baris INSERT** | `schema_loader.parse_schema_model('sqlite')` + regex `src/schema/*.sql` (dua sumber independen) |
-| Berkas uji | `tests/test_*.py` **104 berkas / 57.995 baris**; seluruh `.py` di `tests/` **106 / 58.235** | `git ls-tree` + `wc -l` per berkas |
-| Fungsi uji | **2.719** `def test_` | `grep -rhcE '^\s+def test_' tests/test_*.py` |
-| Berkas ter-track | **384** | `git ls-files \| wc -l` |
+| Berkas uji | `tests/test_*.py` **105 berkas / 58.120 baris**; seluruh `.py` di `tests/` **107 / 58.352** | `git ls-tree` + `wc -l` per berkas |
+| Fungsi uji | **2.731** `def test_` | `grep -rhcE '^\s+def test_' tests/test_*.py` |
+| Berkas ter-track | **386** | `git ls-files \| wc -l` |
 | Kategori uji (per badan fungsi) | concurrency 1/7 · tenant-IDOR 5/11 · penolakan tool 7/15 · injeksi-sebagai-data 2/6 · handoff 10/43 · `grounding` 16/86 dan `retry`/`idempoten`/`replay` 42/302 (**batas atas, token longgar**) | skrip klasifikasi `re.split` per `def test_` |
 
 Batas yang tetap harus dikatakan: uji ini **antar-thread dalam satu proses pada satu berkas**

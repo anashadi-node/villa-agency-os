@@ -16,13 +16,14 @@ ifneq ($(strip $(VILLA_DB)),)
 export VILLA_DB
 endif
 
-.PHONY: help test verify syntax lint secret-scan unsafe-scan check interpreter schema-parity pg-twin anchor-publish anchor-verify allowance-status policy-status migrate-check render-az audit-structure
+.PHONY: help test verify syntax lint secret-scan unsafe-scan pii-scan check interpreter schema-parity pg-twin anchor-publish anchor-verify allowance-status policy-status migrate-check render-az audit-structure
 
 help:
 	@echo "make test          - run the full pytest suite"
 	@echo "make syntax        - byte-compile src/ and tests/"
 	@echo "make secret-scan   - scan tracked files for credential patterns"
 	@echo "make unsafe-scan   - scan for unsafe config (live-money switches, shuffled ledgers, stored card data)"
+	@echo "make pii-scan     - fail if any tracked text file holds real guest/owner PII (public repo gate)"
 	@echo "make schema-parity - fail if the PostgreSQL twin drifted from the SQLite source"
 	@echo "make pg-twin       - regenerate src/schema/001_initial.pg.sql from the SQLite source"
 	@echo "make lint          - pyflakes over src/ scripts/ tests/ (needs: /usr/bin/python3 -m pip install --user pyflakes)"
@@ -36,7 +37,7 @@ help:
 	@echo "make migrate-check - list schema migrations still pending for VILLA_DB (writes nothing)"
 	@echo "                     applying one is an ops act: NOT a make target (see README)"
 	@echo "make render-az     - render docs/PROJECT_VILLA_AGENCY_A-Z.md to HTML + PDF in docs/rendered/"
-	@echo "make check         - interpreter + syntax + lint + test + secret scan + unsafe scan + schema parity (pre-deploy gate)"
+	@echo "make check         - interpreter + syntax + lint + test + secret scan + unsafe scan + pii scan + schema parity (pre-deploy gate)"
 
 # -q sudah ada di pytest.ini; menambah satu lagi di sini membuatnya -qq, dan pytest 9 tidak
 # mencetak baris hitungan pada -qq. Gerbang yang tidak bisa menyebut berapa test yang berjalan
@@ -53,13 +54,17 @@ secret-scan:
 unsafe-scan:
 	@bash scripts/unsafe_config_scan.sh
 
+# Repo ini publik: kredensial bersih belum berarti data tamu bersih.
+pii-scan:
+	@$(PYTHON) scripts/pii_scan.py
+
 schema-parity:
 	$(PYTHON) scripts/generate_pg_twin.py --check
 
 pg-twin:
 	$(PYTHON) scripts/generate_pg_twin.py --write
 
-check: interpreter syntax lint test secret-scan unsafe-scan schema-parity
+check: interpreter syntax lint test secret-scan unsafe-scan pii-scan schema-parity
 	@echo "=== PRE-DEPLOY GATE: PASS ==="
 
 # Dicetak paling awal supaya versi interpreter tidak pernah tersembunyi di balik "PASS":
