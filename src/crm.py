@@ -31,6 +31,7 @@ from primitives import (
     require_text,
     to_iso,
 )
+from audit import append_event
 from fx import GUEST_CURRENCIES
 from references import REFERENCE_PREFIXES, ReferenceAllocator, parse_reference
 
@@ -40,6 +41,10 @@ SOURCES = ("HUMAN_ENTRY", "ACCEPTED_INTAKE")
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _MONEY_RE = re.compile(r"^-?\d+(\.\d{1,4})?$")
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+#: Who registers a guest when the caller names nobody (the website intake).
+GUEST_REGISTRAR_ACTOR = "system:crm"
+GUEST_REGISTRAR_ROLE = "system"
 
 
 class CrmError(DomainError):
@@ -196,7 +201,15 @@ class CrmService:
 
     # -- guest master ------------------------------------------------------- #
     def register_guest(self, full_name: Any, *, email: Any = None, phone: Any = None,
-                       locale: str = "en-US", preferred_currency: str = "USD") -> str:
+                       locale: str = "en-US", preferred_currency: str = "USD",
+                       actor: str = GUEST_REGISTRAR_ACTOR,
+                       actor_role: str = GUEST_REGISTRAR_ROLE) -> str:
+        """Create a guest and its ``guest.registered`` audit row in one transaction.
+
+        The audit row carries no identifier (no name, email or phone), only which
+        contact kinds exist, so the hash chain records *that* a guest record was
+        born and by whom (audit 2026-11-13, S2).
+        """
         name = require_text(full_name, "full_name", max_len=200).strip()
         if len(name) < 2:
             raise RequirementRejected("full_name is too short", code="VALIDATION_ERROR")
@@ -218,13 +231,32 @@ class CrmService:
             )
         guest_id = self.ids.new("guest")
         stamp = to_iso(self.clock.now())
-        self.conn.execute(
-            "INSERT INTO guests (guest_id, agency_id, full_name, email, phone, locale,"
-            " preferred_currency, status, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)",
-            (guest_id, self.agency_id, name, mail, tel, require_text(locale, "locale", max_len=35),
-             preferred_currency, stamp, stamp),
-        )
+        locale_value = require_text(locale, "locale", max_len=35)
+        own_tx = not self.conn.in_transaction
+        if own_tx:
+            self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            self.conn.execute(
+                "INSERT INTO guests (guest_id, agency_id, full_name, email, phone, locale,"
+                " preferred_currency, status, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)",
+                (guest_id, self.agency_id, name, mail, tel, locale_value,
+                 preferred_currency, stamp, stamp),
+            )
+            append_event(
+                self.conn, clock=self.clock, ids=self.ids,
+                action="guest.registered", entity_type="guest", entity_id=guest_id,
+                actor=actor, actor_role=actor_role,
+                after={"status": "ACTIVE", "locale": locale_value,
+                       "preferred_currency": preferred_currency,
+                       "mail_on_file": mail is not None, "tel_on_file": tel is not None},
+            )
+        except BaseException:
+            if own_tx:
+                self.conn.execute("ROLLBACK")
+            raise
+        if own_tx:
+            self.conn.execute("COMMIT")
         return guest_id
 
     def find_guest(self, *, email: Any = None, phone: Any = None) -> Optional[Mapping[str, Any]]:
