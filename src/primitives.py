@@ -56,6 +56,7 @@ __all__ = [
     "decimal_of",
     "decimal_to_str",
     "redact",
+    "mask_sensitive_numbers",
     "pseudonymize",
     "require_ref",
     "require_text",
@@ -752,8 +753,75 @@ def redact(text: Any) -> str:
     return cleaned
 
 
+#: A card number as people type it: 13-19 digits, optionally grouped by spaces or
+#: dashes ("4111 1111 1111 1111"). Only a Luhn-valid run with two or more distinct
+#: digits is masked, so amounts and dates survive (audit 2026-11-13, finding K1).
+_CARD_RUN_RE = re.compile(r"(?<![\w])\d(?:[ -]?\d){12,18}(?![\w])")
+#: A security code is only recognisable by the word in front of it.
+_CVV_RE = re.compile(
+    r"\b(cvv2?|cvc2?|cvn|csc|cid|kode\s+keamanan|security\s+code)\b([^\d\n]{0,12})\d{3,4}\b",
+    re.IGNORECASE,
+)
+#: A passport number is likewise only recognisable by its keyword; the captured
+#: value must contain a digit so "passport please" is left alone.
+_PASSPORT_RE = re.compile(
+    r"\b(passport|paspor|pasport|passeport)\b"
+    r"([^A-Za-z0-9\n]{0,12}(?:(?:no|nr|number|nomor|num)\.?[^A-Za-z0-9\n]{0,4})?)"
+    r"(?=[A-Za-z]*\d)[A-Za-z0-9]{6,9}\b",
+    re.IGNORECASE,
+)
+#: An international or local phone number written with separators
+#: ("+62 812-3456-7890", "(0361) 123 456"). The compact forms are covered by
+#: ``_PHONE_RE`` and the digit-run patterns; this one needs 9-15 digits and a
+#: leading ``+``, ``0`` or ``(`` so that dates and amounts are never read as phones.
+_PHONE_SEPARATED_RE = re.compile(r"(?<![\w+])(?:\+|\(?0)[\d ().\-]{7,22}\d(?![\w])")
+
+
+def _luhn_valid(digits: str) -> bool:
+    total = 0
+    parity = len(digits) % 2
+    for index, char in enumerate(digits):
+        value = int(char)
+        if index % 2 == parity:
+            value *= 2
+            if value > 9:
+                value -= 9
+        total += value
+    return total % 10 == 0
+
+
+def _mask_card(match: "re.Match[str]") -> str:
+    digits = re.sub(r"[ -]", "", match.group(0))
+    if len(set(digits)) >= 2 and _luhn_valid(digits):
+        return "[CARD]"
+    return match.group(0)
+
+
+def _mask_separated_phone(match: "re.Match[str]") -> str:
+    digits = re.sub(r"\D", "", match.group(0))
+    if 9 <= len(digits) <= 15:
+        return "[PHONE]"
+    return match.group(0)
+
+
+def mask_sensitive_numbers(text: str) -> str:
+    """Mask P3/P4 values that free text carries: card numbers, security codes,
+    passport numbers and separated phone numbers.
+
+    Shared by :func:`redact` and ``dashboard.redact_pii`` so that a guest who types
+    a card number into a website inquiry never has it stored, logged or shown —
+    the stored copy of a P2 message is the redacted one (``cases._body_fields``).
+    """
+    out = _CARD_RUN_RE.sub(_mask_card, text)
+    out = _CVV_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}[CVV]", out)
+    out = _PASSPORT_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}[PASSPORT]", out)
+    out = _PHONE_SEPARATED_RE.sub(_mask_separated_phone, out)
+    return out
+
+
 def _mask_identifiers(text: str) -> str:
     out = _EMAIL_RE.sub("[EMAIL]", text)
+    out = mask_sensitive_numbers(out)
     out = _PHONE_RE.sub("[PHONE]", out)
     out = _NIK_RE.sub("[ID_NUMBER]", out)
     out = _LONG_DIGITS_RE.sub("[DIGITS]", out)

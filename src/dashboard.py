@@ -75,6 +75,7 @@ from primitives import (
     DomainError,
     IdFactory,
     Money,
+    mask_sensitive_numbers,
     SystemClock,
     require_ref,
     require_text,
@@ -400,6 +401,7 @@ def redact_pii(text: Any) -> str:
     if text is None:
         return ""
     out = _EMAIL_RE.sub(lambda m: mask_email(m.group(0)), str(text))
+    out = mask_sensitive_numbers(out).replace("[PHONE]", "[TELEPON_DIHAPUS]")
     out = _PHONE_RE.sub("[TELEPON_DIHAPUS]", out)
     out = _ID_NUMBER_RE.sub("[NOMOR_IDENTITAS_DIHAPUS]", out)
     out = _LONG_DIGITS_RE.sub("[ANGKA_DIHAPUS]", out)
