@@ -77,7 +77,8 @@ dan tidak pernah boleh menulis aritmetika, status, atau kepastian ketersediaan.
 
 ```
 villa-agency-os/
-├── docs/                     # charter, kontrak, policy matrix, state machine, data model
+├── docs/                     # charter, kontrak, policy matrix, state machine, data model, ADR,
+│                             #   bukti uji (`DOUBLE_BOOKING_EVIDENCE.md`), dokumen A-Z + salinan render
 ├── src/                      # seluruh sistem (deterministik, stdlib-only)
 │   ├── primitives.py         # Money, Clock, IdFactory, error taxonomy, redact
 │   ├── schema_loader.py      # apply schema (sqlite/pg), statement splitting, model parser
@@ -109,7 +110,8 @@ villa-agency-os/
 ├── templates/                # 13 berkas HTML dashboard (12 halaman terdaftar + base), di-escape terpusat
 ├── tests/                    # pytest — bukti empiris; angka terkini dari `make check`
 ├── demo/                     # aplikasi demo untuk rapat (tanpa internet, tanpa akun, data contoh)
-└── scripts/                  # preflight, anchor, twin generator, scan, `audit_structure.py`, `build_deliverables.py`
+└── scripts/                  # preflight, anchor, twin generator, scan, `audit_structure.py`, `build_deliverables.py`,
+                              #   `render_az_doc.py` (A-Z Markdown -> HTML + PDF di docs/rendered/)
 ```
 
 ## Menjalankan
