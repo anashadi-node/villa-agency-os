@@ -1607,9 +1607,9 @@ bawah dihitung dari repo/DB pada 2026-11-13, bukan dikutip.
 | Kontrol negatif | pada salinan terpisah: `BEGIN IMMEDIATE`→`BEGIN`, guard overlap dilewati, index dihapus → uji **gagal** (bukti uji tidak hampa) | `/tmp/negctl` (salinan, bukan repo kerja) |
 | Stabilitas | 1×, 5×, 12×, 20×, 20×, 10× run berulang; tiap run `7 passed` | log run; `pytest.ini` tanpa `addopts` penutup kegagalan |
 | Model skema | **72 tabel · 62 indeks · 64 trigger · 106 enum · 77 baris INSERT** | `schema_loader.parse_schema_model('sqlite')` + regex `src/schema/*.sql` (dua sumber independen) |
-| Berkas uji | `tests/test_*.py` **105 berkas / 58.120 baris**; seluruh `.py` di `tests/` **107 / 58.352** | `git ls-tree` + `wc -l` per berkas |
-| Fungsi uji | **2.731** `def test_` | `grep -rhcE '^\s+def test_' tests/test_*.py` |
-| Berkas ter-track | **386** | `git ls-files \| wc -l` |
+| Berkas uji | `tests/test_*.py` **105 berkas / 58.176 baris**; seluruh `.py` di `tests/` **107 / 58.352** | `git ls-tree` + `wc -l` per berkas |
+| Fungsi uji | **2.735** `def test_` | `grep -rhcE '^\s+def test_' tests/test_*.py` |
+| Berkas ter-track | **388** | `git ls-files \| wc -l` pada komit rilis ini |
 | Kategori uji (per badan fungsi) | concurrency 1/7 · tenant-IDOR 5/11 · penolakan tool 7/15 · injeksi-sebagai-data 2/6 · handoff 10/43 · `grounding` 16/86 dan `retry`/`idempoten`/`replay` 42/302 (**batas atas, token longgar**) | skrip klasifikasi `re.split` per `def test_` |
 
 Batas yang tetap harus dikatakan: uji ini **antar-thread dalam satu proses pada satu berkas**
