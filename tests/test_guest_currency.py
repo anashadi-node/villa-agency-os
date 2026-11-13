@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import sys
 import unittest
-import uuid
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -34,7 +33,8 @@ import cases as cases_mod  # noqa: E402
 import crm as CRM  # noqa: E402
 import dashboard as D  # noqa: E402
 import fx as FX  # noqa: E402
-import marketing_site as M  # noqa: E402
+import marketing_site as M
+from form_token_support import signed_token  # noqa: E402
 from primitives import FrozenClock, IdFactory  # noqa: E402
 from schema_loader import connect_sqlite  # noqa: E402
 
@@ -130,7 +130,7 @@ def _valid_fields(email="budi@example.com"):
         "name": "Budi Santoso",
         "email": email,
         "message": "We are two families looking for a villa near Ubud in July.",
-        "form_token": uuid.uuid4().hex,
+        "form_token": signed_token(),
         M.HONEYPOT_FIELD: "",
         "property_ref": "",
     }

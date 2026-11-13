@@ -43,3 +43,10 @@ def conn():
 @pytest.fixture()
 def schema_statements() -> list[str]:
     return load_statements("sqlite")
+
+
+@pytest.fixture(autouse=True)
+def _form_token_key(monkeypatch):
+    """Every site in the test process signs inquiry-form tokens with one test key."""
+    from form_token_support import TEST_FORM_TOKEN_KEY
+    monkeypatch.setenv("VILLA_FORM_TOKEN_KEY", TEST_FORM_TOKEN_KEY)

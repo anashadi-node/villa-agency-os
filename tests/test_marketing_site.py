@@ -16,11 +16,11 @@ import urllib.request
 from contextlib import contextmanager
 from datetime import timedelta
 from http.server import HTTPServer
-from uuid import uuid4
 
 import pytest
 
 import marketing_site as M
+from form_token_support import signed_token
 from cases import DEFAULT_SLA_POLICY_BY_CHANNEL, SLA_POLICIES
 from primitives import IdFactory, sha256_hex, to_iso
 from schema_loader import connect_sqlite
@@ -180,7 +180,7 @@ def _valid_fields(**overrides):
         "name": "Budi Santoso",
         "email": "budi@example.com",
         "message": "We are two families looking for a villa near Ubud in July.",
-        "form_token": uuid4().hex,
+        "form_token": signed_token(),
         M.HONEYPOT_FIELD: "",
         "property_ref": "",
     }

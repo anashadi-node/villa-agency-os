@@ -10,12 +10,12 @@ redactor must catch, and one plants a value it must leave alone.
 
 from __future__ import annotations
 
-from uuid import uuid4
 
 import pytest
 
 import dashboard
 import marketing_site as M
+from form_token_support import signed_token
 from primitives import IdFactory, mask_sensitive_numbers, redact, to_iso
 from schema_loader import connect_sqlite
 
@@ -88,7 +88,7 @@ def test_a_website_inquiry_never_stores_p3_or_p4(clock):
             "name": "Sari Dewi",
             "email": "sari@example.com",
             "message": message,
-            "form_token": site.issue_form_token() if hasattr(site, "issue_form_token") else uuid4().hex,
+            "form_token": signed_token(),
             M.HONEYPOT_FIELD: "",
             "property_ref": "",
         },
