@@ -2,9 +2,9 @@
 """PII scan for a public tree — fail closed.
 
 The repository is published. A credential scanner says nothing about guest
-data, so this gate answers a different question: does any *tracked, text* file
-contain a value shaped like a real person's contact detail, identifier, or card
-number?
+data, so this gate answers a different question: does any text file that could
+be published — tracked, or untracked and not ignored — contain a value shaped
+like a real person's contact detail, identifier, or card number?
 
 What it can prove: unmasked e-mail addresses outside the reserved documentation
 domains, unmasked Indonesian mobile numbers, 16-digit identifier numbers, and
@@ -85,13 +85,27 @@ def luhn_ok(digits: str) -> bool:
 
 
 def tracked_files(root: Path) -> list[str]:
+    """Tracked files unioned with untracked-but-publishable ones.
+
+    `git ls-files` alone is a trap: a file that is written but not yet committed
+    is absent from the list, so the gate reports PASS over a tree it has not read.
+    That is exactly how this gate first produced a false PASS. Untracked files
+    that git does not ignore are added, because they are one `git add` away from
+    being published.
+    """
     try:
-        out = subprocess.run(
+        tracked = subprocess.run(
             ["git", "-C", str(root), "ls-files", "-z"], capture_output=True, check=True
         ).stdout
-        files = [p for p in out.decode().split("\0") if p]
+        untracked = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z", "--others", "--exclude-standard"],
+            capture_output=True,
+            check=True,
+        ).stdout
+        files = sorted({p for p in (tracked + untracked).decode().split("\0") if p})
         if files:
             return files
+        raise ValueError("git ls-files returned nothing; refusing to PASS an unread tree")
     except (subprocess.CalledProcessError, FileNotFoundError):
         pass
     skip = {".git", "__pycache__", ".venv", "node_modules"}

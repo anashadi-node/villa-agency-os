@@ -44,7 +44,7 @@ hr { border: none; border-top: 0.5pt solid #c9cfcb; margin: 6mm 0; }
   <h1>Project Villa Agency — Dokumen Update Lengkap A–Z</h1>
   <div class="sub">Reservation &amp; Operations Control Plane</div>
   <div class="meta">Dokumen kerja internal · dirender dari
-  <code>docs/PROJECT_VILLA_AGENCY_A-Z.md</code> · 141,996 karakter</div>
+  <code>docs/PROJECT_VILLA_AGENCY_A-Z.md</code> · 142,885 karakter</div>
 </section>
 <p><strong>Nama sistem:</strong> Villa Agency OS (Villa Management &amp; Agency)<br />
 <strong>Tanggal dokumen:</strong> 12 November 2026 · <strong>Pemilik:</strong> Owner (Mas Anas) · <strong>Disusun oleh:</strong> divisi Villa Management &amp; Agency<br />
@@ -2834,7 +2834,7 @@ python3 src/marketing_site.py --db /tmp/demo/villa.db --dump /tmp/demo/site   # 
 <p>Berjalan pada <strong>interpreter produksi</strong> <code>/usr/bin/python3</code> (bukan <code>python3</code> venv yang kebetulan pertama di PATH — komentar Makefile menjelaskan: di mesin ini venv = Python 3.11.16/SQLite 3.53.1, unit systemd = 3.12.3/SQLite 3.45.1; tes yang bergantung interpreter dulu hijau berbulan-bulan sambil menguji Python yang tak dipakai produksi). Target <code>check</code> (Makefile) = <code>interpreter syntax lint test secret-scan unsafe-scan pii-scan schema-parity</code>, lalu mencetak <code>=== PRE-DEPLOY GATE: PASS ===</code>. <code>schema-parity</code> memeriksa bahwa twin PostgreSQL sama dengan hasil regenerasi dari sumber SQLite. Standar bahasa dijaga oleh tes pytest (<code>tests/test_language_standard.py</code>), bukan target make sendiri. <code>scripts/preflight.py</code> (verdict GO/NO-GO terhadap DB, anker, dan keputusan Go-Live) adalah langkah <strong>terpisah</strong> pada checklist go-live, bukan bagian <code>make check</code>. Sengaja bukan target make: menerbitkan allowance §56, menetapkan policy, menerapkan migrasi — itu tindakan Owner/ops.</p>
 <p>Catatan desain gerbang: <code>-q</code> sudah ada di <code>pytest.ini</code>; menambah satu lagi (<code>-qq</code>) membuat pytest 9 tidak mencetak baris hitungan, dan gerbang yang tak bisa menyebut jumlah tes akan tetap "PASS" meski berkas tes diam-diam tak terkumpul.</p>
 <h3 id="222-hasil-terakhir-2026-11-13">22.2 Hasil terakhir (2026-11-13)</h3>
-<p><code>make check</code> rc=0 · <strong>3.894 passed, 4 skipped, 4.008 subtests passed</strong> (303,65 s) · SECRET-SCAN PASS (0 temuan / 386 berkas) · UNSAFE-SCAN PASS (0/386) · PII-SCAN PASS (0 temuan / 361 berkas teks) · <code>schema-parity</code> OK · baris penutup <code>PRE-DEPLOY GATE: PASS</code> — dijalankan pada pohon yang memuat dokumen A–Z, ADR-0068, migrasi geo 017, <code>scripts/pii_scan.py</code>, dan <code>tests/test_pii_scan.py</code>; interpreter gerbang Python 3.12.3 / SQLite 3.45.1. Sebelum gerbang PII dipasang, run yang sama mencatat 3.882 passed (komit <code>8280c93</code>).</p>
+<p><code>make check</code> rc=0 · <strong>3.898 passed, 4 skipped, 4.008 subtests passed</strong> (302,22 s) · SECRET-SCAN PASS (0 temuan / 388 berkas) · UNSAFE-SCAN PASS (0/388) · PII-SCAN PASS (0 temuan / 363 berkas teks) · <code>schema-parity</code> OK · baris penutup <code>PRE-DEPLOY GATE: PASS</code> — dijalankan pada pohon yang memuat dokumen A–Z, ADR-0068, migrasi geo 017, <code>scripts/pii_scan.py</code>, dan <code>tests/test_pii_scan.py</code>; interpreter gerbang Python 3.12.3 / SQLite 3.45.1. Sebelum gerbang PII dipasang, run yang sama mencatat 3.882 passed (komit <code>8280c93</code>).</p>
 <h3 id="223-gerbang-pii-make-pii-scan">22.3 Gerbang PII (<code>make pii-scan</code>)</h3>
 <p>Repo ini <strong>publik</strong>, jadi "bebas kredensial" belum cukup: kredensial dan data tamu adalah dua kelas
 risiko berbeda. <code>scripts/pii_scan.py</code> menutup celah itu dan berjalan di dalam <code>make check</code>.</p>
@@ -2869,11 +2869,21 @@ risiko berbeda. <code>scripts/pii_scan.py</code> menutup celah itu dan berjalan 
 </tr>
 </tbody>
 </table>
+<p>Cakupan berkas = <strong>tracked ∪ untracked-not-ignored</strong>. Awalnya hanya <code>git ls-files</code>, dan itu
+menghasilkan <strong>PASS palsu</strong>: dua berkas baru (pemindai dan tesnya) belum di-commit, sehingga tidak
+pernah dibaca, sementara laporan tetap hijau. CI menangkapnya lebih lambat. Karena itu daftar kini
+memuat berkas yang belum di-commit tetapi <em>tidak</em> di-ignore — satu <code>git add</code> dari terbit — dan
+apabila <code>git ls-files</code> mengembalikan nol berkas, gerbang <strong>menolak</strong> memberi PASS. Empat uji di
+<code>TestEnumeration</code> menjaga sifat ini: berkas untracked harus dipindai, berkas ter-commit tetap
+dipindai, berkas yang di-ignore tidak dipindai, dan jumlah berkas yang dipindai harus sama dengan
+jumlah kandidat (ambang "&gt; 100 berkas" saja tidak cukup).</p>
 <p>Sifat gerbang: <strong>fail-closed</strong> — temuan apa pun → <code>rc=1</code>, satu baris per temuan (<code>berkas:baris</code>).
 Allowlist bersifat per nilai dan beralasan, bukan pelonggaran regex senyap, supaya setiap penambahan
 terlihat saat review. Gerbang ini punya <strong>kontrol positif dan negatif</strong> di
-<code>tests/test_pii_scan.py</code> (12 uji): nilai sintetis yang ditanam harus tertangkap, sedangkan
+<code>tests/test_pii_scan.py</code> (16 uji): nilai sintetis yang ditanam harus tertangkap, sedangkan
 placeholder, domain reserved, koordinat SVG, dan potongan hex di dalam digest harus tetap bersih.
+Nilai yang ditanam dirakit saat runtime, sebab berkas uji itu sendiri ikut dipindai — literal utuh di
+dalamnya akan membuat gerbang menuduh dirinya sendiri.
 Pemindai yang selalu PASS tidak membuktikan apa pun; tesnya menuntut pemindai bisa gagal.</p>
 <p><strong>Batas cakupan yang harus dibaca bersama kata PASS:</strong> hanya <strong>berkas teks</strong> yang dipindai.
 Biner, PDF, gambar, serta atribut non-pola — nama orang, alamat, nomor paspor, tanggal lahir —
@@ -3311,7 +3321,7 @@ biaya kesalahan, bukan menggantikan kehati-hatian.</p>
 <tr>
 <td>4 ✅</td>
 <td>Audit ulang kategori tes §19 terhadap 105 berkas <code>test_*.py</code> — <strong>selesai 2026-11-13</strong>; dihitung per badan fungsi uji, bukan per nama berkas</td>
-<td>tabel kategori → berkas: injeksi-sebagai-data 2 berkas/6 uji, penolakan tool 7/15, tenant-IDOR 5/11, handoff 10/43, konkurensi 1/7, privasi-PII 1/12; <code>grounding</code> 16/86 dan <code>retry</code>/<code>idempoten</code>/<code>replay</code> 42/302 hanya batas atas (token longgar). Rincian di §3.4 <code>STATUS_AND_GAP_MAP.md</code> dan Lampiran G</td>
+<td>tabel kategori → berkas: injeksi-sebagai-data 2 berkas/6 uji, penolakan tool 7/15, tenant-IDOR 5/11, handoff 10/43, konkurensi 1/7, privasi-PII 1/16; <code>grounding</code> 16/86 dan <code>retry</code>/<code>idempoten</code>/<code>replay</code> 42/302 hanya batas atas (token longgar). Rincian di §3.4 <code>STATUS_AND_GAP_MAP.md</code> dan Lampiran G</td>
 </tr>
 <tr>
 <td>5</td>

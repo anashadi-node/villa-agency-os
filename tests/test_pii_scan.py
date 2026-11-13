@@ -7,10 +7,16 @@ nilai sintetis ke direktori sementara dan menuntut pemindai menemukannya
 lolos Luhn, dan potongan hex di dalam digest.
 
 Nilai yang ditanam di sini sintetis dan tidak boleh berupa data nyata siapa pun.
+
+Nilai-nilai itu dirakit saat runtime, bukan ditulis utuh: berkas ini sendiri
+dipindai oleh `PII-SCAN` dan oleh `TestRepositoryItself`, jadi literal utuh di
+sini akan membuat gerbang menuduh dirinya sendiri. Jangan "rapikan" perakitan
+ini menjadi satu literal.
 """
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +32,12 @@ def _load():
 
 pii_scan = _load()
 
+# Dirakit saat runtime — lihat catatan di docstring.
+PLANTED_EMAIL = "rahasia.warga" + "@" + "gmail.com"
+PLANTED_PHONE = "+62 857 " + "1234 5678"
+PLANTED_NIK = "3201234567" + "890123"
+PLANTED_CARD = "4012 8888 8888 " + "1881"
+
 
 def _scan_tree(tmp_path: Path) -> dict[str, list[str]]:
     findings, _ = pii_scan.scan(tmp_path)
@@ -35,28 +47,28 @@ def _scan_tree(tmp_path: Path) -> dict[str, list[str]]:
 
 class TestPositiveControls:
     def test_unmasked_email_is_found(self, tmp_path):
-        (tmp_path / "guest.md").write_text("kontak: rahasia.warga@gmail.com\n", encoding="utf-8")
+        (tmp_path / "guest.md").write_text(f"kontak: {PLANTED_EMAIL}\n", encoding="utf-8")
         found = _scan_tree(tmp_path)
         assert "e-mail" in found
         assert "guest.md:1" in found["e-mail"][0]
 
     def test_unmasked_phone_is_found(self, tmp_path):
-        (tmp_path / "guest.md").write_text("wa: +62 857 1234 5678\n", encoding="utf-8")
+        (tmp_path / "guest.md").write_text(f"wa: {PLANTED_PHONE}\n", encoding="utf-8")
         found = _scan_tree(tmp_path)
         assert "phone" in found
 
     def test_identifier_number_is_found(self, tmp_path):
-        (tmp_path / "guest.md").write_text("nik 3201234567890123\n", encoding="utf-8")
+        (tmp_path / "guest.md").write_text(f"nik {PLANTED_NIK}\n", encoding="utf-8")
         found = _scan_tree(tmp_path)
         assert "16-digit id" in found
 
     def test_luhn_valid_card_is_found(self, tmp_path):
-        (tmp_path / "guest.md").write_text("kartu 4012 8888 8888 1881\n", encoding="utf-8")
+        (tmp_path / "guest.md").write_text(f"kartu {PLANTED_CARD}\n", encoding="utf-8")
         found = _scan_tree(tmp_path)
         assert "card number" in found
 
     def test_cli_exit_code_is_one_on_findings(self, tmp_path, capsys):
-        (tmp_path / "guest.md").write_text("wa: +62 857 1234 5678\n", encoding="utf-8")
+        (tmp_path / "guest.md").write_text(f"wa: {PLANTED_PHONE}\n", encoding="utf-8")
         assert pii_scan.main(["pii_scan.py", str(tmp_path)]) == 1
         assert "PII-SCAN: FAIL" in capsys.readouterr().out
 
@@ -109,3 +121,47 @@ class TestRepositoryItself:
         # PDF/gambar tidak dipindai; batas ini harus tetap dinyatakan di docstring.
         doc = (ROOT / "scripts" / "pii_scan.py").read_text(encoding="utf-8")
         assert "binaries are skipped" in doc
+
+
+class TestEnumeration:
+    """Gerbang hanya sekuat daftar berkas yang benar-benar ia baca."""
+
+    def _git_repo(self, path: Path) -> Path:
+        subprocess.run(["git", "init", "-q", str(path)], check=True)
+        subprocess.run(["git", "-C", str(path), "config", "user.email", "t@example.com"], check=True)
+        subprocess.run(["git", "-C", str(path), "config", "user.name", "t"], check=True)
+        return path
+
+    def test_untracked_file_is_scanned_not_silently_skipped(self, tmp_path):
+        # Regresi: `git ls-files` saja membuat berkas yang belum di-commit tidak
+        # pernah dibaca, sehingga gerbang melaporkan PASS atas pohon yang belum
+        # ditelusuri. Berkas baru adalah satu `git add` dari terbit.
+        repo = self._git_repo(tmp_path / "repo")
+        (repo / "new-guest.md").write_text(f"kontak: {PLANTED_EMAIL}\n", encoding="utf-8")
+        found = _scan_tree(repo)
+        assert "new-guest.md" in " ".join(found.get("e-mail", []))
+
+    def test_committed_file_stays_scanned(self, tmp_path):
+        repo = self._git_repo(tmp_path / "repo")
+        (repo / "guest.md").write_text(f"kontak: {PLANTED_EMAIL}\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+        found = _scan_tree(repo)
+        assert "guest.md" in " ".join(found.get("e-mail", []))
+
+    def test_gitignored_file_is_not_published_so_not_scanned(self, tmp_path):
+        repo = self._git_repo(tmp_path / "repo")
+        (repo / ".gitignore").write_text("local-only.md\n", encoding="utf-8")
+        (repo / "local-only.md").write_text(f"kontak: {PLANTED_EMAIL}\n", encoding="utf-8")
+        assert _scan_tree(repo) == {}
+
+    def test_repository_scan_reads_every_tracked_text_file(self):
+        # Ambang "scanned > 100" saja bisa lolos dengan gerbang yang melewatkan
+        # berkas; di sini daftar yang dipindai harus sama dengan daftar kandidat.
+        candidates = [
+            n
+            for n in pii_scan.tracked_files(ROOT)
+            if (ROOT / n).is_file() and pii_scan.is_text(ROOT / n)
+        ]
+        _, scanned = pii_scan.scan(ROOT)
+        assert scanned == len(candidates)
+        assert scanned > 100

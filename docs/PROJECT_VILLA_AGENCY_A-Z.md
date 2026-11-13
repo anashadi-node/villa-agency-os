@@ -1157,7 +1157,7 @@ Catatan desain gerbang: `-q` sudah ada di `pytest.ini`; menambah satu lagi (`-qq
 
 ### 22.2 Hasil terakhir (2026-11-13)
 
-`make check` rc=0 · **3.894 passed, 4 skipped, 4.008 subtests passed** (303,65 s) · SECRET-SCAN PASS (0 temuan / 386 berkas) · UNSAFE-SCAN PASS (0/386) · PII-SCAN PASS (0 temuan / 361 berkas teks) · `schema-parity` OK · baris penutup `PRE-DEPLOY GATE: PASS` — dijalankan pada pohon yang memuat dokumen A–Z, ADR-0068, migrasi geo 017, `scripts/pii_scan.py`, dan `tests/test_pii_scan.py`; interpreter gerbang Python 3.12.3 / SQLite 3.45.1. Sebelum gerbang PII dipasang, run yang sama mencatat 3.882 passed (komit `8280c93`).
+`make check` rc=0 · **3.898 passed, 4 skipped, 4.008 subtests passed** (302,22 s) · SECRET-SCAN PASS (0 temuan / 388 berkas) · UNSAFE-SCAN PASS (0/388) · PII-SCAN PASS (0 temuan / 363 berkas teks) · `schema-parity` OK · baris penutup `PRE-DEPLOY GATE: PASS` — dijalankan pada pohon yang memuat dokumen A–Z, ADR-0068, migrasi geo 017, `scripts/pii_scan.py`, dan `tests/test_pii_scan.py`; interpreter gerbang Python 3.12.3 / SQLite 3.45.1. Sebelum gerbang PII dipasang, run yang sama mencatat 3.882 passed (komit `8280c93`).
 
 ### 22.3 Gerbang PII (`make pii-scan`)
 
@@ -1171,11 +1171,22 @@ risiko berbeda. `scripts/pii_scan.py` menutup celah itu dan berjalan di dalam `m
 | identitas | deret 16 digit (NIK) | placeholder terdokumentasi |
 | kartu | deret 13–19 digit yang lolos Luhn | nomor test card (`4111…`, `4242…`) |
 
+Cakupan berkas = **tracked ∪ untracked-not-ignored**. Awalnya hanya `git ls-files`, dan itu
+menghasilkan **PASS palsu**: dua berkas baru (pemindai dan tesnya) belum di-commit, sehingga tidak
+pernah dibaca, sementara laporan tetap hijau. CI menangkapnya lebih lambat. Karena itu daftar kini
+memuat berkas yang belum di-commit tetapi *tidak* di-ignore — satu `git add` dari terbit — dan
+apabila `git ls-files` mengembalikan nol berkas, gerbang **menolak** memberi PASS. Empat uji di
+`TestEnumeration` menjaga sifat ini: berkas untracked harus dipindai, berkas ter-commit tetap
+dipindai, berkas yang di-ignore tidak dipindai, dan jumlah berkas yang dipindai harus sama dengan
+jumlah kandidat (ambang "> 100 berkas" saja tidak cukup).
+
 Sifat gerbang: **fail-closed** — temuan apa pun → `rc=1`, satu baris per temuan (`berkas:baris`).
 Allowlist bersifat per nilai dan beralasan, bukan pelonggaran regex senyap, supaya setiap penambahan
 terlihat saat review. Gerbang ini punya **kontrol positif dan negatif** di
-`tests/test_pii_scan.py` (12 uji): nilai sintetis yang ditanam harus tertangkap, sedangkan
+`tests/test_pii_scan.py` (16 uji): nilai sintetis yang ditanam harus tertangkap, sedangkan
 placeholder, domain reserved, koordinat SVG, dan potongan hex di dalam digest harus tetap bersih.
+Nilai yang ditanam dirakit saat runtime, sebab berkas uji itu sendiri ikut dipindai — literal utuh di
+dalamnya akan membuat gerbang menuduh dirinya sendiri.
 Pemindai yang selalu PASS tidak membuktikan apa pun; tesnya menuntut pemindai bisa gagal.
 
 **Batas cakupan yang harus dibaca bersama kata PASS:** hanya **berkas teks** yang dipindai.
@@ -1367,7 +1378,7 @@ Daftar ini menggabungkan Status-Gap (potret), temuan hari ini, dan hasil membang
 | 1 ✅ | Perbarui `docs/security/SESSION_AUTH.md` (`--token-file`) + `rotate --token-file` di `session_token.py` — **selesai 2026-11-13** | opsi argumen token hanya tersisa sebagai kompatibilitas yang didokumentasikan |
 | 2 ✅ | `validate_geo_fields` + empat kolom geo di `villa_import.py` dan `reservation_kernel.py` — **selesai 2026-11-13** | impor CSV dengan VERIFIED tanpa koordinat/sumber ditolak; tes hijau; `make check` rc=0 |
 | 3 ✅ | ADR-0068 ditulis; label geo di berkas SQL dan tes diperbaiki (komentar saja) — **selesai 2026-11-13** | tak ada label "ADR-0061" pada konteks geo |
-| 4 ✅ | Audit ulang kategori tes §19 terhadap 105 berkas `test_*.py` — **selesai 2026-11-13**; dihitung per badan fungsi uji, bukan per nama berkas | tabel kategori → berkas: injeksi-sebagai-data 2 berkas/6 uji, penolakan tool 7/15, tenant-IDOR 5/11, handoff 10/43, konkurensi 1/7, privasi-PII 1/12; `grounding` 16/86 dan `retry`/`idempoten`/`replay` 42/302 hanya batas atas (token longgar). Rincian di §3.4 `STATUS_AND_GAP_MAP.md` dan Lampiran G |
+| 4 ✅ | Audit ulang kategori tes §19 terhadap 105 berkas `test_*.py` — **selesai 2026-11-13**; dihitung per badan fungsi uji, bukan per nama berkas | tabel kategori → berkas: injeksi-sebagai-data 2 berkas/6 uji, penolakan tool 7/15, tenant-IDOR 5/11, handoff 10/43, konkurensi 1/7, privasi-PII 1/16; `grounding` 16/86 dan `retry`/`idempoten`/`replay` 42/302 hanya batas atas (token longgar). Rincian di §3.4 `STATUS_AND_GAP_MAP.md` dan Lampiran G |
 | 5 | Pasang anker + backup + uji restore di mesin target; ulangi preflight dengan `--anchor-dir`, `--backup` | tak ada WARN anker/backup |
 | 6 | Pasang reverse proxy TLS + HSTS; jalankan `access_matrix_probe.py` dan `perf_probe.py` | bukti pada berkas laporan |
 | 7 ✅ | Penjaga rujukan ADR di komentar skema (`tests/test_schema_adr_citations.py`) + `src/schema/README.md` (urutan migrasi, larangan pakai ulang nomor, penjelasan kenapa `009` tidak ada) — **selesai 2026-11-13** | mengembalikan `(ADR-0061)` di baris geo menggagalkan `make check`; aturan migrasi terbaca tanpa bertanya |
