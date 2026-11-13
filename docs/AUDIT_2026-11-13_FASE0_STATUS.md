@@ -39,6 +39,11 @@ Yang dikerjakan:
    `booking_support.confirm_through_payment`), ditambah kelas baru yang mengunci tiga perilaku:
    pelepasan hold ditolak, penantang kedua ditolak `SLOT_ALREADY_HELD`, dan pembatalan booking
    memindahkan hold ke `RELEASE_REQUESTED` (slot masih ditempati sampai pelepasan diverifikasi).
+   Ditambah satu tes balapan **dua koneksi**: penulis A melepas hold dan penulis B menjual malam
+   yang sama pada saat yang sama — keduanya wajib ditolak (`HOLD_BACKS_BOOKING` dan
+   `SLOT_ALREADY_HELD`), dan keadaan akhir wajib tetap satu hold, satu booking, satu slot,
+   dengan booking tetap `PAYMENT_PENDING`. Bukti: `tests/test_no_double_booking_concurrency.py`
+   11 lulus.
 3. ADR-0069 bagian Konsekuensi — alasan penjagaan ini dicatat, bukan hanya ditulis di kode.
 
 ## T8 — rupiah + rujukan USD
