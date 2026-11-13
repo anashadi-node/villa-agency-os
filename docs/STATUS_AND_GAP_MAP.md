@@ -28,7 +28,7 @@ Satu hal yang saya tegaskan di depan, karena ini akar semua yang di bawah: **pad
 
 | Area | Status | Bukti ringkas |
 |---|---|---|
-| Domain: booking, hold, pembayaran, policy, bukti, identitas | ✅ **kuat** | 70 ADR, 3.768 tes hijau (+4.008 subtes), gerbang PASS, katalog policy 25/25 |
+| Domain: booking, hold, pembayaran, policy, bukti, identitas | ✅ **kuat** | 70 ADR, 4.007 tes hijau (+4.016 subtes) pada gerbang 2026-11-13, gerbang PASS, katalog policy 25/25 |
 | Lapisan **AI Workforce** (6 komponen dok Anda + 1 tambahan owner 2026-10-02) | 🟡 **5 dari 7 ada** | Control Tower, Reservation, Finance Admin, Operations, **Revenue & BI (slice 1, 2026-10-07)** ada di kode; belum: Commercial, Security & Privacy Warden |
 | Infrastruktur non-agent | ✅ **6 ada, 1 belum** | Policy/Approval/Identity/Audit ada; **Outbox + Exception Engine ada (2026-10-02)**; sisa: DLP |
 | Organisasi & peran (D3) | ✅ **DECIDED, kosakata sudah satu rumah** | ADR-0035 (§5 "3 kosakata hidup bersamaan") direkonsiliasi 2026-10-02 lewat `src/roles.py` + amendment ADR-0035: `approvals.ROLE_RANK` **adalah** `roles.ROLE_RANK`, nama lama tetap resolvable untuk baris historis, dan `gm` masuk tangga (rank 4). **`gm` juga sudah punya halaman** (Command Center/Approvals/Finance/Cases/Properties) dan **wajib MFA** — policy `security.mfa.required_roles` v2 = owner, finance, gm (keputusan owner 2026-10-02). |
