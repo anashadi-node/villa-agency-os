@@ -224,6 +224,14 @@ _TRANSITION_TABLE: Mapping[str, tuple[str, ...]] = {
     "PAID_IN_FULL": ("CANCELLED", "CONFIRMED", "REFUND_PENDING"),
     "CONFIRMED": (
         "BALANCE_DUE",
+        # ADR-0069 (keputusan owner 2026-11-13, opsi a): a confirmed booking can be
+        # cancelled directly, not only through CANCELLATION_REQUESTED. The reasons are
+        # real and happen before arrival: overbooking discovered after confirmation,
+        # owner withdrawing the villa, force majeure, and a guest whose funds never
+        # clear. Every one of these used to be written by the kernel through an edge
+        # the canonical graph did not have, so the graph — the map every audit and
+        # every agent trusts — claimed the situation was impossible.
+        "CANCELLED",
         "CANCELLATION_REQUESTED",
         "DISPUTED",
         "NO_SHOW",
@@ -233,6 +241,7 @@ _TRANSITION_TABLE: Mapping[str, tuple[str, ...]] = {
     ),
     "BALANCE_DUE": (
         "BALANCE_OVERDUE",
+        "CANCELLED",  # ADR-0069: same direct path as CONFIRMED (balance never paid).
         "CANCELLATION_REQUESTED",
         "DISPUTED",
         "NO_SHOW",
@@ -249,13 +258,18 @@ _TRANSITION_TABLE: Mapping[str, tuple[str, ...]] = {
         "PRE_ARRIVAL",
         "RELOCATED",
     ),
-    "PRE_ARRIVAL": ("CANCELLATION_REQUESTED", "DISPUTED", "IN_STAY", "NO_SHOW", "RELOCATED"),
+    # ADR-0069: a confirmed arrival can still be cancelled directly (owner withdrawal,
+    # villa made unavailable by damage, overbooking found late). The courtesy path via
+    # CANCELLATION_REQUESTED stays the default when the guest asks and money is at stake.
+    "PRE_ARRIVAL": ("CANCELLED", "CANCELLATION_REQUESTED", "DISPUTED", "IN_STAY", "NO_SHOW", "RELOCATED"),
     # IN_STAY -> NO_SHOW is deliberately NOT an edge: NO_SHOW is not an
     # occupying status, so allowing it while the guest is physically in the
     # villa would release the slot for re-sale (double-booking) and misstate
     # occupancy. A no-show is decided before arrival (CONFIRMED/BALANCE_DUE/
     # BALANCE_OVERDUE/PRE_ARRIVAL -> NO_SHOW), never during the stay.
-    "IN_STAY": ("CANCELLATION_REQUESTED", "COMPLETED", "DISPUTED", "RELOCATED"),
+    # ADR-0069: a stay can be cut short and cancelled directly (relocation is preferred
+    # when another unit is available; cancellation is what happens when it is not).
+    "IN_STAY": ("CANCELLED", "CANCELLATION_REQUESTED", "COMPLETED", "DISPUTED", "RELOCATED"),
     "COMPLETED": ("CLOSED", "DISPUTED", "REFUND_PENDING"),
     "CANCELLATION_REQUESTED": ("CANCELLATION_REVIEW", "CANCELLED"),
     "CANCELLATION_REVIEW": ("CANCELLED", "CONFIRMED", "NO_SHOW", "REFUND_PENDING"),

@@ -73,10 +73,15 @@ Fail-closed: lebih baik unit tertahan selama review daripada double booking.
 
 ## 2. Graf transisi
 
-Bentuk: `from_state -> frozenset(to_state)`. Jumlah sisi legal = **116** dari 1024
+Bentuk: `from_state -> frozenset(to_state)`. Jumlah sisi legal = **120** dari 1024
 pasangan terurut; 31 pasangan adalah self-transition (`SELF_TRANSITION`), 32 pasangan
-berasal dari status terminal (`TERMINAL_STATE`), sisanya 845 ilegal
+berasal dari status terminal (`TERMINAL_STATE`), sisanya 841 ilegal
 (`INVALID_TRANSITION`).
+
+Empat sisi `CONFIRMED`/`BALANCE_DUE`/`PRE_ARRIVAL`/`IN_STAY` → `CANCELLED` ditambahkan
+oleh **ADR-0069 opsi (a)** (keputusan owner 2026-11-13). Sebelumnya kernel sudah menulis
+sisi itu sementara graf tidak memuatnya. Setiap sisi pembatalan tetap wajib `reason`;
+jalur permintaan tamu yang berdampak uang tetap lewat `CANCELLATION_REQUESTED`.
 
 ### 2.1 Jalur utama (didokumentasikan & diuji end-to-end)
 

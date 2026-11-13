@@ -1,6 +1,6 @@
 # ADR-0069 — `CONFIRMED` hanya setelah pembayaran terverifikasi dan bukti blok villa
 
-- Status: **PROPOSED** (patch audit 2026-11-13, temuan K2; menunggu review Mas Anas)
+- Status: **ACCEPTED** (disetujui Mas Anas, 2026-11-13; patch audit temuan K2)
 - Date: 2026-11-13
 - Deciders: Mas Anas (owner) · divisi engineering Villa Agency OS
 - Supersedes (sebagian): ADR-0050 (gerbang komersial tetap berlaku, tetapi pintunya pindah dari
@@ -48,9 +48,18 @@ pre-arrival, dan KPI okupansi) bisa lahir tanpa uang dan tanpa bukti villa.
   keluarnya adalah membatalkan booking, bukan melepas hold. Tanpa penjaga ini, satu
   `release_hold` yang "berhasil" akan mengembalikan slot ke penjualan sementara booking yang
   belum dibayar tetap hidup — double booking yang lahir dari jalur yang tampak rutin.
-- **Temuan baru, sengaja tidak diubah di patch ini:** kernel juga menulis sisi pembatalan
-  `CONFIRMED/PRE_ARRIVAL/IN_STAY/BALANCE_DUE → CANCELLED` yang tidak ada di graf kanonik
-  `booking_states.py`. Perlu keputusan owner: tambahkan ke graf (dengan alasan bisnis) atau
-  arahkan lewat `CANCELLATION_REQUESTED`.
+- **Keputusan owner 2026-11-13 — opsi (a): sisi pembatalan langsung masuk ke graf kanonik.**
+  Kernel memang menulis `CONFIRMED/BALANCE_DUE/PRE_ARRIVAL/IN_STAY → CANCELLED`, sedangkan graf
+  kanonik tidak memuatnya; peta berkata "mustahil" untuk kejadian yang rutin. Empat sisi itu
+  sekarang resmi ada di `booking_states.py`, masing-masing tetap wajib `reason` (guard `*`).
+  - Alasan bisnis: villa ditarik owner setelah konfirmasi; kerusakan/force majeure; overbooking
+    yang baru ketahuan; dana tamu tidak pernah cair; tamu menghentikan menginap.
+  - Jalur sopan tetap `CANCELLATION_REQUESTED → CANCELLATION_REVIEW → CANCELLED` ketika
+    permintaan datang dari tamu dan uang sudah masuk (guard `approval` tetap di sisi
+    `CANCELLATION_REVIEW → CANCELLED`). Uang yang sudah diterima tidak hilang: `CANCELLED`
+    berlanjut ke `REFUND_PENDING`/`REFUNDED` seperti sebelumnya.
+  - Penjaga regresi: `tests/test_audit_k2_paid_then_confirmed.py` sekarang mewajibkan
+    **setiap** sisi di `_KERNEL_TRANSITIONS` ada di graf — pengecualian lama dihapus, sehingga
+    tulisan kernel yang tak terlihat di peta akan menggagalkan gerbang.
 - Data lama: booking `CONFIRMED` dengan `amount_paid_minor = 0` perlu ditinjau manual;
   patch ini tidak memigrasi baris yang sudah ada.

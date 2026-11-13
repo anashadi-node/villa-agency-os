@@ -760,10 +760,12 @@ class TestApplyTransitionExhaustive(unittest.TestCase):
                     self.assertEqual(caught.exception.code, B.CODE_INVALID_TRANSITION)
                     illegal += 1
         self.assertEqual(legal, len(B.all_transitions()))
-        self.assertEqual(legal, 116)
+        # 116 -> 120: ADR-0069 (opsi a) adds the four direct cancellation edges
+        # CONFIRMED/BALANCE_DUE/PRE_ARRIVAL/IN_STAY -> CANCELLED the kernel already wrote.
+        self.assertEqual(legal, 120)
         self.assertEqual(self_transition, 31)
         self.assertEqual(terminal, 32)
-        self.assertEqual(illegal, 845)
+        self.assertEqual(illegal, 841)
         self.assertEqual(legal + self_transition + terminal + illegal, 32 * 32)
 
     def test_outcome_echoes_the_request_canonically(self) -> None:
