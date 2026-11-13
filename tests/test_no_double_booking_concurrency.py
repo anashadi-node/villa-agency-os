@@ -334,6 +334,39 @@ class TestPreConfirmedBookingKeepsItsSlot(ConcurrencyTestCase):
             )
         self.assertEqual(caught.exception.code, "SLOT_ALREADY_HELD")
 
+    def test_two_writers_racing_to_free_and_take_the_slot_both_lose(self):
+        """The proof that matters: a release and a rival hold, released simultaneously.
+
+        Writer A tries to free the hold while writer B tries to sell the same nights.
+        Both must be refused, because the booking awaiting payment outranks both — this
+        is the multi-connection version of the guard, not just the single-connection one.
+        """
+        hold, booking = self._reserve()
+
+        def release(kernel: RK.ReservationKernel, index: int):
+            return kernel.release_hold(
+                hold.hold_id, reason="room taken offline", actor="user:owner-1"
+            )
+
+        outcomes = self.race(2, [release, self.hold_body(check_in="2026-10-02", check_out="2026-10-04")])
+        wins = [r for r, e in outcomes if e is None]
+        losses = [e for r, e in outcomes if e is not None]
+
+        self.assertEqual(wins, [], "neither freeing nor reselling the nights may succeed")
+        self.assertEqual(len(losses), 2)
+        self.assertEqual({e.code for e in losses}, {"HOLD_BACKS_BOOKING", "SLOT_ALREADY_HELD"})
+        # One hold, one booking, one occupied slot: nothing was created to paper over it.
+        self.assertEqual(self.row_count("holds"), 1)
+        self.assertEqual(self.row_count("bookings"), 1)
+        self.assertEqual(self.blocking_holds(), 1)
+        self.assertEqual(
+            self.kernel.conn.execute(
+                "SELECT status FROM bookings WHERE booking_id = ?", (booking.booking_id,)
+            ).fetchone()["status"],
+            "PAYMENT_PENDING",
+            "the unpaid booking must survive the race untouched",
+        )
+
     def test_cancelling_the_booking_asks_for_the_hold_to_be_released(self):
         """A cancellation stops depending on the hold, so the release may proceed.
 
