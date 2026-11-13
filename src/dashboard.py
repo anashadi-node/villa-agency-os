@@ -59,6 +59,8 @@ from urllib.parse import parse_qs, unquote, urlsplit
 import anchors as anchors_module
 import gates as gates_module
 import identity as identity_module
+import money_display as money_display_module
+import policy_engine as policy_engine_module
 import roles as roles_module
 import shadow_eval as shadow_eval_module
 from approvals import (
@@ -1783,8 +1785,42 @@ class Dashboard:
             + f"{escape_value(cells[-1])}</tr>"
         )
 
+    # -- money display ----------------------------------------------------- #
+    def money_reference_source(self, *, at: Any = None) -> Optional[Any]:
+        """The published rates for the reference conversion, or ``None`` (audit T8).
+
+        Read on demand, never cached across requests: a stale rate must stop producing a
+        reference the moment its freshness limit passes, and ``money_display`` applies that
+        limit itself. A policy store that cannot answer simply yields no reference.
+        """
+        try:
+            resolver = policy_engine_module.PolicyResolver(
+                self.conn, clock=self.clock, agency_id=self.agency_id
+            )
+        except Exception:  # noqa: BLE001 - no resolver ⇒ rupiah only, never a broken page
+            return None
+        return money_display_module.source_from_policy(
+            resolver, at=at if at is not None else self.clock.now()
+        )
+
+    def money(self, minor: Any, currency: str = "", *, source: Any = None, at: Any = None) -> str:
+        """Rupiah first, with the labelled USD reference beside it when one is justified.
+
+        IDR is the amount; the reference is informational and is omitted whenever the rate
+        is unpublished, undated or stale (see ``src/money_display.py``). Nothing on this
+        page ever *computes* with the converted figure.
+        """
+        return money_display_module.line(
+            minor, currency, source=source, today=at if at is not None else self.clock.now()
+        )
+
     def view_finance(self, principal: Principal) -> dict[str, Any]:
         now = to_iso(self.clock.now())
+        source = self.money_reference_source(at=self.clock.now())
+
+        def money(minor: Any, currency: str = "") -> str:
+            return self.money(minor, currency, source=source, at=self.clock.now())
+
         invoices = [
             (
                 row["invoice_number"] or "—",
@@ -1792,8 +1828,8 @@ class Dashboard:
                 row["booking_id"],
                 row["status"],
                 row["payment_status"],
-                format_money(row["total_minor"], row["currency"]),
-                format_money(row["amount_paid_minor"], row["currency"]),
+                money(row["total_minor"], row["currency"]),
+                money(row["amount_paid_minor"], row["currency"]),
                 row["issued_at"],
                 row["due_at"],
                 "LEWAT JATUH TEMPO"
@@ -1813,7 +1849,7 @@ class Dashboard:
                 row["invoice_id"],
                 row["provider"],
                 row["method"],
-                format_money(row["amount_minor"], row["currency"]),
+                money(row["amount_minor"], row["currency"]),
                 row["status"],
                 row["provider_intent_id"],
                 row["settled_at"] or "—",
@@ -1903,6 +1939,11 @@ class Dashboard:
                 ["Rekonsiliasi", "Jenis", "Status", "Payment", "Invoice", "Terdeteksi", "Jatuh tempo", "Catatan"],
                 recon,
                 empty="kasus rekonsiliasi",
+            ),
+            # The reference line tells the reader what the USD figure was computed from, or
+            # is empty so nothing is claimed when no fresh published rate exists.
+            "money_reference_note": escape_value(
+                money_display_module.footnote(source, today=self.clock.now())
             ),
         }
 

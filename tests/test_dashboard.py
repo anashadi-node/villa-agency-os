@@ -663,7 +663,12 @@ def test_finance_page_shows_invoice_payment_and_reconciliation(seeded_app):
     assert "INV-2026-0001" in body
     assert "payment-2" in body
     assert "UNMATCHED_PAYMENT" in body
-    assert "IDR 4,500,000" in body
+    # Rupiah, grouped the Indonesian way (audit 2026-11-13, T8): the finance page prints the
+    # amount through `money_display`, which formats IDR as `4.500.000`. The seed publishes no
+    # exchange rate, so the reference converter has nothing to stand behind and correctly
+    # prints the rupiah figure alone.
+    assert "IDR 4.500.000" in body
+    assert "≈ USD" not in body
 
 
 def test_inventory_calendar_marks_booked_hold_and_unknown(seeded_app):
