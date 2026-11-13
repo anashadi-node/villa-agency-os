@@ -100,22 +100,29 @@ Yang **sudah** ada adalah **identitas** AI (`ai_service.py`, ADR-0018) — yaitu
 
 Ini bukan kontradiksi — ADR-0012 sendiri menyatakan *"It is a design acceptance: no payment schema change is executed until the owner approves the migration itself"*. Jadi statusnya jujur: **desain diterima, eksekusi belum**.
 
-### 3.4 Matriks tes wajib (§19 dok Anda) belum ada sebagai kategori
+### 3.4 Matriks tes wajib (§19 dok Anda) — potret September + audit ulang 2026-11-13
 
-66 berkas tes ada, tapi **0** berkas untuk kategori yang dokumen Anda wajibkan:
+> **Koreksi terukur (2026-11-13).** Angka "66 berkas, 0 untuk semua kategori" adalah potret
+> September. Audit ulang dihitung **per badan fungsi uji** (bukan grep nama berkas), atas
+> `tests/test_*.py` (104 berkas / 57.995 baris) ditambah berkas konkurensi baru. Hasilnya
+> tidak "0": beberapa kategori sudah punya uji nyata, sisanya tetap belum terbukti —
+> dan itu ditulis apa adanya.
 
-| Kategori §19 | Berkas tes | Kenapa |
+| Kategori §19 | Status terukur (2026-11-13) | Bukti / cara ukur |
 |---|---|---|
-| Functional | ✅ ada (domain) | booking/hold/payment sudah diuji |
-| Concurrency | ⚠️ 0 | — |
-| Security (IDOR, prompt injection, tool abuse) | ⚠️ 0 | belum ada lapisan AI untuk diserang |
-| Finance | ✅ sebagian | `tests/` punya tes payment/reconciliation |
-| AI Grounding | ⚠️ 0 | agent belum ada |
-| Resilience (outage, crash, failover) | ⚠️ 0 | — |
-| Human Handoff | ⚠️ 0 | §13 belum dibangun |
+| Functional | ✅ ada | tes domain booking/hold/payment (~2.719 `def test_` total) |
+| Concurrency | ✅ **1 berkas / 7 uji** | `tests/test_no_double_booking_concurrency.py` — file-backed, `BEGIN IMMEDIATE`, 2–3 penulis + `threading.Barrier`; **terbukti bisa gagal** lewat kontrol negatif. Rincian: `docs/DOUBLE_BOOKING_EVIDENCE.md` |
+| Security (IDOR/tenant, prompt injection, tool abuse) | 🟡 **sebagian**: tenant/IDOR 5 berkas / 11 uji · penolakan tool 7 / 15 · injeksi-sebagai-data 2 / 6 | klasifikasi regex per `def test_`; cakupan belum sistematis, tidak ada uji serangan terarah menyeluruh |
+| Finance | ✅ sebagian | tes payment/reconciliation |
+| AI Grounding | 🟡 16 berkas / 86 uji menyebut `grounding`/`evidence_ref` — **batas atas** (token longgar), bukan bukti kualitas | klasifikasi regex |
+| Resilience (outage, crash, failover) | 🟡 `retry`/`idempoten`/`replay` 42 berkas / 302 uji — **batas atas**; tidak ada uji failover/outage terarah | klasifikasi regex |
+| Human Handoff | 🟡 10 berkas / 43 uji (`handoff`/`escalat`) — permukaan ada, alur §13 belum utuh | klasifikasi regex |
 | Audit | ✅ 1 berkas | `tests/` audit |
 
-**Kesimpulan jujur:** §19 belum bisa dijalankan karena 6 dari 8 kategorinya menguji lapisan yang belum ada.
+**Kesimpulan jujur:** dari 8 kategori §19, **1 tertutup penuh** (concurrency, dengan bukti bisa
+gagal), **3 tertutup sebagian** (security, finance, audit), **3 punya permukaan tapi belum
+terbukti** (grounding, resilience, handoff). Tidak ada kategori yang boleh disebut "selesai"
+tanpa uji terarah yang bisa gagal.
 
 ### 3.5 Dokumen AI Workforce belum tersambung ke traceability repo — **USANG sejak 2026-09-28**
 
