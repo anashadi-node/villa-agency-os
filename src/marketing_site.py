@@ -27,7 +27,9 @@ Recorded decisions:
    network assets (single-file response: inline CSS/SVG, and base64-embedded
    JPEG villa photos read from ``assets/photos/`` at startup — zero new routes,
    zero outbound requests from the rendered page; see ``docs/PHOTO_CREDITS_2026-10-06.md``).
- * Serving: deliberately single-threaded (the sqlite connection is bound to the
+ * Serving: requests are read on bounded worker threads and handled one at a
+   time under a lock (audit 2026-11-13, K5; see ``dashboard.serve``). Historically
+   single-threaded (the sqlite connection was bound to the
    creating thread, same reason as the internal dashboard) and loopback-bound
    unless ``--allow-remote`` is given explicitly.
 
@@ -987,8 +989,11 @@ class _MarketingRequestHandler(SafeHeaderMixin, BaseHTTPRequestHandler):
     #: stdlib CVEs still apply (the dashboard already blanks this).
     sys_version = ""
     #: Bounded read: ``StreamRequestHandler.setup`` applies this to the socket,
-    #: so a half-sent request dies instead of holding the single serving thread.
+    #: so a half-sent request releases its reader thread.
     timeout = CONNECTION_TIMEOUT_SECONDS
+    #: ``HEAD`` answers with the ``GET`` headers and no body (``SerializedDispatchMixin``);
+    #: link checkers, uptime monitors and some crawlers send nothing else.
+    serve_head_as_get = True
     site: MarketingSite
     #: Set as soon as a response is committed, so the catch-all guard never
     #: tries to prepend a 500 to a body that is already in flight.
@@ -1022,6 +1027,27 @@ class _MarketingRequestHandler(SafeHeaderMixin, BaseHTTPRequestHandler):
             self.send_header(name, value)
         self.end_headers()
         self.wfile.write(payload)
+
+    def _send_health(self) -> None:
+        """Liveness *and* readiness in one line: the process answers and the DB reads.
+
+        A health check that only sees the process told "healthy" while every page
+        failed (the 2026-11-12 ``TemplateError`` incident). This one reads one row;
+        it reveals nothing about the estate.
+        """
+        try:
+            self.site.conn.execute("SELECT 1").fetchone()
+            status, body = 200, b"ok\n"
+        except Exception:  # noqa: BLE001 - any database fault is "not ready"
+            status, body = 503, b"database unavailable\n"
+        self._response_started = True
+        self.send_response(status)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(body)
 
     def _error(
         self, status: int, message: str, *, retry_after: Optional[int] = None
@@ -1116,6 +1142,8 @@ class _MarketingRequestHandler(SafeHeaderMixin, BaseHTTPRequestHandler):
                 except DomainError:
                     property_ref = ""
             self._send_html(site.inquiry_form_html(property_ref), no_store=True)
+        elif path == "/healthz":
+            self._send_health()
         elif path == "/favicon.ico":
             self.send_response(204)
             self.send_header("X-Content-Type-Options", "nosniff")

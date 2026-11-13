@@ -40,14 +40,17 @@ from __future__ import annotations
 
 import argparse
 import html
+import io
 import json
 import re
 import secrets
 import sqlite3
 import sys
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Optional, Sequence
@@ -285,17 +288,30 @@ UNSENT_DRAFT_STATUSES: tuple[str, ...] = ("APPROVED",)
 MAX_FORM_BYTES = 64 * 1024
 
 # Same rule as the marketing site: one stalled socket must not own the
-# process. ``http.server`` is deliberately single-threaded (see ``serve``), so
-# without a read timeout a half-sent request blocks the operator's dashboard
-# for as long as the client stays connected.
+# process. Reading is threaded (see ``serve``), but a reader thread is still a
+# bounded resource, so every read keeps a deadline.
 CONNECTION_TIMEOUT_SECONDS = 20
 
 #: Depth of the listen queue. ``socketserver`` defaults to 5, and on Linux a full
 #: accept queue drops new SYNs — the kernel then retries them one second later.
 #: Measured on this repo's marketing site: 20 simultaneous visitors cost 1248 ms
 #: at the default depth and 83 ms at 64, with identical per-request latency.
-#: This buffers *connections*, not requests; serving stays single-threaded.
+#: This buffers *connections* waiting for a reader thread.
 REQUEST_QUEUE_SIZE = 64
+
+#: How many connections may be *read* at the same time (audit 2026-11-13, K5).
+#: Before this fix one stalled socket held the only thread for the full read
+#: timeout and every other visitor waited 20 s. Reading now happens on a thread
+#: per connection (bounded by this number); the handler body still runs one at a
+#: time under ``ListeningHTTPServer.request_lock``, so the database keeps a single
+#: writer order and a transaction is never interleaved with another.
+MAX_CONCURRENT_CONNECTIONS = 64
+
+#: A request body up to this size is read *before* the dispatch lock is taken,
+#: so a client that trickles its body cannot hold the lock. Larger bodies are
+#: never needed (both surfaces cap forms well below this) and are left to the
+#: handler, which refuses them without reading.
+MAX_PREBUFFERED_BODY = 64 * 1024
 
 DEFAULT_IDENTITIES: Mapping[str, str] = MappingProxyType(
     {
@@ -2964,6 +2980,9 @@ class DashboardRequestHandler(SafeHeaderMixin, BaseHTTPRequestHandler):
         self._write(self.dashboard.error_response(exc))
 
     def _serve(self, method: str) -> None:
+        if method == "GET" and urlsplit(self.path).path == "/healthz":
+            self._write_health()
+            return
         try:
             request = self._build_request(method)
             response = self.dashboard.dispatch(request)
@@ -3009,6 +3028,28 @@ class DashboardRequestHandler(SafeHeaderMixin, BaseHTTPRequestHandler):
             )
         body = self.rfile.read(length).decode("utf-8", errors="replace") if length else ""
         return parse_qs(body, keep_blank_values=True)
+
+    def _write_health(self) -> None:
+        """Unauthenticated readiness probe: process up and one database read works.
+
+        It names no page, no role and no count, so it can sit in front of the token
+        check (audit 2026-11-13, K5: a probe that needs a credential is a probe
+        nobody wires up).
+        """
+        try:
+            _driver_rows(self.dashboard.conn, "SELECT 1", ())
+            status, body = 200, b"ok\n"
+        except Exception:  # noqa: BLE001 - any database fault is "not ready"
+            status, body = 503, b"database unavailable\n"
+        self.send_response(status)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        self.wfile.write(body)
 
     def _write(self, response: _Response) -> None:
         payload = response.body.encode("utf-8")
@@ -3087,14 +3128,112 @@ def resolve_bind(host: Optional[str], *, allow_remote: bool = False) -> str:
     return candidate
 
 
-class ListeningHTTPServer(HTTPServer):
-    """``HTTPServer`` whose listen queue can absorb a burst of connections.
+class SerializedDispatchMixin:
+    """Read each request on its own thread, run the handler under one lock.
 
-    Only the accept queue is widened. Requests are still served one at a time,
-    which keeps the ``sqlite3`` connection on the thread that owns it.
+    Audit 2026-11-13, finding K5: a single-threaded ``http.server`` lets one idle
+    socket block every visitor for the full read timeout (measured: 20.0 s on both
+    surfaces). This mixin keeps the property that made single-threading attractive
+    — one handler at a time, so one writer order on the ``sqlite3`` connection —
+    while moving everything a client controls off that critical section:
+
+    * the request line, headers and (bounded) body are read before the lock;
+    * the response is rendered into memory under the lock and written after it,
+      so a client that reads slowly cannot hold the lock either.
+
+    ``HEAD`` is answered from ``do_GET`` with the body removed when the handler
+    opts in through a ``serve_head_as_get = True`` class attribute (read with
+    ``getattr``: the mixin sits first in the MRO and must not shadow it).
+    """
+
+    def handle_one_request(self) -> None:  # noqa: C901 - mirrors the stdlib shape
+        try:
+            self.raw_requestline = self.rfile.readline(65537)
+            if len(self.raw_requestline) > 65536:
+                self.requestline = ""
+                self.request_version = ""
+                self.command = ""
+                self.send_error(414)
+                return
+            if not self.raw_requestline:
+                self.close_connection = True
+                return
+            if not self.parse_request():
+                return
+            head_only = False
+            method_name = "do_" + self.command
+            if self.command == "HEAD" and getattr(self, "serve_head_as_get", False):
+                method_name, head_only = "do_GET", True
+            if not hasattr(self, method_name):
+                self.send_error(501, f"Unsupported method ({self.command!r})")
+                return
+            self._prebuffer_body()
+            real_wfile = self.wfile
+            buffer = io.BytesIO()
+            self.wfile = buffer
+            lock = getattr(self.server, "request_lock", None)
+            try:
+                if lock is None:
+                    getattr(self, method_name)()
+                else:
+                    with lock:
+                        getattr(self, method_name)()
+                if hasattr(self, "_headers_buffer") and self._headers_buffer:
+                    self.flush_headers()
+            finally:
+                self.wfile = real_wfile
+            payload = buffer.getvalue()
+            if head_only:
+                end = payload.find(b"\r\n\r\n")
+                payload = payload if end < 0 else payload[: end + 4]
+            real_wfile.write(payload)
+            real_wfile.flush()
+        except TimeoutError as exc:
+            self.log_error("Request timed out: %r", exc)
+            self.close_connection = True
+
+    def _prebuffer_body(self) -> None:
+        if self.command not in ("POST", "PUT", "PATCH"):
+            return
+        raw_length = self.headers.get("Content-Length")
+        try:
+            length = int(raw_length) if raw_length is not None else -1
+        except ValueError:
+            return
+        if 0 <= length <= MAX_PREBUFFERED_BODY:
+            self.rfile = io.BytesIO(self.rfile.read(length))
+
+
+class ListeningHTTPServer(ThreadingMixIn, HTTPServer):
+    """A threaded reader in front of a serialized handler (see ``SerializedDispatchMixin``).
+
+    The listen queue is widened (``REQUEST_QUEUE_SIZE``), the number of reader
+    threads is bounded (``MAX_CONCURRENT_CONNECTIONS``) and ``request_lock`` is the
+    one lock every handler body runs under.
     """
 
     request_queue_size = REQUEST_QUEUE_SIZE
+    daemon_threads = True
+    block_on_close = False
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.request_lock = threading.Lock()
+        self._slots = threading.BoundedSemaphore(MAX_CONCURRENT_CONNECTIONS)
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        self._slots.acquire()
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request: Any, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
 
 
 def serve(
@@ -3106,15 +3245,16 @@ def serve(
 ) -> HTTPServer:
     """Bind loopback (unless allowed) and return a server; the caller serves it.
 
-    Deliberately **single-threaded**: a ``sqlite3`` connection is bound to the
-    thread that created it, and a thread-per-request server would sample it from
-    threads that do not own it. One internal operator does not need concurrency,
-    and serialising requests also means ``--db`` sees one writer-order.
-
-    The listen queue is widened (``REQUEST_QUEUE_SIZE``) so that a burst of
-    callers waits in the kernel instead of being dropped and retried.
+    Reading is concurrent, handling is serialized (audit 2026-11-13, K5): one
+    stalled client no longer blocks everyone, and the database still sees exactly
+    one request at a time. A handler class that does not already carry
+    :class:`SerializedDispatchMixin` gets it here, so no caller can forget it.
     """
     bind_host = resolve_bind(host, allow_remote=allow_remote)
+    if not issubclass(handler_class, SerializedDispatchMixin):
+        handler_class = type(
+            handler_class.__name__, (SerializedDispatchMixin, handler_class), {}
+        )
     return ListeningHTTPServer((bind_host, int(port)), handler_class)
 
 

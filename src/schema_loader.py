@@ -322,7 +322,12 @@ def connect_sqlite(path: str | os.PathLike[str] = ":memory:") -> sqlite3.Connect
     and WAL is enabled for file-backed databases so a daemon and a report job
     can read concurrently.
     """
-    conn = sqlite3.connect(str(path), isolation_level=None)  # explicit transactions
+    # ``check_same_thread=False``: the HTTP surfaces read requests on worker threads
+    # and run every handler under one lock (``dashboard.SerializedDispatchMixin``),
+    # so the connection is used by one thread at a time but not always the same
+    # one. The SQLite build is serialized (``sqlite3.threadsafety``), and the lock
+    # keeps explicit transactions from interleaving (audit 2026-11-13, K5).
+    conn = sqlite3.connect(str(path), isolation_level=None, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     if str(path) != ":memory:":

@@ -69,6 +69,30 @@ Pelajaran metodologisnya: hambatannya ternyata **bukan** "single-threaded",
 melainkan antrean kernel. Menambah thread duluan akan menutupi gejala dan
 menambah risiko (koneksi `sqlite3` terikat thread).
 
+### 2.2a Batas waktu baca saja tidak cukup (KRITIS → ditutup, audit 2026-11-13 K5)
+
+Batas 20 detik di §2.1 mencegah socket diam memegang layanan *selamanya*, tetapi
+selama 20 detik itu **semua** pengunjung lain tetap menunggu. Diukur: satu socket
+diam → permintaan berikutnya 20,0 detik di situs dan 20,0 detik di dashboard.
+Penyerang cukup membuka satu socket baru tiap 20 detik.
+
+Perbaikan (`dashboard.SerializedDispatchMixin` + `ListeningHTTPServer`):
+
+* membaca permintaan (baris, header, badan ≤ 64 KiB) di thread per koneksi,
+  dibatasi `MAX_CONCURRENT_CONNECTIONS = 64`;
+* badan handler tetap berjalan **satu per satu** di bawah `request_lock`, jadi
+  urutan penulis SQLite dan transaksi eksplisit tidak pernah saling selip;
+* respons dirender ke memori di bawah kunci dan ditulis sesudahnya, sehingga
+  pembaca lambat juga tidak memegang kunci;
+* `connect_sqlite(..., check_same_thread=False)`: koneksi dipakai satu thread pada
+  satu waktu (kunci), tetapi tidak selalu thread yang sama.
+
+Terukur sesudahnya: 30 socket diam terbuka, `/villas` 16 ms, dashboard 4 ms;
+60 GET paralel lulus 0,09 detik. Ditambah `/healthz` (tanpa token, hanya
+`ok` + satu baca DB) dan `HEAD` di situs publik. Dikunci oleh
+`tests/test_audit_k5_concurrent_reads.py` (termasuk uji bahwa dua badan handler
+tidak pernah berjalan bersamaan).
+
 ### 2.3 Dashboard bisa di-iframe (RENDAH → ditutup)
 
 `default-src 'none'` **tidak** mengatur frame; yang mengatur adalah
