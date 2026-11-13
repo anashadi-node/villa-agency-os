@@ -26,7 +26,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.12"]
+        # 3.12 = interpreter produksi (/usr/bin/python3, Ubuntu 24.04). 3.11 dan 3.13 menjaga
+        # klaim "stdlib-only" tetap benar di kedua sisinya (audit 2026-11-13, S4).
+        python: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v7
 
@@ -52,10 +54,19 @@ jobs:
           set -o pipefail
           make check 2>&1 | tee check.log
 
+      # Bukti alur penuh di DB kosong: 17 langkah dari tenant sampai penutupan §30,
+      # termasuk urutan bayar → bukti blok → CONFIRMED (ADR-0069). Laporan JSON ikut diunggah.
+      - name: Go-live smoke
+        run: |
+          set -o pipefail
+          python scripts/go_live_smoke.py --db "$RUNNER_TEMP/smoke.db" --report smoke.report.json 2>&1 | tee -a check.log
+
       - name: Upload gate log
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: check-log-python-${{ matrix.python }}
-          path: check.log
+          path: |
+            check.log
+            smoke.report.json
           if-no-files-found: ignore

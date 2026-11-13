@@ -13,14 +13,17 @@ platform the way one week of operation would, one named actor at a time:
     6  quote       priced from the versions in force, then persisted
     7  offer       drafted, sent, accepted by the guest
     8  hold        the slot leaves the market (a second hold on it is refused)
-    9  booking     confirmed from the hold, against the accepted quote version
+    9  booking     reserved from the hold (PAYMENT_PENDING), against the accepted quote
    10  invoice     issued from the accepted quote
-   11  payment     a hosted intent, then the provider's signed webhook settles it
-   12  documents   the document kinds §30 requires are recorded
-   13  stay        arrival prepared, guest checked in, stay completed
-   14  settlement  supplier settled (DUE then PAID), deposit resolved
-   15  closure     §30's gate opens; the booking is closed
-   16  evidence    audit chain, ledger, KPI bundle, JSON report on disk
+   11  payment     a hosted intent, the provider's signed webhook settles it, Finance
+                   marks the booking paid against that SUCCEEDED payment
+   12  block proof the villa's written block (level B) is recorded *after* payment and the
+                   booking is CONFIRMED (ADR-0033 / ADR-0069; stale proof is refused)
+   13  documents   the document kinds §30 requires are recorded
+   14  stay        arrival prepared, guest checked in, stay completed
+   15  settlement  supplier settled (DUE then PAID), deposit resolved
+   16  closure     §30's gate opens; the booking is closed
+   17  evidence    audit chain, ledger, KPI bundle, JSON report on disk
 
 Every step is a command the platform owns, performed by a person the report can name. A
 refusal stops the run and prints the domain code — a go-live that cannot be demonstrated is
