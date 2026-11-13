@@ -44,7 +44,7 @@ hr { border: none; border-top: 0.5pt solid #c9cfcb; margin: 6mm 0; }
   <h1>Project Villa Agency — Dokumen Update Lengkap A–Z</h1>
   <div class="sub">Reservation &amp; Operations Control Plane</div>
   <div class="meta">Dokumen kerja internal · dirender dari
-  <code>docs/PROJECT_VILLA_AGENCY_A-Z.md</code> · 136,445 karakter</div>
+  <code>docs/PROJECT_VILLA_AGENCY_A-Z.md</code> · 139,816 karakter</div>
 </section>
 <p><strong>Nama sistem:</strong> Villa Agency OS (Villa Management &amp; Agency)<br />
 <strong>Tanggal dokumen:</strong> 12 November 2026 · <strong>Pemilik:</strong> Owner (Mas Anas) · <strong>Disusun oleh:</strong> divisi Villa Management &amp; Agency<br />
@@ -946,7 +946,7 @@ ia mengurus tiga hal yang paling sering menimbulkan kerugian di bisnis villa —
 <tr>
 <td><code>tests/</code></td>
 <td>Uji otomatis (pytest + subtests)</td>
-<td>103 berkas <code>test_*.py</code> + <code>conftest.py</code> + <code>seed_support.py</code>; 57.955 baris</td>
+<td><strong>104</strong> berkas <code>test_*.py</code> (57.995 baris) + <code>conftest.py</code> + <code>seed_support.py</code> → seluruh <code>.py</code> di <code>tests/</code>: <strong>106 berkas / 58.235 baris</strong>. Diukur 2026-11-13; pada potret <code>2cb0696</code> terukur 102 / 57.649 (seluruh <code>.py</code>: 104 / 57.881)</td>
 </tr>
 <tr>
 <td><code>docs/</code></td>
@@ -2840,7 +2840,7 @@ python3 src/marketing_site.py --db /tmp/demo/villa.db --dump /tmp/demo/site   # 
 <h3 id="224-rentang-interpreter-yang-diuji-scaling_and_upgrade-62-potret-2026-10-25">22.4 Rentang interpreter yang diuji (<code>SCALING_AND_UPGRADE</code> §6.2, potret 2026-10-25)</h3>
 <p>3.11.16 → seluruh suite lulus · 3.12.3 → seluruh suite lulus · 3.14.9 → <strong>58/58 modul <code>src/</code> berhasil diimpor</strong> (diukur ulang 2026-11-13), suite belum dijalankan di bawah 3.14.9. Aturan naik versi: jalankan <code>make check</code> dengan interpreter baru; bukti = lulus, bukan asumsi. Tidak ada <code>pip install</code> di produksi.</p>
 <h3 id="225-kategori-tes-yang-masih-kurang-potret-2026-09-28">22.5 Kategori tes yang masih kurang (potret 2026-09-28)</h3>
-<p><code>STATUS_AND_GAP_MAP</code> §3.4 mencatat kategori concurrency, security (IDOR/prompt-injection/tool abuse), AI grounding, resilience, human handoff <strong>belum</strong> ada sebagai berkas bernama. Itu potret; sejak itu lapisan AI dibangun, jadi daftar ini <strong>perlu diaudit ulang</strong> (Bab 25).</p>
+<p><code>STATUS_AND_GAP_MAP</code> §3.4 mencatat kategori concurrency, security (IDOR/prompt-injection/tool abuse), AI grounding, resilience, human handoff <strong>belum</strong> ada sebagai berkas bernama. Itu potret September; audit ulang 2026-11-13 (hitungan per <strong>badan fungsi uji</strong>, bukan grep berkas) memberi angka terukur: concurrency <strong>1 berkas khusus / 7 uji</strong> (<code>tests/test_no_double_booking_concurrency.py</code>, file-backed + <code>threading.Barrier</code>), tenant/IDOR <strong>5 berkas / 11 uji</strong>, penolakan tool <strong>7 / 15</strong>, instruksi-diperlakukan-sebagai-data <strong>2 / 6</strong>, human handoff <strong>10 / 43</strong>; token <code>grounding</code> 16 / 86 dan <code>retry|idempoten|replay</code> 42 / 302 adalah <strong>batas atas</strong> (token longgar), jadi bukan bukti kualitas. Rincian bukti: <code>docs/DOUBLE_BOOKING_EVIDENCE.md</code>.</p>
 <h3 id="226-probe-akses">22.6 Probe akses</h3>
 <p><code>scripts/access_matrix_probe.py</code> menguji matriks peran × halaman lewat HTTP nyata dengan kontrol negatif. <code>scripts/perf_probe.py</code> mengukur beban (Bab 23).</p>
 <hr />
@@ -2987,8 +2987,8 @@ python3 src/marketing_site.py --db /tmp/demo/villa.db --dump /tmp/demo/site   # 
 </tr>
 <tr>
 <td>Tes</td>
-<td>103 <code>test_*.py</code> (+ <code>conftest.py</code>, <code>seed_support.py</code>), 57.955 baris (2026-11-13; potret 102 / 57.668)</td>
-<td>hitung berkas</td>
+<td><strong>104</strong> <code>test_*.py</code>, 57.995 baris; seluruh <code>.py</code> di <code>tests/</code> 106 / 58.235 (diukur 2026-11-13 atas HEAD <code>23a0a0d</code> + uji konkurensi; potret <code>2cb0696</code> = 102 / 57.649)</td>
+<td><code>git ls-tree</code> + <code>wc -l</code> per berkas</td>
 </tr>
 <tr>
 <td><code>make check</code> rc=0 · 3.875 passed · 4 skipped · 4.008 subtests · 377 berkas dipindai</td>
@@ -3025,7 +3025,7 @@ python3 src/marketing_site.py --db /tmp/demo/villa.db --dump /tmp/demo/site   # 
 <blockquote>
 <p>Catatan: D1–D17 lengkap; di berkas, baris D17 tertulis sebelum D16.</p>
 </blockquote>
-<p><strong>Perubahan sejak potret Status-Gap (2026-09-28/10-08):</strong> tes naik dari 3.768 ke 3.875 (dihitung 2026-11-13; 103 berkas <code>test_*.py</code>); berkas pindai dari 344 ke 370; lapisan AI yang pada potret "nol" kini ada sebagian (di bawah); D17 sudah <code>DECIDED</code>; peta geo (017), <code>--token-file</code>, dan gerbang secret-scan yang lebih ketat masuk pada 2026-11-12.</p>
+<p><strong>Perubahan sejak potret Status-Gap (2026-09-28/10-08):</strong> tes naik dari 3.768 ke 3.875 (dihitung 2026-11-13; 104 berkas <code>test_*.py</code> setelah uji konkurensi masuk); berkas pindai dari 344 ke 370; lapisan AI yang pada potret "nol" kini ada sebagian (di bawah); D17 sudah <code>DECIDED</code>; peta geo (017), <code>--token-file</code>, dan gerbang secret-scan yang lebih ketat masuk pada 2026-11-12.</p>
 <h3 id="241-lapisan-ai-workforce-keadaan-kode">24.1 Lapisan AI Workforce — keadaan kode</h3>
 <table>
 <thead>
@@ -3123,8 +3123,8 @@ python3 src/marketing_site.py --db /tmp/demo/villa.db --dump /tmp/demo/site   # 
 <tr>
 <td>4</td>
 <td>Kategori tes: concurrency, security (IDOR/prompt-injection/tool abuse), AI grounding, resilience, human handoff tidak ada sebagai berkas bernama pada potret</td>
-<td>liputan §19 belum terbukti</td>
-<td>Status-Gap §3.4 (potret; <strong>perlu audit ulang</strong> — AI sudah dibangun sejak itu)</td>
+<td><strong>Sebagian tertutup (2026-11-13)</strong> — diukur per badan fungsi uji: concurrency 1 berkas/7 uji, tenant/IDOR 5/11, penolakan tool 7/15, injeksi-sebagai-data 2/6, handoff 10/43; kategori lain tetap <strong>belum terbukti</strong></td>
+<td><code>docs/DOUBLE_BOOKING_EVIDENCE.md</code>; <code>docs/STATUS_AND_GAP_MAP.md</code> §3.4</td>
 <td>QA/Tech</td>
 </tr>
 <tr>
@@ -4051,4 +4051,78 @@ membawa risiko kepatuhan (menghapus data transaksi pada tahun ke-7 sementara kew
 pembukuan/pajak berjalan 10 tahun), jadi ia didahulukan sebelum ada penghapusan data
 nyata. Butir 1 kini punya penjaga otomatis: komentar skema yang menyebut ADR yang salah
 menggagalkan <code>make check</code>, bukan menunggu audit berikutnya.</p>
+<h2 id="lampiran-g-bukti-konkurensi-sensus-angka-diukur-2026-11-13">Lampiran G — Bukti konkurensi &amp; sensus angka (diukur 2026-11-13)</h2>
+<p>Lampiran ini menjawab keberatan yang paling mudah ditutupi kata: klaim "0 confirmed double
+booking" hanya bermakna kalau ada uji yang <strong>bisa gagal</strong> saat jaminannya dicabut. Semua angka di
+bawah dihitung dari repo/DB pada 2026-11-13, bukan dikutip.</p>
+<table>
+<thead>
+<tr>
+<th>Yang diukur</th>
+<th>Angka</th>
+<th>Cara ukur</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Uji balapan nyata</td>
+<td><code>tests/test_no_double_booking_concurrency.py</code> — 272 baris, 7 uji</td>
+<td><code>wc -l</code>; <code>grep -cE '^\s+def test_'</code></td>
+</tr>
+<tr>
+<td>Basis uji</td>
+<td>DB <strong>file-backed</strong> + <code>BEGIN IMMEDIATE</code> + partial unique index <code>uq_holds_active_slot</code>; 2–3 penulis nyata disinkronkan <code>threading.Barrier</code></td>
+<td>baca <code>src/reservation_kernel.py</code>, <code>src/schema/001_initial.sql</code>, isi uji</td>
+</tr>
+<tr>
+<td>Alasan <code>:memory:</code> ditolak</td>
+<td>setiap koneksi <code>sqlite3</code> mendapat database privat → tidak ada balapan → uji "satu pemenang" lulus secara hampa</td>
+<td><code>docs/DOUBLE_BOOKING_EVIDENCE.md</code></td>
+</tr>
+<tr>
+<td>Kontrol positif</td>
+<td>dua unit berbeda, dua penulis → dua-duanya sukses (membuktikan harness memang paralel)</td>
+<td>uji <code>TestDifferentUnitsDoNotInterfere</code></td>
+</tr>
+<tr>
+<td>Kontrol negatif</td>
+<td>pada salinan terpisah: <code>BEGIN IMMEDIATE</code>→<code>BEGIN</code>, guard overlap dilewati, index dihapus → uji <strong>gagal</strong> (bukti uji tidak hampa)</td>
+<td><code>/tmp/negctl</code> (salinan, bukan repo kerja)</td>
+</tr>
+<tr>
+<td>Stabilitas</td>
+<td>1×, 5×, 12×, 20×, 20×, 10× run berulang; tiap run <code>7 passed</code></td>
+<td>log run; <code>pytest.ini</code> tanpa <code>addopts</code> penutup kegagalan</td>
+</tr>
+<tr>
+<td>Model skema</td>
+<td><strong>72 tabel · 62 indeks · 64 trigger · 106 enum · 77 baris INSERT</strong></td>
+<td><code>schema_loader.parse_schema_model('sqlite')</code> + regex <code>src/schema/*.sql</code> (dua sumber independen)</td>
+</tr>
+<tr>
+<td>Berkas uji</td>
+<td><code>tests/test_*.py</code> <strong>104 berkas / 57.995 baris</strong>; seluruh <code>.py</code> di <code>tests/</code> <strong>106 / 58.235</strong></td>
+<td><code>git ls-tree</code> + <code>wc -l</code> per berkas</td>
+</tr>
+<tr>
+<td>Fungsi uji</td>
+<td><strong>2.719</strong> <code>def test_</code></td>
+<td><code>grep -rhcE '^\s+def test_' tests/test_*.py</code></td>
+</tr>
+<tr>
+<td>Berkas ter-track</td>
+<td><strong>384</strong></td>
+<td><code>git ls-files \| wc -l</code></td>
+</tr>
+<tr>
+<td>Kategori uji (per badan fungsi)</td>
+<td>concurrency 1/7 · tenant-IDOR 5/11 · penolakan tool 7/15 · injeksi-sebagai-data 2/6 · handoff 10/43 · <code>grounding</code> 16/86 dan <code>retry</code>/<code>idempoten</code>/<code>replay</code> 42/302 (<strong>batas atas, token longgar</strong>)</td>
+<td>skrip klasifikasi <code>re.split</code> per <code>def test_</code></td>
+</tr>
+</tbody>
+</table>
+<p>Batas yang tetap harus dikatakan: uji ini <strong>antar-thread dalam satu proses pada satu berkas</strong>
+(bukan antar-host), hanya SQLite (twin PostgreSQL diuji terpisah oleh target <code>pg-twin</code>), dan tidak
+mengukur kinerja. Yang dibuktikan adalah <strong>kebenaran</strong> (satu slot, satu pemegang), bukan
+kemustahilan mutlak di semua topologi.</p>
 </body></html>

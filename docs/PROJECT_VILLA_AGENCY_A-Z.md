@@ -390,7 +390,7 @@ Keduanya **loopback saja**. Membuka dashboard ke internet butuh lapisan login ta
 |---|---|---|
 | `src/` | Seluruh logika domain, Python stdlib saja | 58 modul `.py`, 52.924 baris (potret `2cb0696`) |
 | `src/schema/` | Skema SQLite + twin PostgreSQL + migrasi | `001_initial.sql`, `001_initial.pg.sql`, `002_pg_range_exclusions.pg.sql`, migrasi `003`–`008`, `010`–`017` (tidak ada `009`) |
-| `tests/` | Uji otomatis (pytest + subtests) | 103 berkas `test_*.py` + `conftest.py` + `seed_support.py`; 57.955 baris |
+| `tests/` | Uji otomatis (pytest + subtests) | **104** berkas `test_*.py` (57.995 baris) + `conftest.py` + `seed_support.py` → seluruh `.py` di `tests/`: **106 berkas / 58.235 baris**. Diukur 2026-11-13; pada potret `2cb0696` terukur 102 / 57.649 (seluruh `.py`: 104 / 57.881) |
 | `docs/` | Dokumen kerja, ADR, keamanan, laporan desain | 29 berkas `.md` di akar `docs/` (42 entri termasuk HTML/PDF dan subfolder), `docs/adr/` (68 ADR), `docs/security/` |
 | `scripts/` | CLI operator, gerbang, utilitas | 22 berkas |
 | `templates/` | HTML dashboard (`base`, `error`, dan halaman), `templates/marketing/` (9 berkas), `templates/messages/id-ID.json` (templat pesan) | 15 `.html` dashboard |
@@ -1169,7 +1169,7 @@ Catatan desain gerbang: `-q` sudah ada di `pytest.ini`; menambah satu lagi (`-qq
 
 ### 22.5 Kategori tes yang masih kurang (potret 2026-09-28)
 
-`STATUS_AND_GAP_MAP` §3.4 mencatat kategori concurrency, security (IDOR/prompt-injection/tool abuse), AI grounding, resilience, human handoff **belum** ada sebagai berkas bernama. Itu potret; sejak itu lapisan AI dibangun, jadi daftar ini **perlu diaudit ulang** (Bab 25).
+`STATUS_AND_GAP_MAP` §3.4 mencatat kategori concurrency, security (IDOR/prompt-injection/tool abuse), AI grounding, resilience, human handoff **belum** ada sebagai berkas bernama. Itu potret September; audit ulang 2026-11-13 (hitungan per **badan fungsi uji**, bukan grep berkas) memberi angka terukur: concurrency **1 berkas khusus / 7 uji** (`tests/test_no_double_booking_concurrency.py`, file-backed + `threading.Barrier`), tenant/IDOR **5 berkas / 11 uji**, penolakan tool **7 / 15**, instruksi-diperlakukan-sebagai-data **2 / 6**, human handoff **10 / 43**; token `grounding` 16 / 86 dan `retry|idempoten|replay` 42 / 302 adalah **batas atas** (token longgar), jadi bukan bukti kualitas. Rincian bukti: `docs/DOUBLE_BOOKING_EVIDENCE.md`.
 
 ### 22.6 Probe akses
 
@@ -1263,7 +1263,7 @@ Semua angka di bawah diambil langsung dari repo/DB pada hari penulisan, bukan da
 |---|---|---|
 | Komit | potret `2cb0696` = 181; 185 per 2026-11-13 sebelum commit dokumen ini; pertama 2026-09-21 (`8c4c777`, "Phase 1 reservation kernel"); terakhir sebelum dokumen ini `5647b23` | `git log` |
 | Modul `src/` | 58 berkas `.py`, 52.924 baris (potret `2cb0696`) | hitung berkas |
-| Tes | 103 `test_*.py` (+ `conftest.py`, `seed_support.py`), 57.955 baris (2026-11-13; potret 102 / 57.668) | hitung berkas |
+| Tes | **104** `test_*.py`, 57.995 baris; seluruh `.py` di `tests/` 106 / 58.235 (diukur 2026-11-13 atas HEAD `23a0a0d` + uji konkurensi; potret `2cb0696` = 102 / 57.649) | `git ls-tree` + `wc -l` per berkas |
 | `make check` rc=0 · 3.875 passed · 4 skipped · 4.008 subtests · 377 berkas dipindai | Bab 22.2 |
 | ADR | 68 berkas di `docs/adr/` (Lampiran B) | `ls` |
 | Migrasi terpasang di DB hidup | 14 baris `schema_migrations` (003–008, 010–017; 001 dan 002 adalah skema dasar); **tidak ada nomor 009** | `select` baca-saja |
@@ -1273,7 +1273,7 @@ Semua angka di bawah diambil langsung dari repo/DB pada hari penulisan, bukan da
 
 > Catatan: D1–D17 lengkap; di berkas, baris D17 tertulis sebelum D16.
 
-**Perubahan sejak potret Status-Gap (2026-09-28/10-08):** tes naik dari 3.768 ke 3.875 (dihitung 2026-11-13; 103 berkas `test_*.py`); berkas pindai dari 344 ke 370; lapisan AI yang pada potret "nol" kini ada sebagian (di bawah); D17 sudah `DECIDED`; peta geo (017), `--token-file`, dan gerbang secret-scan yang lebih ketat masuk pada 2026-11-12.
+**Perubahan sejak potret Status-Gap (2026-09-28/10-08):** tes naik dari 3.768 ke 3.875 (dihitung 2026-11-13; 104 berkas `test_*.py` setelah uji konkurensi masuk); berkas pindai dari 344 ke 370; lapisan AI yang pada potret "nol" kini ada sebagian (di bawah); D17 sudah `DECIDED`; peta geo (017), `--token-file`, dan gerbang secret-scan yang lebih ketat masuk pada 2026-11-12.
 
 ### 24.1 Lapisan AI Workforce — keadaan kode
 
@@ -1306,7 +1306,7 @@ Daftar ini menggabungkan Status-Gap (potret), temuan hari ini, dan hasil membang
 | 1 | Komponen Commercial AI dan Security & Privacy Warden belum dibangun | cakupan AI belum penuh | Bab 24.1 | Owner (urutan kerja) |
 | 2 | Secrets/DLP tidak ada sebagai modul | P3 tidak punya penjaga aktif selain gerbang statis | Status-Gap §3.2 | Tech-Security |
 | 3 | ADR-0012 (4 kategori rel pembayaran) dan ADR-0013 (stablecoin) berstatus Accepted tetapi **belum dieksekusi** | `payments.py` masih memakai `HOSTED_PAGE, BANK_TRANSFER, CASH, OTHER`; tak ada `method_category`; tak ada USDC/USDT | Status-Gap §3.3 (potret; periksa ulang) | Owner (migrasi pembayaran perlu persetujuan) |
-| 4 | Kategori tes: concurrency, security (IDOR/prompt-injection/tool abuse), AI grounding, resilience, human handoff tidak ada sebagai berkas bernama pada potret | liputan §19 belum terbukti | Status-Gap §3.4 (potret; **perlu audit ulang** — AI sudah dibangun sejak itu) | QA/Tech |
+| 4 | Kategori tes: concurrency, security (IDOR/prompt-injection/tool abuse), AI grounding, resilience, human handoff tidak ada sebagai berkas bernama pada potret | **Sebagian tertutup (2026-11-13)** — diukur per badan fungsi uji: concurrency 1 berkas/7 uji, tenant/IDOR 5/11, penolakan tool 7/15, injeksi-sebagai-data 2/6, handoff 10/43; kategori lain tetap **belum terbukti** | `docs/DOUBLE_BOOKING_EVIDENCE.md`; `docs/STATUS_AND_GAP_MAP.md` §3.4 | QA/Tech |
 | 5 | Outbox: worker latar yang memanggil `publish_due` berkala + transport nyata (email/WA/webhook) belum ada | pesan keluar belum benar-benar terkirim otomatis | Status-Gap §3.2 (potret) | Tech |
 | 6 | Status-Gap §3.5 (potret) menyatakan dokumen AI Workforce belum dipetakan ke repo; berkas `docs/AI_WORKFORCE_TRACEABILITY.md` **ada** (23.149 byte; 6 judul `##` — "Cara membaca" + §1–§5; 16 judul `#` seluruhnya; tanda DIIKUTI/SEBAGIAN). Angka "24 bagian" di dalam berkas itu menunjuk ke **24 bagian dokumen acuan `Villa_Agency_AI_Workforce_Architecture_V1_1_Hermes.html`** (kini diarsipkan di `docs/source/`, SHA-256 `5368429b…59ae4c`; baris 3 berkasnya), bukan ke jumlah bagian berkas traceability itu sendiri. **2026-11-13:** §3.5 sudah diberi penanda **USANG** di berkasnya sendiri, jadi tuduhan "belum tersambung" tidak lagi dibaca sebagai status hari ini; yang tersisa hanyalah audit ulang atas ketepatan pemetaan | pemetaan mungkin tertinggal dari kode | `docs/STATUS_AND_GAP_MAP.md` §3.5, `docs/AI_WORKFORCE_TRACEABILITY.md` | Owner (prioritas audit) |
 | 7 | MFA hanya untuk 3 peran; membuka dashboard ke internet butuh MFA semua peran + faktor kata sandi — belum ada | dashboard hanya boleh loopback/VPN | SESSION_AUTH §5 | Tech-Security |
@@ -1556,3 +1556,28 @@ membawa risiko kepatuhan (menghapus data transaksi pada tahun ke-7 sementara kew
 pembukuan/pajak berjalan 10 tahun), jadi ia didahulukan sebelum ada penghapusan data
 nyata. Butir 1 kini punya penjaga otomatis: komentar skema yang menyebut ADR yang salah
 menggagalkan `make check`, bukan menunggu audit berikutnya.
+
+## Lampiran G — Bukti konkurensi & sensus angka (diukur 2026-11-13)
+
+Lampiran ini menjawab keberatan yang paling mudah ditutupi kata: klaim "0 confirmed double
+booking" hanya bermakna kalau ada uji yang **bisa gagal** saat jaminannya dicabut. Semua angka di
+bawah dihitung dari repo/DB pada 2026-11-13, bukan dikutip.
+
+| Yang diukur | Angka | Cara ukur |
+|---|---|---|
+| Uji balapan nyata | `tests/test_no_double_booking_concurrency.py` — 272 baris, 7 uji | `wc -l`; `grep -cE '^\s+def test_'` |
+| Basis uji | DB **file-backed** + `BEGIN IMMEDIATE` + partial unique index `uq_holds_active_slot`; 2–3 penulis nyata disinkronkan `threading.Barrier` | baca `src/reservation_kernel.py`, `src/schema/001_initial.sql`, isi uji |
+| Alasan `:memory:` ditolak | setiap koneksi `sqlite3` mendapat database privat → tidak ada balapan → uji "satu pemenang" lulus secara hampa | `docs/DOUBLE_BOOKING_EVIDENCE.md` |
+| Kontrol positif | dua unit berbeda, dua penulis → dua-duanya sukses (membuktikan harness memang paralel) | uji `TestDifferentUnitsDoNotInterfere` |
+| Kontrol negatif | pada salinan terpisah: `BEGIN IMMEDIATE`→`BEGIN`, guard overlap dilewati, index dihapus → uji **gagal** (bukti uji tidak hampa) | `/tmp/negctl` (salinan, bukan repo kerja) |
+| Stabilitas | 1×, 5×, 12×, 20×, 20×, 10× run berulang; tiap run `7 passed` | log run; `pytest.ini` tanpa `addopts` penutup kegagalan |
+| Model skema | **72 tabel · 62 indeks · 64 trigger · 106 enum · 77 baris INSERT** | `schema_loader.parse_schema_model('sqlite')` + regex `src/schema/*.sql` (dua sumber independen) |
+| Berkas uji | `tests/test_*.py` **104 berkas / 57.995 baris**; seluruh `.py` di `tests/` **106 / 58.235** | `git ls-tree` + `wc -l` per berkas |
+| Fungsi uji | **2.719** `def test_` | `grep -rhcE '^\s+def test_' tests/test_*.py` |
+| Berkas ter-track | **384** | `git ls-files \| wc -l` |
+| Kategori uji (per badan fungsi) | concurrency 1/7 · tenant-IDOR 5/11 · penolakan tool 7/15 · injeksi-sebagai-data 2/6 · handoff 10/43 · `grounding` 16/86 dan `retry`/`idempoten`/`replay` 42/302 (**batas atas, token longgar**) | skrip klasifikasi `re.split` per `def test_` |
+
+Batas yang tetap harus dikatakan: uji ini **antar-thread dalam satu proses pada satu berkas**
+(bukan antar-host), hanya SQLite (twin PostgreSQL diuji terpisah oleh target `pg-twin`), dan tidak
+mengukur kinerja. Yang dibuktikan adalah **kebenaran** (satu slot, satu pemegang), bukan
+kemustahilan mutlak di semua topologi.

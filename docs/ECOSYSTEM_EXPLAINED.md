@@ -273,7 +273,7 @@ Dan satu lagi: **jumlah pegawai AI tidak bertambah saat tamu bertambah.** Yang b
 | 4 | **DLP** (pelindung data sensitif) | Mencegah data pribadi keluar lewat jalur yang salah | baru ada pemindai konfigurasi |
 | 5 | **4 rel pembayaran** (kartu, transfer, PayPal, stablecoin) | Sudah **diputuskan** di ADR-0012, tapi belum dibangun: kode masih pakai cara lama | `method_category` = 0 di kode |
 | 6 | **Stablecoin USDC/USDT** | ADR-0013 sudah diterima, belum dibangun | tidak ada jejaknya di kode |
-| 7 | **Kategori tes AI** (keamanan, serangan prompt, handoff, ketahanan gagal) | Dokumen Anda bagian 19 mewajibkannya | 0 berkas untuk kategori ini |
+| 7 | **Kategori tes AI** (keamanan, serangan prompt, handoff, ketahanan gagal) | Dokumen Anda bagian 19 mewajibkannya | **Sebagian (2026-11-13):** injeksi-sebagai-data 2 berkas / 6 uji · penolakan tool 7 / 15 · tenant-IDOR 5 / 11 · handoff 10 / 43 · konkurensi 1 / 7. Kategori belum tertutup penuh |
 | 8 | **Kill switch berjenjang** | Baru ada ACTIVE / SUSPENDED / RETIRED; belum ada DEGRADED & READ_ONLY | `ai_service.py` |
 
 **Satu hal yang sudah kuat dan patut Anda tahu:** larangan-larangan mutlak untuk AI **sudah ditegakkan lebih dulu** — AI tidak bisa menyetujui pembayaran, tidak bisa mengubah rekening, tidak bisa melewati persetujuan berlapis, dan data kartu tidak bisa disimpan. Jadi pondasi keamanannya sudah berdiri **sebelum** pegawai AI-nya ada. Urutannya benar.
