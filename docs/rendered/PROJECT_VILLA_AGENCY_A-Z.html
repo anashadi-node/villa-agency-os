@@ -44,11 +44,11 @@ hr { border: none; border-top: 0.5pt solid #c9cfcb; margin: 6mm 0; }
   <h1>Project Villa Agency — Dokumen Update Lengkap A–Z</h1>
   <div class="sub">Reservation &amp; Operations Control Plane</div>
   <div class="meta">Dokumen kerja internal · dirender dari
-  <code>docs/PROJECT_VILLA_AGENCY_A-Z.md</code> · 143,951 karakter</div>
+  <code>docs/PROJECT_VILLA_AGENCY_A-Z.md</code> · 144,642 karakter</div>
 </section>
 <p><strong>Nama sistem:</strong> Villa Agency OS (Villa Management &amp; Agency)<br />
 <strong>Tanggal dokumen:</strong> 12 November 2026 · <strong>Pemilik:</strong> Owner (Mas Anas) · <strong>Disusun oleh:</strong> divisi Villa Management &amp; Agency<br />
-<strong>Posisi repo (potret, bukan angka hidup):</strong> <code>~/villa-agency-os</code> pada commit <code>2cb0696</code> — 181 commit (pertama 2026-09-21), 375 berkas ter-track, 58 modul <code>src/*.py</code> (±52.924 baris), 102 berkas <code>test_*.py</code> (104 berkas <code>.py</code> di <code>tests/</code> termasuk <code>conftest.py</code> dan <code>seed_support.py</code>), 68 berkas ADR (ADR-0068 ditambahkan 2026-11-13 setelah dokumen ini disusun). <strong>Hari ini (2026-11-13, <code>master</code> = <code>95ce7d3</code>):</strong> 212 komit, 402 berkas ter-track, 112 berkas <code>test_*.py</code>, 4.007 tes lulus (<code>make check</code> rc=0).</p>
+<strong>Posisi repo (potret, bukan angka hidup):</strong> <code>~/villa-agency-os</code> pada commit <code>2cb0696</code> — 181 commit (pertama 2026-09-21), 375 berkas ter-track, 58 modul <code>src/*.py</code> (±52.924 baris), 102 berkas <code>test_*.py</code> (104 berkas <code>.py</code> di <code>tests/</code> termasuk <code>conftest.py</code> dan <code>seed_support.py</code>), 68 berkas ADR (ADR-0068 ditambahkan 2026-11-13 setelah dokumen ini disusun). <strong>Hari ini (2026-11-14, <code>master</code> = <code>8d9fca9</code> + patch ADR-0069):</strong> 212 komit, 402 berkas ter-track, 112 berkas <code>test_*.py</code>, 4.009 tes lulus (<code>make check</code> rc=0).</p>
 <blockquote>
 <p><strong>Cara membaca dokumen ini.</strong> Dokumen ini adalah konsolidasi <em>bertanggal</em> dari seluruh sumber resmi di repo
 (Charter, Peta Status &amp; Gap, Panduan Alur Kerja, State Machine, Policy Matrix, Data Model, Runbook, Deployment,
@@ -70,7 +70,7 @@ wajib ditinjau counsel lokal sebelum dijadikan aturan bisnis final (lihat Bab 21
 <li>Bagian VI — Kontrol: <strong>20</strong> Keamanan, privasi, audit · <strong>21</strong> Legal, pajak, kepatuhan · <strong>22</strong> Kualitas: tes, gerbang, CI</li>
 <li>Bagian VII — Menjalankan: <strong>23</strong> Deployment, tenant, skalabilitas, backup</li>
 <li>Bagian VIII — Status jujur: <strong>24</strong> Status hari ini · <strong>25</strong> Celah dan risiko terbuka · <strong>26</strong> Keputusan Owner dan langkah berikutnya</li>
-<li>Lampiran: <strong>A</strong> Glosarium · <strong>B</strong> Indeks 69 ADR · <strong>C</strong> Indeks 58 modul <code>src/</code> · <strong>D</strong> Migrasi, skrip, target make · <strong>E</strong> Apa yang diverifikasi dan apa yang dikutip · <strong>F</strong> Ketidakkonsistenan yang ditemukan</li>
+<li>Lampiran: <strong>A</strong> Glosarium · <strong>B</strong> Indeks 70 ADR · <strong>C</strong> Indeks 59 modul <code>src/</code> · <strong>D</strong> Migrasi, skrip, target make · <strong>E</strong> Apa yang diverifikasi dan apa yang dikutip · <strong>F</strong> Ketidakkonsistenan yang ditemukan</li>
 </ul>
 <hr />
 <h1 id="bagian-i-fondasi">BAGIAN I — FONDASI</h1>
@@ -98,7 +98,7 @@ ia mengurus tiga hal yang paling sering menimbulkan kerugian di bisnis villa —
 <tbody>
 <tr>
 <td>Status booking</td>
-<td>32 status, 116 sisi legal dari 1.024 pasangan</td>
+<td>32 status, 120 sisi legal dari 1.024 pasangan</td>
 <td><code>docs/BOOKING_STATE_MACHINE.md</code>, <code>src/booking_states.py</code></td>
 </tr>
 <tr>
@@ -123,13 +123,13 @@ ia mengurus tiga hal yang paling sering menimbulkan kerugian di bisnis villa —
 </tr>
 <tr>
 <td>ADR</td>
-<td>70 berkas (<code>0001</code>–<code>0070</code>; 69 Accepted + 1 Proposed)</td>
+<td>70 berkas (<code>0001</code>–<code>0070</code>; 70 Accepted)</td>
 <td><code>ls docs/adr</code></td>
 </tr>
 <tr>
 <td>Tes terakhir</td>
-<td><code>make check</code> rc=0: <strong>4.007 passed, 4 skipped, 4.016 subtests passed</strong> (309,84 s)</td>
-<td>log gerbang 2026-11-13, pohon <code>master</code> = <code>95ce7d3</code></td>
+<td><code>make check</code> rc=0: <strong>4.009 passed, 4 skipped, 4.054 subtests passed</strong> (315,61 s)</td>
+<td>log gerbang 2026-11-14, pohon <code>master</code> <code>8d9fca9</code> + ADR-0069</td>
 </tr>
 <tr>
 <td>Gerbang</td>
@@ -951,7 +951,7 @@ ia mengurus tiga hal yang paling sering menimbulkan kerugian di bisnis villa —
 <tr>
 <td><code>docs/</code></td>
 <td>Dokumen kerja, ADR, keamanan, laporan desain</td>
-<td>29 berkas <code>.md</code> di akar <code>docs/</code> (42 entri termasuk HTML/PDF dan subfolder), <code>docs/adr/</code> (69 ADR), <code>docs/security/</code></td>
+<td>29 berkas <code>.md</code> di akar <code>docs/</code> (42 entri termasuk HTML/PDF dan subfolder), <code>docs/adr/</code> (70 ADR), <code>docs/security/</code></td>
 </tr>
 <tr>
 <td><code>scripts/</code></td>
@@ -1312,7 +1312,7 @@ ia mengurus tiga hal yang paling sering menimbulkan kerugian di bisnis villa —
 </table>
 <p><code>INQUIRY</code> = satu-satunya status awal. <code>CLOSED</code> = satu-satunya status terminal; tidak pernah berpindah lagi (diuji untuk 32 target).</p>
 <h3 id="102-graf">10.2 Graf</h3>
-<p>116 sisi legal dari 1.024 pasangan terurut (32×32): 31 self-transition ditolak (<code>SELF_TRANSITION</code>), 32 pasangan dari status terminal ditolak (<code>TERMINAL_STATE</code>), sisanya 845 ilegal (<code>INVALID_TRANSITION</code>). Setiap pasangan diklasifikasi tepat sekali (<code>test_every_pair_is_classified_exactly_once</code>).</p>
+<p>120 sisi legal dari 1.024 pasangan terurut (32×32): 31 self-transition ditolak (<code>SELF_TRANSITION</code>), 32 pasangan dari status terminal ditolak (<code>TERMINAL_STATE</code>), sisanya 841 ilegal (<code>INVALID_TRANSITION</code>). Empat sisi tambahan berasal dari ADR-0069 opsi (a) — pembatalan langsung dari <code>CONFIRMED</code>, <code>BALANCE_DUE</code>, <code>PRE_ARRIVAL</code>, dan <code>IN_STAY</code>, selalu wajib <code>reason</code>. Setiap pasangan diklasifikasi tepat sekali (<code>test_every_pair_is_classified_exactly_once</code>).</p>
 <p><strong>Jalur utama:</strong></p>
 <pre><code>INQUIRY → QUALIFIED → AVAILABILITY_CONFIRMED → QUOTE_SENT → HOLD_ACTIVE
         → DEPOSIT_PAID → CONFIRMED → PRE_ARRIVAL → IN_STAY → COMPLETED → CLOSED
@@ -3028,7 +3028,7 @@ biaya kesalahan, bukan menggantikan kehati-hatian.</p>
 <p>Checklist keamanan go-live (tugas operator): TLS+HSTS · rate limit jaringan · dashboard tetap loopback · token dashboard di manajer rahasia · rotasi kredensial · backup + uji restore · anker diterbitkan berkala.</p>
 <hr />
 <h1 id="bagian-viii-status-celah-dan-jalan-ke-depan">BAGIAN VIII — STATUS, CELAH, DAN JALAN KE DEPAN</h1>
-<h2 id="24-status-hari-ini-diperiksa-2026-11-12">24. Status hari ini (diperiksa 2026-11-12)</h2>
+<h2 id="24-status-hari-ini-diperiksa-2026-11-12-diukur-ulang-2026-11-14">24. Status hari ini (diperiksa 2026-11-12, diukur ulang 2026-11-14)</h2>
 <p>Semua angka di bawah diambil langsung dari repo/DB pada hari penulisan, bukan dari potret lama.</p>
 <table>
 <thead>
@@ -3046,8 +3046,8 @@ biaya kesalahan, bukan menggantikan kehati-hatian.</p>
 </tr>
 <tr>
 <td>Modul <code>src/</code></td>
-<td>58 berkas <code>.py</code>, 52.924 baris (potret <code>2cb0696</code>)</td>
-<td>hitung berkas</td>
+<td><strong>59</strong> berkas <code>.py</code>, 54.043 baris (2026-11-14; potret <code>2cb0696</code> = 58 / 52.924)</td>
+<td><code>cat src/*.py \| wc -l</code></td>
 </tr>
 <tr>
 <td>Tes</td>
@@ -3055,7 +3055,7 @@ biaya kesalahan, bukan menggantikan kehati-hatian.</p>
 <td><code>git ls-tree</code> + <code>wc -l</code> per berkas</td>
 </tr>
 <tr>
-<td><code>make check</code> rc=0 · 3.875 passed · 4 skipped · 4.008 subtests · 377 berkas dipindai</td>
+<td><code>make check</code> rc=0 · <strong>4.009 passed · 4 skipped · 4.054 subtests</strong> (319,87 s) · SECRET-SCAN 0/402 · UNSAFE-SCAN 0/402 · PII-SCAN 0/377 berkas teks · <code>schema-parity</code> OK</td>
 <td>Bab 22.2</td>
 <td></td>
 </tr>
@@ -3089,7 +3089,7 @@ biaya kesalahan, bukan menggantikan kehati-hatian.</p>
 <blockquote>
 <p>Catatan: D1–D17 lengkap; di berkas, baris D17 tertulis sebelum D16.</p>
 </blockquote>
-<p><strong>Perubahan sejak potret Status-Gap (2026-09-28/10-08):</strong> tes naik dari 3.768 ke 3.875 (dihitung 2026-11-13; 104 berkas <code>test_*.py</code> setelah uji konkurensi masuk); berkas pindai dari 344 ke 370; lapisan AI yang pada potret "nol" kini ada sebagian (di bawah); D17 sudah <code>DECIDED</code>; peta geo (017), <code>--token-file</code>, dan gerbang secret-scan yang lebih ketat masuk pada 2026-11-12.</p>
+<p><strong>Perubahan sejak potret Status-Gap (2026-09-28/10-08):</strong> tes naik dari 3.768 ke <strong>4.009</strong> (dihitung 2026-11-14; 112 berkas <code>test_*.py</code>); berkas pindai dari 344 ke <strong>402</strong>; lapisan AI yang pada potret "nol" kini ada sebagian (di bawah); D17 sudah <code>DECIDED</code>; peta geo (017), <code>--token-file</code>, dan gerbang secret-scan yang lebih ketat masuk pada 2026-11-12.</p>
 <h3 id="241-lapisan-ai-workforce-keadaan-kode">24.1 Lapisan AI Workforce — keadaan kode</h3>
 <table>
 <thead>
@@ -3425,8 +3425,8 @@ biaya kesalahan, bukan menggantikan kehati-hatian.</p>
 </tr>
 </tbody>
 </table>
-<h2 id="lampiran-b-indeks-69-adr">Lampiran B — Indeks 69 ADR</h2>
-<p>69 berkas berstatus <em>Accepted</em> dan 1 berstatus <em>Proposed</em> — ADR-0069 (<code>CONFIRMED</code> menunggu pembayaran terverifikasi, temuan K2). ADR-0070 (rupiah dengan rujukan USD) disetujui owner 2026-11-13; kedua status itu dibaca <code>tests/test_adr_status.py</code> dari tiga ejaan yang pernah dipakai repo. Dibangkitkan dari judul tiap berkas.</p>
+<h2 id="lampiran-b-indeks-70-adr">Lampiran B — Indeks 70 ADR</h2>
+<p>Seluruh 70 berkas berstatus <em>Accepted</em>. Dua yang terakhir naik pada 2026-11-13: ADR-0069 (<code>CONFIRMED</code> hanya setelah pembayaran terverifikasi dan bukti blok villa — temuan K2, sekaligus keputusan opsi (a) memasukkan empat sisi pembatalan langsung ke graf kanonik) dan ADR-0070 (rupiah adalah nilainya, USD rujukan berlabel). Kedua status itu dibaca <code>tests/test_adr_status.py</code> dari tiga ejaan yang pernah dipakai repo. Dibangkitkan dari judul tiap berkas.</p>
 <table>
 <thead>
 <tr>
@@ -3709,11 +3709,15 @@ biaya kesalahan, bukan menggantikan kehati-hatian.</p>
 </tr>
 <tr>
 <td>0069</td>
-<td><code>CONFIRMED</code> hanya setelah pembayaran terverifikasi dan bukti blok villa (PROPOSED, audit K2)</td>
+<td><code>CONFIRMED</code> hanya setelah pembayaran terverifikasi dan bukti blok villa (ACCEPTED 2026-11-13, audit K2; opsi a: empat sisi pembatalan langsung masuk graf)</td>
+</tr>
+<tr>
+<td>0070</td>
+<td>Rupiah adalah nilainya, USD adalah rujukan berlabel (ACCEPTED 2026-11-13)</td>
 </tr>
 </tbody>
 </table>
-<h2 id="lampiran-c-indeks-58-modul-src">Lampiran C — Indeks 58 modul <code>src/</code></h2>
+<h2 id="lampiran-c-indeks-59-modul-src">Lampiran C — Indeks 59 modul <code>src/</code></h2>
 <p>Dibangkitkan dari AST: nama berkas, jumlah baris, kalimat pertama docstring modul (— bila tak ada).</p>
 <table>
 <thead>
@@ -3883,6 +3887,11 @@ biaya kesalahan, bukan menggantikan kehati-hatian.</p>
 <td><code>messages.py</code></td>
 <td>1661</td>
 <td>Grounded outbound message drafts for Villa Agency OS.</td>
+</tr>
+<tr>
+<td><code>money_display.py</code></td>
+<td>288</td>
+<td>Rupiah-first amounts with an automatic reference conversion (audit 2026-11-13, T8).</td>
 </tr>
 <tr>
 <td><code>observability.py</code></td>
