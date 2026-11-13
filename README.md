@@ -14,7 +14,13 @@ cd /tmp/audit && echo x >> README.md && git commit -qam probe
 GIT_TERMINAL_PROMPT=0 git push origin master   # tulis: ditolak — "protected branch hook declined"
 curl -s https://api.github.com/repos/anashadi-node/villa-agency-os \
   | grep -o '"has_issues": *[a-z]*'   # has_issues: false — issue & proyek dimatikan
+curl -s -o /dev/null -w '%{http_code}\n' \
+  -X PATCH -d '{}' https://api.github.com/repos/anashadi-node/villa-agency-os   # 401 — tanpa token tidak ada jalur tulis
 ```
+
+Diukur 2026-11-13 dari mesin ini: `GET /repos/...` → **200** (publik, terbaca),
+`PATCH /repos/...` → **401**, `POST /repos/.../issues` → **401**. Artinya penolakan
+datang dari ketiadaan kredensial, bukan hanya dari hook branch yang bisa dilewati admin.
 
 > **Batas produk wajib:** repo ini adalah kernel operasi + **dashboard internal** untuk
 > manajemen/karyawan villa agency. **Website Marketing Villa untuk calon tamu adalah
