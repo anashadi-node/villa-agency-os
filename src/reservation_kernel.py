@@ -104,6 +104,7 @@ __all__ = [
     "HOLD_EXPIRED_PENDING_VERIFICATION",
     "BOOKING_STATES",
     "OCCUPYING_BOOKING_STATES",
+    "BACKING_BOOKING_STATES",
     "DEFAULT_ROLE",
 ]
 
@@ -124,6 +125,16 @@ OCCUPYING_BOOKING_STATES: tuple[str, ...] = (
     "CANCELLATION_REQUESTED",
     "CANCELLATION_REVIEW",
     "DISPUTED",
+)
+
+BACKING_BOOKING_STATES: tuple[str, ...] = (
+    # Audit 2026-11-13 (K2): before ``CONFIRMED`` a booking occupies nothing itself — its
+    # hold keeps the slot. These are the statuses that still depend on their hold, so
+    # releasing it would put the same nights back on sale while a guest is being invoiced.
+    "PAYMENT_PENDING",
+    "PAYMENT_PARTIAL",
+    "DEPOSIT_PAID",
+    "PAID_IN_FULL",
 )
 
 #: Every legal booking status, mirroring the CHECK constraint verbatim
@@ -1320,10 +1331,32 @@ class ReservationKernel:
             )
 
     def release_hold(self, hold_id: str, *, reason: str, actor: Optional[str] = None) -> str:
-        """Release a hold so the slot can be sold again."""
+        """Release a hold so the slot can be sold again.
+
+        A hold that a live booking still rests on is **not** releasable. Since audit
+        2026-11-13 (K2) a booking waits in ``PAYMENT_PENDING`` while its hold — not the
+        booking row — keeps the slot, and freeing that slot would put the same nights back
+        on sale while the first guest is being invoiced. Cancelling the booking is the way
+        out: that path releases the hold itself, after the booking stops depending on it.
+        """
         hold_id = require_ref(hold_id, "hold_id")
         reason = require_text(reason, "reason", max_len=200)
         with self.transaction() as conn:
+            marks = ", ".join("?" for _ in BACKING_BOOKING_STATES)
+            backing = conn.execute(
+                f"SELECT booking_id, status FROM bookings WHERE agency_id = ? AND hold_ref = ?"
+                f" AND status IN ({marks}) LIMIT 1",
+                (self.agency_id, hold_id, *BACKING_BOOKING_STATES),
+            ).fetchone()
+            if backing is not None:
+                raise DomainError(
+                    "this hold still keeps a booking's slot; cancel the booking instead of"
+                    " releasing the hold",
+                    code="HOLD_BACKS_BOOKING",
+                    hold_id=hold_id,
+                    booking_id=backing["booking_id"],
+                    booking_status=backing["status"],
+                )
             return self._transition_hold(
                 conn,
                 hold_id,

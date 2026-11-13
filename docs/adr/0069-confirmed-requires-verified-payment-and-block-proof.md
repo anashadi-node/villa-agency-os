@@ -39,6 +39,15 @@ pre-arrival, dan KPI okupansi) bisa lahir tanpa uang dan tanpa bukti villa.
 
 - Booking kini menempuh 3 langkah manusia (reservation, finance, reservation). Smoke go-live
   bertambah satu langkah (17).
+- **Slot tetap terkunci lewat hold-nya, dan hold itu tidak boleh dilepas selama ada booking yang
+  bersandar padanya.** `PAYMENT_PENDING` dan status sesudahnya sengaja *tidak* dimasukkan ke
+  `OCCUPYING_BOOKING_STATES` — pasangan itu harus tetap sama dengan indeks unik parsial di
+  skema. Jaminannya karena itu diletakkan di `release_hold`: perintah itu menolak
+  (`HOLD_BACKS_BOOKING`) selama masih ada booking berstatus `PAYMENT_PENDING`,
+  `PAYMENT_PARTIAL`, `DEPOSIT_PAID`, atau `PAID_IN_FULL` yang menunjuk hold tersebut. Jalan
+  keluarnya adalah membatalkan booking, bukan melepas hold. Tanpa penjaga ini, satu
+  `release_hold` yang "berhasil" akan mengembalikan slot ke penjualan sementara booking yang
+  belum dibayar tetap hidup — double booking yang lahir dari jalur yang tampak rutin.
 - **Temuan baru, sengaja tidak diubah di patch ini:** kernel juga menulis sisi pembatalan
   `CONFIRMED/PRE_ARRIVAL/IN_STAY/BALANCE_DUE → CANCELLED` yang tidak ada di graf kanonik
   `booking_states.py`. Perlu keputusan owner: tambahkan ke graf (dengan alasan bisnis) atau
