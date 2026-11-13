@@ -56,6 +56,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Iterator, Mapping, Optional, Sequence
 
+from audit import append_event
 from primitives import (
     UTC,
     DomainError,
@@ -1066,6 +1067,13 @@ class CaseService:
                     attachment_count,
                     created_at,
                 ),
+            )
+            append_event(
+                conn, clock=self.clock, ids=self.ids,
+                action="case.opened", entity_type="case", entity_id=case_id,
+                actor=actor, actor_role=actor_role,
+                after={"status": "NEW", "channel": channel_value, "priority": priority_value,
+                       "content_class": class_value, "sla_policy": policy.name},
             )
             self._append_event(
                 conn,
