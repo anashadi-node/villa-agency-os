@@ -16,7 +16,7 @@ ifneq ($(strip $(VILLA_DB)),)
 export VILLA_DB
 endif
 
-.PHONY: help test verify syntax lint secret-scan unsafe-scan check interpreter schema-parity pg-twin anchor-publish anchor-verify allowance-status policy-status migrate-check
+.PHONY: help test verify syntax lint secret-scan unsafe-scan check interpreter schema-parity pg-twin anchor-publish anchor-verify allowance-status policy-status migrate-check render-az audit-structure
 
 help:
 	@echo "make test          - run the full pytest suite"
@@ -35,6 +35,7 @@ help:
 	@echo "                     setting a value is an owner act too: NOT a make target (see README)"
 	@echo "make migrate-check - list schema migrations still pending for VILLA_DB (writes nothing)"
 	@echo "                     applying one is an ops act: NOT a make target (see README)"
+	@echo "make render-az     - render docs/PROJECT_VILLA_AGENCY_A-Z.md to HTML + PDF in docs/rendered/"
 	@echo "make check         - interpreter + syntax + lint + test + secret scan + unsafe scan + schema parity (pre-deploy gate)"
 
 # -q sudah ada di pytest.ini; menambah satu lagi di sini membuatnya -qq, dan pytest 9 tidak
@@ -90,6 +91,11 @@ policy-status:
 # Read-only: applying a migration writes to a database, so it stays an explicit command.
 migrate-check:
 	$(PYTHON) scripts/apply_migrations.py --dry-run
+
+# Re-render the A-Z document (Markdown -> HTML + PDF). Run it after editing the Markdown:
+# a stale PDF that disagrees with the source is a bug, and the renderer used to live in /tmp.
+render-az:
+	$(PYTHON) scripts/render_az_doc.py
 
 # Read-only structural audit: the checks `check` cannot see (test traceability, documented
 # commands that no longer exist, tenant filters, currency-blind money sums, offline assets).
