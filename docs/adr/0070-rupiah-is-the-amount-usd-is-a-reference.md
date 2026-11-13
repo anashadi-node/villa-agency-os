@@ -1,7 +1,7 @@
 # ADR-0070 — Rupiah adalah nilainya, USD adalah rujukan
 
-- Status: **PROPOSED** (permintaan Mas Anas, 13 Nov 2026: "mata uang pakai IDR dan di sampingnya
-  harus ada konversi otomatis ke USD")
+- Status: **ACCEPTED** (disetujui Mas Anas, 2026-11-13; permintaan awal: "mata uang pakai IDR
+  dan di sampingnya harus ada konversi otomatis ke USD")
 - Date: 2026-11-13
 - Deciders: Mas Anas (owner) · divisi Villa Management & Agency
 - Melengkapi: ADR-0030 dan ADR-0060 (mata uang penawaran), ADR-0011 §55 (bahasa produksi)
