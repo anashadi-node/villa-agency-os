@@ -49,6 +49,9 @@ PLACEHOLDER_PHONES = {
 PLACEHOLDER_IDS = {
     "4111111111111111": "canonical Visa test card (never a real account)",
     "4242424242424242": "canonical Stripe test card (never a real account)",
+    "5500000000000004": "canonical Mastercard test card, audit 2026-11-13 K1 fixture",
+    "378282246310005": "canonical American Express test card, audit 2026-11-13 K1 fixture",
+    "3201010101010001": "synthetic NIK with a repeating block, audit 2026-11-13 K1 fixture",
     "3273010101900001": "synthetic NIK used in ADR 0062/0027 examples",
     "3273010101990001": "synthetic NIK, phase-2 verification fixture",
     "3174091234567890": "synthetic NIK with an ascending body",
