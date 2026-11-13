@@ -18,7 +18,7 @@ sudah ada, dijalankan, dan **dua kegagalan yang saya temukan di dalamnya sudah d
 | Policy versioned + immutable + fingerprint | `src/policy_engine.py` (payload deep-frozen) + 40 test | PASS |
 | Aritmetika quote reproducible | `src/quote_calculator.py` + 49 test | PASS |
 | **0 double booking** di jalur kernel | `src/reservation_kernel.py` overlap proof + 70 test (hold, hold→booking, hold kedaluwarsa boleh dilewati) | PASS (unit) |
-| Status tidak bisa ditulis sebagai teks bebas | `src/booking_states.py`: 32 status dibaca dari enum DDL, 116 sisi legal dari 1024 pasangan, 3 guard | PASS |
+| Status tidak bisa ditulis sebagai teks bebas | `src/booking_states.py`: 32 status dibaca dari enum DDL, 120 sisi legal dari 1024 pasangan, 3 guard | PASS |
 | Audit append-only & tamper-evident | trigger DB + rantai hash; invarian diuji di `tests/test_schema.py` (UPDATE `audit_events` → `sqlite3.IntegrityError`) dan 140 test perilaku di `tests/test_audit.py` (rantai, anchor, PII, append-only) | PASS |
 | Uji PostgreSQL hidup | container Postgres 16 sekali pakai, `001_initial.pg.sql` + `002_pg_range_exclusions.pg.sql` diterapkan dari nol, katalog dibandingkan model SQLite; dua hold tumpang tindih → `ExclusionViolation`; **ADR-0002**: booking `CANCELLATION_REQUESTED`/`CANCELLATION_REVIEW`/`DISPUTED` menolak re-sale lewat `ex_bookings_no_overlap`, `CANCELLED` melepasnya, dan rentang tetap half-open | PASS |
 | Gerbang kredensial & konfigurasi | `make check` → secret-scan 0 temuan, unsafe-scan 0 temuan | PASS |

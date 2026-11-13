@@ -73,7 +73,7 @@ Semua yang di bawah ini **sudah ada dan sudah diuji**, bukan rencana.
 | # | Bagian gedung | Fungsinya (bahasa awam) | Bukti |
 |---|---|---|---|
 | 1 | **Katalog kebijakan** | Daftar resmi pertanyaan bisnis yang jawabannya harus Anda tentukan, mis. "berapa % DP untuk booking jauh hari?" | **25 dari 25 sudah terjawab** |
-| 2 | **Mesin status booking** | 32 tahapan perjalanan satu booking, dari "tamu bertanya" sampai "selesai" | 32 status + 116 jalur sah, diuji |
+| 2 | **Mesin status booking** | 32 tahapan perjalanan satu booking, dari "tamu bertanya" sampai "selesai" | 32 status + 120 jalur sah, diuji |
 | 3 | **Mesin status hold** | 9 tahapan menahan unit villa | 9 status, diuji |
 | 4 | **Mesin pembayaran** | Mencatat uang masuk, mencocokkan dengan tagihan, menandai yang belum jelas | `payments.py`, uji rekonsiliasi |
 | 5 | **Mesin bukti** | Membedakan bukti kuat (dari sistem villa) dan bukti lemah (screenshot tamu) — level A sampai D | `evidence.py` |

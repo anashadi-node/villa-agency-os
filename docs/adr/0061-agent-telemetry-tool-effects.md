@@ -57,7 +57,7 @@ Kenapa tidak langsung diklasifikasi saja: himpunan READ di `TOOL_EFFECTS` **dipi
 tertulis — *"widening READ widens the read-only rung for every tenant at once"*. Menambah 6 nama
 READ berarti memperlebar rung `READ_ONLY` untuk **semua tenant** sekaligus. Itu perubahan
 permukaan wewenang, dan aturan proyek: perubahan otoritas agen butuh ADR + analisis risiko +
-bukti + persetujuan owner. Karena itu ADR ini berstatus PROPOSED.
+bukti + persetujuan owner. Karena itu ADR ini semula berstatus PROPOSED, dan baru diterima lewat opsi B (keputusan owner 2026-10-07).
 
 ## Opsi yang diajukan (sebelum keputusan)
 

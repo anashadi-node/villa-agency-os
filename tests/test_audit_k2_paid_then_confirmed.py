@@ -44,14 +44,27 @@ class TestPaidThenConfirmed(KernelTestCase):
     def test_there_is_no_hold_to_confirmed_edge_anywhere(self):
         self.assertFalse(RK._default_transition_gate("HOLD_ACTIVE", "CONFIRMED", "confirm_booking"))
         self.assertFalse(BS.can_transition("HOLD_ACTIVE", "CONFIRMED"))
-        # Every edge the payment/confirmation path uses exists in the canonical graph.
-        # (The kernel's direct ``* -> CANCELLED`` edges from CONFIRMED and later states do
-        # not; that pre-existing gap is reported separately, not changed here.)
-        for frm, to, cmd in RK._KERNEL_TRANSITIONS:
-            if cmd not in ("reserve_booking", "mark_paid", "confirm_booking"):
-                continue
+
+    def test_every_kernel_edge_exists_in_the_canonical_graph(self):
+        """No kernel write may be invisible on the map (ADR-0069, opsi a).
+
+        Before ADR-0069 the kernel cancelled a CONFIRMED/PRE_ARRIVAL/IN_STAY/BALANCE_DUE
+        booking through an edge the canonical graph did not contain — the graph said the
+        situation was impossible while production hit it routinely. The exception is gone:
+        every edge in ``_KERNEL_TRANSITIONS`` must now be a legal transition.
+        """
+        for frm, to, cmd in sorted(RK._KERNEL_TRANSITIONS):
             with self.subTest(edge=(frm, to, cmd)):
-                self.assertTrue(BS.can_transition(frm, to), f"kernel edge {frm}->{to} not in booking_states")
+                self.assertTrue(
+                    BS.can_transition(frm, to), f"kernel edge {frm}->{to} ({cmd}) missing from booking_states"
+                )
+
+    def test_direct_cancellation_of_a_paid_booking_still_demands_a_reason(self):
+        """ADR-0069: the direct edges exist, but never silently."""
+        for state in ("CONFIRMED", "BALANCE_DUE", "PRE_ARRIVAL", "IN_STAY"):
+            with self.subTest(state=state):
+                self.assertTrue(BS.can_transition(state, "CANCELLED"))
+                self.assertIn(BS.GUARD_REASON, BS.guards_for(state, "CANCELLED"))
 
     # -- reservation keeps the slot without claiming it is confirmed ------- #
     def test_reservation_awaits_payment_and_the_hold_keeps_the_slot(self):
