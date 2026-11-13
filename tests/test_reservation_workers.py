@@ -64,6 +64,7 @@ import ops_tasks as OT
 import policy_engine as PE
 import reservation_service as RS
 import reservation_workers as RW
+from booking_support import confirm_through_payment
 from primitives import DomainError, FrozenClock, IdFactory, parse_iso
 
 import test_reservation_service as RST
@@ -329,7 +330,7 @@ class ReservationWorkersTestCase(unittest.TestCase):
         hold = self.held(fixture)
         self.allow_medium(fixture, tools=(RW.QUOTE_TOOL,))
         quotation = self.offering(fixture)
-        booking = fixture.workers.kernel().confirm_from_hold(
+        booking = confirm_through_payment(fixture.workers.kernel(),
             hold_id=hold.hold_id,
             quote_id=quotation.quote_id,
             idempotency_key=f"idem_book_{seed}",
@@ -1253,8 +1254,9 @@ class ReservationWorkersTestCase(unittest.TestCase):
 
         The confirmation itself is not the worker's: the kernel writes the booking under the human
         actor, the case is linked to it through :mod:`cases`, and only then does the answer have a
-        booking to report. Confirmed with nothing paid, §9's financial gate stays open, and the
-        answer keeps saying so.
+        booking to report. Since audit 2026-11-13 (K2) a booking is ``CONFIRMED`` only after
+        verified money and the villa's block proof, so the financial gate is closed and the
+        answer says so; the unpaid gap now lives in ``PAYMENT_PENDING``, before confirmation.
         """
 
         fixture = self.running(seed="w08b")
@@ -1265,7 +1267,7 @@ class ReservationWorkersTestCase(unittest.TestCase):
         hold = self.held(fixture)
         self.allow_medium(fixture, tools=(RW.QUOTE_TOOL,))
         quotation = self.offering(fixture)
-        booking = fixture.workers.kernel().confirm_from_hold(
+        booking = confirm_through_payment(fixture.workers.kernel(),
             hold_id=hold.hold_id,
             quote_id=quotation.quote_id,
             idempotency_key="idem_book_w08",
@@ -1288,9 +1290,9 @@ class ReservationWorkersTestCase(unittest.TestCase):
         self.assertTrue(answer.occupies_slot)
         self.assertEqual(answer.inventory["source"], "booking")
         self.assertTrue(answer.inventory["secures_slot"])
-        self.assertEqual(answer.missing, (RW.GATE_FINANCIAL,))
-        self.assertFalse(answer.financial["recorded"])
-        self.assertEqual(answer.financial["amount_paid_minor"], 0)
+        self.assertEqual(answer.missing, ())
+        self.assertTrue(answer.financial["recorded"])
+        self.assertEqual(answer.financial["amount_paid_minor"], booking.total_minor)
 
     def test_a_released_hold_does_not_secure_the_slot(self):
         """§9's inventory gate is the supplier's confirmation — a released slot is not secured.
@@ -1429,7 +1431,7 @@ class ReservationWorkersTestCase(unittest.TestCase):
         hold = self.held(fixture)
         self.allow_medium(fixture, tools=(RW.QUOTE_TOOL,))
         quotation = self.offering(fixture)
-        booking = fixture.workers.kernel().confirm_from_hold(
+        booking = confirm_through_payment(fixture.workers.kernel(),
             hold_id=hold.hold_id,
             quote_id=quotation.quote_id,
             idempotency_key="idem_book_w09",

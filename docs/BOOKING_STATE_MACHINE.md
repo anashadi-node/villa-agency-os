@@ -99,7 +99,10 @@ dalam transaksi yang sama:
 
 | Perintah (`ReservationKernel`) | Dari → ke | Dijalankan oleh |
 |---|---|---|
-| `confirm_from_hold` | `HOLD_ACTIVE` → `CONFIRMED` | reservation, setelah bukti block villa (ADR-0033) |
+| `reserve_from_hold` | `HOLD_ACTIVE` → `PAYMENT_PENDING` | reservation; hold tetap `CONFIRMED` dan memegang slot, invoice kini bisa diterbitkan |
+| `mark_paid` | `PAYMENT_PENDING`/`PAYMENT_PARTIAL` → `DEPOSIT_PAID`/`PAID_IN_FULL`; `DEPOSIT_PAID` → `PAID_IN_FULL` | finance, dengan pembayaran `SUCCEEDED` pada invoice booking itu (bukti = `payment_id`) |
+| `confirm_booking` | `DEPOSIT_PAID`/`PAID_IN_FULL` → `CONFIRMED` | reservation, dengan bukti blok villa level A/B `can_confirm` yang ditangkap **setelah** reservasi; hold → `CONVERTED` (ADR-0033) |
+| ~~`confirm_from_hold`~~ | ~~`HOLD_ACTIVE` → `CONFIRMED`~~ | **dipensiunkan** (audit 2026-11-13, K2): selalu menolak `CONFIRM_REQUIRES_PAYMENT_AND_BLOCK_PROOF`; sisi itu tidak ada di graf kanonik |
 | `prepare_arrival` | `CONFIRMED` → `PRE_ARRIVAL` | tim reservasi, saat menyiapkan kedatangan tamu |
 | `check_in` | `PRE_ARRIVAL` → `IN_STAY` | tim reservasi/greeting, saat tamu tiba |
 | `complete_stay` | `IN_STAY` → `COMPLETED` | tim operasi, saat masa inap berakhir |

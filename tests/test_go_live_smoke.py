@@ -32,7 +32,9 @@ SCRIPT = REPO / "scripts" / "go_live_smoke.py"
 #: The states a booking passes through from the hold to the end. ``CONFIRMED`` is written by
 #: the confirmation path, the next three by the stay commands — the three commands that were
 #: missing until this journey could be run end to end.
-STAY_STATES = ("HOLD_ACTIVE", "CONFIRMED", "PRE_ARRIVAL", "IN_STAY", "COMPLETED")
+STAY_STATES = (
+    "HOLD_ACTIVE", "PAYMENT_PENDING", "PAID_IN_FULL", "CONFIRMED", "PRE_ARRIVAL", "IN_STAY", "COMPLETED",
+)  # ADR-0033 order since audit 2026-11-13 (K2): reserve, verified money, block proof
 
 
 def _run(db: Path, report: Path) -> subprocess.CompletedProcess[str]:
@@ -87,7 +89,7 @@ def test_every_step_of_the_journey_passed(journey):
     assert [step["step"] for step in steps] == list(range(1, len(steps) + 1))
     refused = [step for step in steps if "refused" in step]
     assert refused == []
-    assert len(steps) == 16
+    assert len(steps) == 17
 
 
 def test_the_stay_moved_through_all_of_its_states(journey):
