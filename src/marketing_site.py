@@ -22,8 +22,8 @@ Recorded decisions:
    times shown on the site are read from ``cases.SLA_POLICIES`` at render time,
    never restated here.
  * Anti-abuse: honeypot field, per-IP sliding-window rate limit, same-origin
-   check on POST, bounded form size and message length, opaque-token validation
-   for the property hint. All fail closed; no third-party services, no external
+   check on POST, bounded form size and message length, signed timed form token
+   (audit S1), ref validation for the property hint. All fail closed; no third-party services, no external
    network assets (single-file response: inline CSS/SVG, and base64-embedded
    JPEG villa photos read from ``assets/photos/`` at startup — zero new routes,
    zero outbound requests from the rendered page; see ``docs/PHOTO_CREDITS_2026-10-06.md``).
@@ -44,7 +44,10 @@ from __future__ import annotations
 import argparse
 import base64
 import functools
+import hashlib
+import hmac
 import ipaddress
+import os
 import json
 import re
 import secrets
@@ -52,6 +55,7 @@ import sqlite3
 import sys
 import traceback
 from collections import deque
+from datetime import datetime
 from types import MappingProxyType
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -385,12 +389,72 @@ class PublicReadModel:
         return "Availability hint: availability is being checked before any quote is promised."
 
 
+#: A form filled in under this many seconds was not filled in by a person.
+FORM_TOKEN_MIN_AGE_SECONDS = 3
+#: A form older than this is stale; the visitor reloads and gets a fresh one.
+FORM_TOKEN_MAX_AGE_SECONDS = 2 * 60 * 60
+FORM_TOKEN_KEY_ENV_VAR = "VILLA_FORM_TOKEN_KEY"
+_FORM_TOKEN_MIN_KEY_BYTES = 32
+_FORM_TOKEN_TS_HEX = 10
+_FORM_TOKEN_NONCE_HEX = 16
+_FORM_TOKEN_MAC_HEX = 32
+
+
+class FormTokens:
+    """Signed, timed form tokens for the public inquiry form (audit 2026-11-13, S1).
+
+    Before this the server accepted any 16-64 hex string, so a script could post
+    without ever loading the form. A token is now ``issued_at | nonce | HMAC``, all
+    hex (it still matches the old field shape, so templates and the idempotency key
+    are unchanged). It is refused when the MAC is wrong, when it is younger than
+    :data:`FORM_TOKEN_MIN_AGE_SECONDS` (bots submit instantly) or older than
+    :data:`FORM_TOKEN_MAX_AGE_SECONDS`.
+
+    The key comes from ``VILLA_FORM_TOKEN_KEY`` (>= 32 bytes). Without it a random
+    per-process key is used: correct for one process, but tokens then die on restart
+    and differ between processes, so set the variable when running more than one.
+    """
+
+    def __init__(self, clock: Any, *, key: Optional[str] = None,
+                 env: Optional[Mapping[str, str]] = None) -> None:
+        self.clock = clock
+        source = os.environ if env is None else env
+        raw = key if key is not None else source.get(FORM_TOKEN_KEY_ENV_VAR, "")
+        if raw and len(raw.encode("utf-8")) < _FORM_TOKEN_MIN_KEY_BYTES:
+            raise ValueError(f"{FORM_TOKEN_KEY_ENV_VAR} must be at least {_FORM_TOKEN_MIN_KEY_BYTES} bytes")
+        self._key = raw.encode("utf-8") if raw else secrets.token_bytes(_FORM_TOKEN_MIN_KEY_BYTES)
+
+    def _mac(self, body: str) -> str:
+        return hmac.new(self._key, body.encode("ascii"), hashlib.sha256).hexdigest()[:_FORM_TOKEN_MAC_HEX]
+
+    def issue(self, *, issued_at: Optional[datetime] = None) -> str:
+        when = issued_at or self.clock.now()
+        body = f"{int(when.timestamp()):0{_FORM_TOKEN_TS_HEX}x}{secrets.token_hex(_FORM_TOKEN_NONCE_HEX // 2)}"
+        return body + self._mac(body)
+
+    def verify(self, token: str) -> None:
+        """Raise :class:`FormInvalid` unless ``token`` was issued here, in the window."""
+        expected_len = _FORM_TOKEN_TS_HEX + _FORM_TOKEN_NONCE_HEX + _FORM_TOKEN_MAC_HEX
+        if len(token) != expected_len or not _FORM_TOKEN_RE.match(token):
+            raise FormInvalid("this form session has expired; please reload the page")
+        body, mac = token[:-_FORM_TOKEN_MAC_HEX], token[-_FORM_TOKEN_MAC_HEX:]
+        if not hmac.compare_digest(mac, self._mac(body)):
+            raise FormInvalid("this form session has expired; please reload the page")
+        age = self.clock.now().timestamp() - int(body[:_FORM_TOKEN_TS_HEX], 16)
+        if age < FORM_TOKEN_MIN_AGE_SECONDS:
+            raise FormInvalid("please take a moment to review your message, then send it again")
+        if age > FORM_TOKEN_MAX_AGE_SECONDS:
+            raise FormInvalid("this form session has expired; please reload the page")
+
+
 class InquiryIntake:
     """Turn a validated public form into a kernel case — the only write path."""
 
-    def __init__(self, conn: Any, *, agency_id: str, clock: Any, ids: Any) -> None:
+    def __init__(self, conn: Any, *, agency_id: str, clock: Any, ids: Any,
+                 form_tokens: Optional[FormTokens] = None) -> None:
         self.agency_id = require_ref(agency_id, "agency_id")
         self.clock = clock
+        self.form_tokens = form_tokens or FormTokens(clock)
         self.cases = CaseService(conn, clock, ids, agency_id=self.agency_id)
         self.crm = CrmService(
             conn, clock=clock, ids=ids, agency_id=self.agency_id, case_service=self.cases
@@ -429,8 +493,7 @@ class InquiryIntake:
         email = self._require_field(form, "email", 320)
         message = self._require_field(form, "message", MAX_MESSAGE_CHARS)
         token = self._require_field(form, FORM_TOKEN_FIELD, 64)
-        if not _FORM_TOKEN_RE.match(token):
-            raise FormInvalid("this form session has expired; please reload the page")
+        self.form_tokens.verify(token)
         if len(message) < 10:
             raise FormInvalid("please describe your trip in at least 10 characters")
         if not _EMAIL_HINT_RE.match(email):
@@ -720,6 +783,7 @@ class MarketingSite:
         templates_dir: Optional[Any] = None,
         rate_limiter: Any = None,
         trusted_proxy: bool = False,
+        form_token_key: Optional[str] = None,
     ) -> None:
         self.conn = conn
         self.agency_id = agency_id or resolve_agency_id()
@@ -736,8 +800,10 @@ class MarketingSite:
             window_seconds=RATE_LIMIT_WINDOW_SECONDS,
         )
         self.read_model = PublicReadModel(self.conn, self.agency_id)
+        self.form_tokens = FormTokens(self.clock, key=form_token_key)
         self.intake = InquiryIntake(
-            self.conn, agency_id=self.agency_id, clock=self.clock, ids=self.ids
+            self.conn, agency_id=self.agency_id, clock=self.clock, ids=self.ids,
+            form_tokens=self.form_tokens,
         )
 
     # Live-URL → static-filename map for --dump link rewriting (villas/{id} is
@@ -884,8 +950,12 @@ class MarketingSite:
             base=base,
         )
 
+    def issue_form_token(self) -> str:
+        """A fresh signed token for the inquiry form (see :class:`FormTokens`)."""
+        return self.form_tokens.issue()
+
     def inquiry_form_html(self, property_ref: str = "", base: str = "") -> str:
-        token = secrets.token_hex(16)
+        token = self.issue_form_token()
         asking = ""
         if property_ref:
             try:

@@ -766,7 +766,7 @@ Semua id di URL divalidasi `require_ref`; id rusak = 404, bukan galat. Hanya vil
 | Same-origin | header `Origin` ada dan `netloc` ≠ `Host` → `FORM_INVALID` |
 | Rate limit | `SlidingWindowRateLimiter`: **5 kiriman / 600 detik per alamat**; maks 4.096 klien terlacak (tanpa batas, pemutar alamat IPv6 /64 menumbuhkan memori selamanya) → HTTP 429 + `Retry-After` |
 | Ukuran | form maks 32 KiB; nama ≤ 100; email ≤ 320; pesan 10–5.000 karakter; ≤ 32 field; nama field ganda ditolak |
-| Token formulir | `form_token` heks 16–64 karakter; menjadi **kunci idempotensi** kasus |
+| Token formulir | `form_token` = `issued_at | nonce | HMAC-SHA256` (58 heks), ditandatangani dengan `VILLA_FORM_TOKEN_KEY` (≥ 32 byte; tanpa itu kunci acak per proses). Ditolak bila MAC salah, umur < 3 detik (bot) atau > 2 jam (basi) — audit 2026-11-13 S1. Tetap menjadi **kunci idempotensi** kasus. Mode `--dump` statis: token di HTML basi setelah 2 jam |
 | Retry | token sama + isi sama → hasil sebelumnya dikembalikan; token sama + isi/email/villa berbeda → ditolak ("form sudah dipakai") |
 | Email | pola longgar `x@y.z`; tamu ada → dipakai ulang, tidak ada → `register_guest` |
 | Rujukan villa | `property_ref` divalidasi `require_ref`; rusak → "unknown villa reference" |
