@@ -1692,9 +1692,10 @@ def test_finance_summary_states_each_currency_separately(seeded_app, conn, clock
     """
     now = clock.now()
     page = render(seeded_app, "finance", "finance")
-    idr = re.search(r"Outstanding invoices IDR \(minor\)</dt>\s*<dd[^>]*>([^<]+)</dd>", page)
+    idr = re.search(r"Outstanding invoices IDR</dt>\s*<dd[^>]*>([^<]+)</dd>", page)
     assert idr, "the finance summary does not name the currency it summed"
-    assert idr.group(1).replace(",", "").strip() == "5500000"
+    # Displayed through money_display, so the raw minor unit never reaches the page.
+    assert idr.group(1).strip() == "IDR 5.500.000"
     assert "Outstanding invoices USD" not in page
 
     conn.execute(
@@ -1708,19 +1709,26 @@ def test_finance_summary_states_each_currency_separately(seeded_app, conn, clock
     )
 
     page = render(seeded_app, "finance", "finance")
-    idr = re.search(r"Outstanding invoices IDR \(minor\)</dt>\s*<dd[^>]*>([^<]+)</dd>", page)
-    usd = re.search(r"Outstanding invoices USD \(minor\)</dt>\s*<dd[^>]*>([^<]+)</dd>", page)
+    idr = re.search(r"Outstanding invoices IDR</dt>\s*<dd[^>]*>([^<]+)</dd>", page)
+    usd = re.search(r"Outstanding invoices USD</dt>\s*<dd[^>]*>([^<]+)</dd>", page)
     assert idr and usd, "both currencies must be listed"
-    assert idr.group(1).replace(",", "").strip() == "5500000"
-    assert usd.group(1).replace(",", "").strip() == "2500000"
+    assert idr.group(1).strip() == "IDR 5.500.000"
+    assert usd.group(1).strip() == "USD 25.000,00"
 
 # --------------------------------------------------------------------------- #
 # 8. Channels — what arrived, and what is waiting to leave
 # --------------------------------------------------------------------------- #
+# A table cell is either plain escaped text or a timestamp rendered as
+# <time datetime="…">07 Nov 2026, 07:00 WIB</time>. The readable half is an
+# element, not text, so a pattern that only allows [^<]* would silently stop
+# matching the moment we made the page friendlier.
+_TEXT_CELL = r"(?:<time[^>]*>[^<]*</time>|[^<]*)"
+
+
 def _inbound_count(page: str, channel: str) -> int:
     """The inbound count for one channel, read back from the rendered table."""
     match = re.search(
-        rf"<tr><td>{re.escape(channel)}</td><td>(\d+)</td><td>[^<]*</td></tr>", page
+        rf"<tr><td>{re.escape(channel)}</td><td>(\d+)</td><td>{_TEXT_CELL}</td></tr>", page
     )
     assert match, f"baris kanal {channel} tidak ditemukan"
     return int(match.group(1))
@@ -1806,11 +1814,15 @@ def test_channels_page_shows_an_approved_draft_nobody_has_sent(seeded_app):
     page = render(seeded_app, "channels", "operations")
     assert "draft_queue_1" in page
     assert "approved and not sent yet: <strong>1</strong>" in page
-    assert re.search(
-        r"<tr><td>draft_queue_1</td><td>[\w-]+</td><td>WhatsApp Business</td>"
-        r"<td>quote_v1</td><td>GROUNDED</td><td>[^<]*</td><td>90</td></tr>",
+    queued = re.search(
+        rf"<tr><td>draft_queue_1</td><td>[\w-]+</td><td>WhatsApp Business</td>"
+        rf"<td>quote_v1</td><td>GROUNDED</td><td>({_TEXT_CELL})</td><td>90</td></tr>",
         page,
-    ), "baris antrean tidak memuat umur 90 menit"
+    )
+    assert queued, "baris antrean tidak memuat umur 90 menit"
+    assert queued.group(1).endswith("WIB</time>"), (
+        "waktu approval harus terbaca sebagai WIB, bukan ISO mentah"
+    )
     assert "<tr><td>GROUNDED</td><td>1</td></tr>" in page
 
 
@@ -1990,3 +2002,23 @@ def test_role_display_label_covers_every_dashboard_role():
     for role in D.ROLES:
         assert role in D.ROLE_DISPLAY_LABEL
         assert D.ROLE_DISPLAY_LABEL[role]
+
+
+def test_no_page_shows_a_raw_iso_instant_in_visible_text(seeded_app):
+    """The owner reads WIB; the ISO instant belongs in an attribute, never in prose.
+
+    ``_cell`` and ``_stamp`` render every complete instant as
+    ``<time datetime="…">14 Nov 2026, 08:16 WIB</time>``. This walks every page the
+    owner can open and asserts two things at once: no ISO instant survives in the
+    text the eye reads, and at least one ``<time>`` element is actually there — a
+    page that simply dropped the timestamps would otherwise pass the first half.
+    """
+    instant = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}")
+    pages = [page for page, _route in D.NAV if "owner" in D.PAGE_ROLES.get(page, ())]
+    assert len(pages) >= 10, "the sweep must cover the real page set"
+    for page in pages:
+        body = render(seeded_app, page, "owner")
+        visible = re.sub(r"<[^>]+>", " ", body)
+        leaked = instant.findall(visible)
+        assert not leaked, f"{page} masih menampilkan ISO mentah: {leaked[:3]}"
+        assert "<time datetime=" in body, f"{page} tidak merender satu pun <time>"
