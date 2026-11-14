@@ -63,6 +63,7 @@ import money_display as money_display_module
 import policy_engine as policy_engine_module
 import roles as roles_module
 import shadow_eval as shadow_eval_module
+import time_display as time_display_module
 from approvals import (
     MIN_IDEMPOTENCY_KEY_LENGTH,
     ROLE_RANK,
@@ -388,7 +389,7 @@ _DUMP_NAMES: Mapping[str, str] = MappingProxyType(
 #: ``tests/test_dashboard.py::test_nav_groups_cover_every_nav_page`` guards
 #: that this set never drifts from ``NAV``.
 NAV_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("", ("command_center",)),
+    ("Ringkasan", ("command_center",)),
     ("Reservations & Guests", ("cases", "inventory")),
     ("Operations", ("operations",)),
     ("Finance", ("finance",)),
@@ -741,7 +742,28 @@ def render_page(
 # Small HTML builders (all of them escape their inputs)
 # --------------------------------------------------------------------------- #
 def _cell(value: Any) -> str:
+    """Escaped cell content, with every ISO instant also shown in readable form.
+
+    The database speaks UTC ISO-8601; the owner reads ``14 Nov 2026, 07:00 WIB``.
+    ``time_display.humanize`` keeps the machine value in a ``datetime`` attribute and
+    returns ``None`` for anything that is not a complete instant, so free text and
+    bare dates are still escaped exactly as before.
+    """
+    stamp = time_display_module.humanize(value)
+    if stamp is not None:
+        return stamp
     return escape_value(value)
+
+
+def _stamp(value: Any) -> Any:
+    """A timestamp slot in a page shell (not a table cell), ready for ``{{ key }}``.
+
+    Same contract as :func:`_cell`, but the slot is substituted directly rather than
+    dropped into markup we already trust, so the value has to come back as
+    :class:`Markup` or the ``<time>`` element would be shown as text.
+    """
+    rendered = time_display_module.humanize(value)
+    return Markup(rendered) if rendered is not None else escape_value(value)
 
 
 def badge(text: Any, kind: str = "info") -> Markup:
@@ -1369,7 +1391,7 @@ class Dashboard:
             "actor": principal.identity,
             "actor_role": principal.role,
             "actor_role_label": ROLE_DISPLAY_LABEL.get(principal.role, principal.role),
-            "now": to_iso(self.clock.now()),
+            "now": _stamp(to_iso(self.clock.now())),
             "schema_version": self.schema_version(),
             "nav": nav_links(principal.role),
             "read_only_banner": Markup(
@@ -1472,7 +1494,7 @@ class Dashboard:
             "audit_table": self._audit_table(events),
             "kpi_note": Markup(
                 '<p class="muted" data-note="kpi">Angka dihitung dari database pada '
-                f"<code>{escape_value(kpis['now'])}</code>.</p>"
+                f"<code>{_stamp(kpis['now'])}</code>.</p>"
             ),
         }
 
@@ -1886,7 +1908,9 @@ class Dashboard:
         # Satu baris per mata uang. Menjumlahkan lintas mata uang menghasilkan satu angka yang
         # tidak berarti apa pun (rupiah + dolar), dan tidak ada cara membaca ulang angka itu.
         outstanding = [
-            (f"Outstanding invoices {row['currency']} (minor)", int(row["total"] or 0))
+            # Uang selalu lewat money(): angka minor mentah ("11990000") bukan tampilan
+            # keuangan — nilainya harus terbaca sebagai "IDR 11.990.000" + acuan USD.
+            (f"Outstanding invoices {row['currency']}", money(row["total"], row["currency"]))
             for row in self._rows(
                 "SELECT currency, COALESCE(SUM(total_minor), 0) AS total FROM invoices"
                 " WHERE agency_id = ? AND status = 'ISSUED' GROUP BY currency ORDER BY currency",

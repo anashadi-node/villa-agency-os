@@ -1,0 +1,29 @@
+# Lingkungan pengembangan + gerbang kualitas (`make check`).
+# Bukan dependensi runtime produksi: runtime aplikasi hanya stdlib + PostgreSQL driver.
+#
+# Cara pakai (dari akar repo):
+#   /usr/bin/python3 -m venv .venv
+#   .venv/bin/pip install -r requirements-dev.txt
+#   .venv/bin/python -m pytest          # atau: make check
+#
+# KENAPA SEMUA DI-PIN — dan kenapa berkas ini ada:
+# `make check` berjalan di interpreter produksi (/usr/bin/python3, lihat Makefile),
+# sedangkan pengembangan memakai .venv. Dua interpreter dengan paket berbeda
+# menghasilkan hasil yang berbeda: 2 test `tests/test_build_deliverables.py` gagal di
+# .venv semata-mata karena `markdown` tidak terpasang — kode tidak berubah, gate tetap
+# hijau di /usr/bin/python3. Pin versi yang sama di kedua lingkungan supaya angka
+# `4094 passed` bisa dibandingkan apel-ke-apel, bukan tebak-tebakan.
+#
+# Versi di bawah = yang terbukti hijau (4094 passed, 4 skipped, 4176 subtests).
+
+pytest==9.1.1
+Markdown==3.5.2
+
+# `make lint` (pyflakes).
+pyflakes==4.0.0
+
+# PostgreSQL twin: `make pg-twin`, `make schema-parity`, dan tests/test_schema.py
+# (test PG dilewati bila VILLA_PG_DSN tidak diset — sengaja, bukan disembunyikan).
+psycopg[binary]==3.3.6
+
+# Opsional, tidak dipakai pytest.ini (`addopts` tidak memuat `-n`): pytest-xdist==3.8.0
