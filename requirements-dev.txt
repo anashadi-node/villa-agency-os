@@ -17,7 +17,7 @@
 # Versi di bawah = yang terbukti hijau (4094 passed, 4 skipped, 4176 subtests).
 
 pytest==9.1.1
-Markdown==3.5.2
+Markdown==3.8.1
 
 # `make lint` (pyflakes).
 pyflakes==4.0.0
