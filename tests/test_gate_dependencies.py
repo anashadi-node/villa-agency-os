@@ -68,3 +68,30 @@ def test_ci_installs_the_manifest_and_names_no_package_itself():
             continue
         offenders.append(stripped)
     assert offenders == [], f"CI installs packages outside the manifest: {offenders}"
+
+
+def test_ci_proves_the_postgresql_twin_against_a_real_server():
+    """The twin must be applied to a server in CI, not merely diffed as text.
+
+    Measured before this guard existed: a clean checkout reported ``71 passed, 4 skipped``
+    and CI reported green, so nothing in the pipeline ever proved that
+    ``001_initial.pg.sql`` applies to PostgreSQL. ``tests/test_schema.py`` skips those four
+    tests when ``VILLA_PG_DSN`` is unset — which is exactly CI's default state. The job
+    named here must keep its service container and must keep fail-closed on.
+    """
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    jobs = re.split(r"^  (?=[a-z0-9_-]+:\s*$)", workflow, flags=re.MULTILINE)
+    parity = [job for job in jobs if "postgres" in job and "VILLA_PG_REQUIRED" in job]
+    assert parity, (
+        "CI has no job that runs the PostgreSQL twin against a real server; without one the "
+        "live-parity tests skip and the gate is green over an unproven schema"
+    )
+    job = parity[0]
+    assert "services:" in job, "the parity job must declare a PostgreSQL service container"
+    assert "image: postgres:" in job, "the parity job must pin a PostgreSQL image tag"
+    assert 'VILLA_PG_REQUIRED: "1"' in job, (
+        "VILLA_PG_REQUIRED must be 1 so a missing server fails the job instead of skipping it"
+    )
+    assert "VILLA_PG_DSN" in job, "the parity job must hand the tests a DSN"
+    assert "tests/test_schema.py" in job, "the parity job must run the live-parity tests"
+

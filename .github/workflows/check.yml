@@ -76,3 +76,54 @@ jobs:
             check.log
             smoke.report.json
           if-no-files-found: ignore
+
+  # Paritas twin PostgreSQL di server sungguhan — job terpisah karena service container
+  # tidak perlu memperlambat tiga job matriks. Alasannya bukan kelengkapan: tanpa server,
+  # empat tes live-PostgreSQL di tests/test_schema.py hanya SKIP, sehingga gerbang hijau
+  # padahal 001_initial.pg.sql belum pernah diterapkan ke PostgreSQL mana pun. Diukur pada
+  # checkout bersih 2026-11-14: tanpa server 71 passed + 4 skipped; dengan server 75 passed,
+  # 0 skipped. `VILLA_PG_REQUIRED=1` menutup pintu belakangnya: service hilang → job MERAH,
+  # bukan hijau-dengan-skip. Penjaganya: tests/test_gate_dependencies.py.
+  postgres-parity:
+    name: twin PostgreSQL di server sungguhan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      # Basis data pembuangan: tests/test_schema.py menjatuhkan dan membuat ulang `public`.
+      VILLA_PG_DSN: postgresql://postgres:postgres@localhost:5432/postgres
+      VILLA_PG_REQUIRED: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # Sumber versi tetap satu: requirements-dev.txt (memuat psycopg untuk tes ini).
+      - name: Install gate dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Apply the twin and compare catalogues
+        run: |
+          set -o pipefail
+          python -m pytest tests/test_schema.py -rs 2>&1 | tee pg-parity.log
+
+      - name: Upload parity log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pg-parity-log
+          path: pg-parity.log
+          if-no-files-found: ignore
+
