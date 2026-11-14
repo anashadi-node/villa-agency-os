@@ -6,21 +6,33 @@
 #   .venv/bin/pip install -r requirements-dev.txt
 #   .venv/bin/python -m pytest          # atau: make check
 #
-# KENAPA SEMUA DI-PIN — dan kenapa berkas ini ada:
+# KENAPA SEMUA DI-PIN — dan kenapa berkas ini SATU-SATUNYA sumber versi:
 # `make check` berjalan di interpreter produksi (/usr/bin/python3, lihat Makefile),
-# sedangkan pengembangan memakai .venv. Dua interpreter dengan paket berbeda
-# menghasilkan hasil yang berbeda: 2 test `tests/test_build_deliverables.py` gagal di
-# .venv semata-mata karena `markdown` tidak terpasang — kode tidak berubah, gate tetap
-# hijau di /usr/bin/python3. Pin versi yang sama di kedua lingkungan supaya angka
-# `4094 passed` bisa dibandingkan apel-ke-apel, bukan tebak-tebakan.
+# sedangkan pengembangan memakai .venv, dan CI memakai runner kosong. Tiga lingkungan
+# dengan paket berbeda menghasilkan hasil berbeda: 2 test `tests/test_build_deliverables.py`
+# gagal di .venv semata-mata karena `markdown` tidak terpasang — kode tidak berubah,
+# gate tetap hijau di /usr/bin/python3.
 #
-# Versi di bawah = yang terbukti hijau (4094 passed, 4 skipped, 4176 subtests).
+# Sejak 2026-11-14 CI **memasang berkas ini** (`pip install -r requirements-dev.txt`),
+# bukan lagi `pip install --upgrade pytest pyflakes markdown`. Sebelum itu CI selalu
+# memakai versi terbaru yang kebetulan ada saat run, sehingga (a) versi gerbang tidak
+# dapat direproduksi, dan (b) Dependabot membuka PR untuk pin yang tidak pernah dipakai
+# CI — persis yang terjadi pada PR #11 (markdown 3.5.2 -> 3.8.1, sementara CI saat itu
+# sudah menjalankan 3.11.3). Kini menaikkan versi = satu PR yang benar-benar mengubah
+# gerbang, dan riwayatnya terbaca.
+#
+# Versi di bawah = yang terbukti hijau, diukur bukan dikira:
+#   - CI run 43547614765 (Python 3.11, 3.12, 3.13): markdown 3.11.3, pytest 9.2.0, pyflakes 4.1.0
+#   - venv bersih hanya dari berkas ini: 4094 passed, 4 skipped, 4176 subtests, 342,72 s
+#   - gerbang /usr/bin/python3 (markdown 3.5.2, pytest 9.1.1): 4094 passed, 346,26 s
+# Jarak 3.5.2 -> 3.11.3 sengaja dibiarkan longgar untuk interpreter produksi: suite
+# terbukti hijau di kedua ujungnya, jadi mesin yang belum sempat upgrade tetap sah.
 
-pytest==9.1.1
-Markdown==3.5.2
+pytest==9.2.0
+Markdown==3.11.3
 
 # `make lint` (pyflakes).
-pyflakes==4.0.0
+pyflakes==4.1.0
 
 # PostgreSQL twin: `make pg-twin`, `make schema-parity`, dan tests/test_schema.py
 # (test PG dilewati bila VILLA_PG_DSN tidak diset — sengaja, bukan disembunyikan).

@@ -37,12 +37,18 @@ jobs:
           python-version: ${{ matrix.python }}
 
       # Versi action dipin ke major terbaru (v7) karena v4/v5 masih target Node.js 20;
-# runner memaksanya jalan di Node 24 dan mencetak peringatan deprecation tiap run.
-# `src/` hanya memakai stdlib. Yang dipasang di sini adalah perkakas gerbang:
+      # runner memaksanya jalan di Node 24 dan mencetak peringatan deprecation tiap run.
+      # `src/` hanya memakai stdlib. Yang dipasang di sini adalah perkakas gerbang:
       # pytest untuk suite, pyflakes untuk `make lint`, markdown untuk
       # `scripts/build_deliverables.py` (dua tesnya merender dokumen sungguhan).
+      # Sumber versi = requirements-dev.txt. Jangan menulis nama paket di baris ini:
+      # `pip install --upgrade pytest pyflakes markdown` pernah membuat CI memakai versi
+      # yang tidak pernah tercatat (markdown 3.11.3) sementara manifes memaku 3.5.2,
+      # sehingga Dependabot membuka PR untuk versi yang sudah usang (PR #11).
       - name: Install gate dependencies
-        run: python -m pip install --upgrade pip pytest pyflakes markdown
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
 
       # `set -o pipefail` wajib: tanpa itu status `make check` tertelan `tee`, dan run
       # yang gagal berakhir "success". Diukur pada run pertama workflow ini: gerbang
