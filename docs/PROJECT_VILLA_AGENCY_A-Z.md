@@ -1,12 +1,12 @@
 # Project Villa Agency — Dokumen Update Lengkap A–Z
 
 **Nama sistem:** Villa Agency OS (Villa Management & Agency)  
-**Tanggal dokumen:** 12 November 2026 · **Pemilik:** Owner (Mas Anas) · **Disusun oleh:** divisi Villa Management & Agency  
-**Posisi repo (potret, bukan angka hidup):** `~/villa-agency-os` pada commit `2cb0696` — 181 commit (pertama 2026-09-21), 375 berkas ter-track, 58 modul `src/*.py` (±52.924 baris), 102 berkas `test_*.py` (104 berkas `.py` di `tests/` termasuk `conftest.py` dan `seed_support.py`), 68 berkas ADR (ADR-0068 ditambahkan 2026-11-13 setelah dokumen ini disusun). **Hari ini (2026-11-14, `master` = `8d9fca9` + patch ADR-0069):** 212 komit, 402 berkas ter-track, 112 berkas `test_*.py`, 4.009 tes lulus (`make check` rc=0).
+**Tanggal dokumen:** 12 November 2026 (angka status disegarkan 14 November 2026 pada `master` `f5665c5`) · **Pemilik:** Owner (Mas Anas) · **Disusun oleh:** divisi Villa Management & Agency  
+**Posisi repo (potret, bukan angka hidup):** `~/villa-agency-os` pada commit `2cb0696` — 181 commit (pertama 2026-09-21), 375 berkas ter-track, 58 modul `src/*.py` (±52.924 baris), 102 berkas `test_*.py` (104 berkas `.py` di `tests/` termasuk `conftest.py` dan `seed_support.py`), 68 berkas ADR (ADR-0068 ditambahkan 2026-11-13 setelah dokumen ini disusun). **Hari ini (2026-11-14, `master` = `f5665c5`):** 220 komit, 414 berkas ter-track, 60 modul `src/*.py` (54.152 baris), 118 berkas `test_*.py` (122 berkas `.py` di `tests/`), 71 berkas ADR, 4.099 tes lulus + 5 dilewati + 4.176 subtests (CI run `43558380150`, 4 dari 4 job hijau).
 
 > **Cara membaca dokumen ini.** Dokumen ini adalah konsolidasi *bertanggal* dari seluruh sumber resmi di repo
 > (Charter, Peta Status & Gap, Panduan Alur Kerja, State Machine, Policy Matrix, Data Model, Runbook, Deployment,
-> Tenant Setup, ADR 0001–0068, kode `src/`, skema `src/schema/`, templat, dan gerbang `make check`).
+> Tenant Setup, ADR 0001–0071, kode `src/`, skema `src/schema/`, templat, dan gerbang `make check`).
 > Setiap fakta berasal dari berkas yang dibaca langsung pada sesi ini, bukan dari ingatan. Bila sebuah angka berasal dari
 > potret lama, itu ditandai **[potret]** beserta tanggalnya. Bagian yang **belum ada / belum diputuskan** ditulis terang-terangan di Bab 24–26,
 > bukan disembunyikan. Nilai kredensial (token, kata sandi, kunci) **tidak pernah** dimuat di sini; jika perlu disebut, ditulis `[REDACTED]`.
@@ -26,7 +26,7 @@
 - Bagian VI — Kontrol: **20** Keamanan, privasi, audit · **21** Legal, pajak, kepatuhan · **22** Kualitas: tes, gerbang, CI
 - Bagian VII — Menjalankan: **23** Deployment, tenant, skalabilitas, backup
 - Bagian VIII — Status jujur: **24** Status hari ini · **25** Celah dan risiko terbuka · **26** Keputusan Owner dan langkah berikutnya
-- Lampiran: **A** Glosarium · **B** Indeks 70 ADR · **C** Indeks 59 modul `src/` · **D** Migrasi, skrip, target make · **E** Apa yang diverifikasi dan apa yang dikutip · **F** Ketidakkonsistenan yang ditemukan
+- Lampiran: **A** Glosarium · **B** Indeks 71 ADR · **C** Indeks 60 modul `src/` · **D** Migrasi, skrip, target make · **E** Apa yang diverifikasi dan apa yang dikutip · **F** Ketidakkonsistenan yang ditemukan
 
 ---
 
@@ -50,14 +50,14 @@ ia mengurus tiga hal yang paling sering menimbulkan kerugian di bisnis villa —
 | Hal | Nilai | Sumber/Bukti |
 |---|---|---|
 | Status booking | 32 status, 120 sisi legal dari 1.024 pasangan | `docs/BOOKING_STATE_MACHINE.md`, `src/booking_states.py` |
-| Tabel skema awal | 72 tabel (`001_initial.sql`) | dihitung ulang dengan memuat skema ke SQLite memori |
-| Migrasi lanjutan | 002 (PG) dan 003–008, 010–017 (tidak ada 009) | `ls src/schema` |
+| Tabel skema | 88 tabel (`001_initial.sql` = skema gabungan terkini; 16 di antaranya Workforce Ops dari `018`) | dihitung ulang dengan memuat skema ke SQLite memori (2026-11-14) |
+| Migrasi lanjutan | 002 (PG) dan 003–008, 010–018 (tidak ada 009) | `ls src/schema` |
 | Halaman dashboard | 14 entri `PAGE_ROLES` (12 halaman navigasi + `case_detail` + `error`); 6 peran | `PAGE_ROLES` di `src/dashboard.py` |
 | Rute situs publik | `/`, `/villas`, `/villas/<id>`, `/destinations/bali`, `/destinations/yogyakarta`, `/owners`, `/inquiry`, `/favicon.ico` | `src/marketing_site.py` |
-| ADR | 70 berkas (`0001`–`0070`; 70 Accepted) | `ls docs/adr` |
-| Tes terakhir | `make check` rc=0: **4.009 passed, 4 skipped, 4.054 subtests passed** (315,61 s) | log gerbang 2026-11-14, pohon `master` `8d9fca9` + ADR-0069 |
-| Gerbang | SECRET-SCAN 0/402, UNSAFE-SCAN 0/402, PII-SCAN 0/377, PRE-DEPLOY GATE PASS | `make check` |
-| Properti di DB hidup | 3, semuanya `geo_precision=UNKNOWN` | query baca-saja 2026-11-12 |
+| ADR | 71 berkas (`0001`–`0071`; 71 Accepted) | `ls docs/adr` |
+| Tes terakhir | CI `master` `f5665c5`, job Python 3.12: **4.099 passed, 5 skipped, 4.176 subtests passed** (294,27 s). 5 dilewati = 1 tes yang membaca `data/villa.db` (tidak ada di clone bersih) + 4 tes paritas PostgreSQL yang butuh `VILLA_PG_DSN` (dijalankan di job twin PostgreSQL: 75 passed, 796 subtests) | `gh run view 43558380150` (4/4 job `success`); alasan skip dari run clean-clone lokal `pytest -rs` pada `f5665c5` |
+| Gerbang | SECRET-SCAN 0/414, UNSAFE-SCAN 0/414, PII-SCAN 0/389, PRE-DEPLOY GATE PASS | `make check` (CI run 43558380150) |
+| Properti di DB hidup | 3, semuanya `geo_precision=UNKNOWN` | query baca-saja 2026-11-14 |
 
 **Status go-live.** Preflight terakhir yang terdokumentasi berbunyi `NO-GO — 1 BLOCKING decision(s) still OPEN: D17` **[potret 2026-10-02; keadaan 2026-11-12 ada di Bab 24]**. Penahan go-live adalah *keputusan bisnis*, bukan software
 (“the system may be ready while the business is not”). Lihat Bab 26.
@@ -388,10 +388,10 @@ Keduanya **loopback saja**. Membuka dashboard ke internet butuh lapisan login ta
 
 | Lokasi | Isi | Jumlah (diukur) |
 |---|---|---|
-| `src/` | Seluruh logika domain, Python stdlib saja | 59 modul `.py`, 54.029 baris (diukur 2026-11-13; potret `2cb0696`: 58 / 52.924) |
-| `src/schema/` | Skema SQLite + twin PostgreSQL + migrasi | `001_initial.sql`, `001_initial.pg.sql`, `002_pg_range_exclusions.pg.sql`, migrasi `003`–`008`, `010`–`017` (tidak ada `009`) |
-| `tests/` | Uji otomatis (pytest + subtests) | **112** berkas `test_*.py` (59.343 baris) + `conftest.py`, `seed_support.py`, dan dua helper lain → seluruh `.py` di `tests/`: **116 berkas / 59.748 baris**. Diukur 2026-11-13 pada `master` `95ce7d3`; pada potret `2cb0696` terukur 102 / 57.649 (seluruh `.py`: 104 / 57.881) |
-| `docs/` | Dokumen kerja, ADR, keamanan, laporan desain | 29 berkas `.md` di akar `docs/` (42 entri termasuk HTML/PDF dan subfolder), `docs/adr/` (70 ADR), `docs/security/` |
+| `src/` | Seluruh logika domain, Python stdlib saja | 60 modul `.py`, 54.152 baris (diukur 2026-11-14 pada `f5665c5`; potret `2cb0696`: 58 / 52.924) |
+| `src/schema/` | Skema SQLite + twin PostgreSQL + migrasi | `001_initial.sql`, `001_initial.pg.sql`, `002_pg_range_exclusions.pg.sql`, migrasi `003`–`008`, `010`–`018` (tidak ada `009`) |
+| `tests/` | Uji otomatis (pytest + subtests) | **118** berkas `test_*.py` (61.020 baris) + `conftest.py`, `seed_support.py`, dan dua helper lain → seluruh `.py` di `tests/`: **122 berkas / 61.425 baris**. Diukur 2026-11-14 pada `master` `f5665c5`; pada potret `2cb0696` terukur 102 / 57.649 (seluruh `.py`: 104 / 57.881) |
+| `docs/` | Dokumen kerja, ADR, keamanan, laporan desain | 33 berkas `.md` di akar `docs/` (48 entri termasuk HTML/PDF dan subfolder), `docs/adr/` (71 ADR), `docs/security/` |
 | `scripts/` | CLI operator, gerbang, utilitas | 22 berkas |
 | `templates/` | HTML dashboard (`base`, `error`, dan halaman), `templates/marketing/` (9 berkas), `templates/messages/id-ID.json` (templat pesan) | 15 `.html` dashboard |
 | `deploy/systemd-user/` | Dua unit layanan | 2 berkas |
@@ -1157,9 +1157,18 @@ Berjalan pada **interpreter produksi** `/usr/bin/python3` (bukan `python3` venv 
 
 Catatan desain gerbang: `-q` sudah ada di `pytest.ini`; menambah satu lagi (`-qq`) membuat pytest 9 tidak mencetak baris hitungan, dan gerbang yang tak bisa menyebut jumlah tes akan tetap "PASS" meski berkas tes diam-diam tak terkumpul.
 
-### 22.2 Hasil terakhir (2026-11-13)
+### 22.2 Hasil terakhir (2026-11-14, `master` `f5665c5`)
 
-`make check` rc=0 · **3.898 passed, 4 skipped, 4.008 subtests passed** (302,22 s) · SECRET-SCAN PASS (0 temuan / 388 berkas) · UNSAFE-SCAN PASS (0/388) · PII-SCAN PASS (0 temuan / 363 berkas teks) · `schema-parity` OK · baris penutup `PRE-DEPLOY GATE: PASS` — dijalankan pada pohon yang memuat dokumen A–Z, ADR-0068, migrasi geo 017, `scripts/pii_scan.py`, dan `tests/test_pii_scan.py`; interpreter gerbang Python 3.12.3 / SQLite 3.45.1. Sebelum gerbang PII dipasang, run yang sama mencatat 3.882 passed (komit `8280c93`).
+Bukti utama = GitHub Actions run `43558380150` (push ke `master`, 4 dari 4 job `success`):
+
+| Job | Hasil |
+|---|---|
+| pre-deploy gate (Python 3.11) | 4.099 passed, 5 skipped, 4.176 subtests passed (304,30 s) |
+| pre-deploy gate (Python 3.12) | 4.099 passed, 5 skipped, 4.176 subtests passed (294,27 s) · SECRET-SCAN PASS (0 temuan / 414 berkas) · UNSAFE-SCAN PASS (0/414) · PII-SCAN PASS (0 temuan / 389 berkas teks) · `schema-parity` OK · `=== PRE-DEPLOY GATE: PASS ===` · interpreter Python 3.12.16 / SQLite 3.46.1 |
+| pre-deploy gate (Python 3.13) | 4.099 passed, 5 skipped, 4.176 subtests passed (360,90 s) |
+| twin PostgreSQL di server sungguhan | 75 passed, 796 subtests passed (6,51 s), `VILLA_PG_REQUIRED=1` |
+
+**Mengapa 5 tes "skipped" dan itu bukan celah tersembunyi.** Run clean-clone lokal pada `f5665c5` (`pytest -rs`, tanpa `data/villa.db` dan tanpa `VILLA_PG_DSN`, rc=0) menyebut alasan tiap skip: 1 tes pembaca store (`tests/test_roles.py`, butuh `data/villa.db`) dan 4 tes paritas PostgreSQL (`tests/test_schema.py`, butuh `VILLA_PG_DSN`). Keduanya punya sakelar fail-closed: `VILLA_DB_REQUIRED=1` (`make check-store`) mengubah skip store menjadi GAGAL, dan `VILLA_PG_REQUIRED=1` melakukan hal yang sama untuk PostgreSQL (CI job twin memakainya). Pada gerbang lokal lengkap di cabang PR #14 sebelum merge (store hidup + twin PostgreSQL lokal) hasilnya **4.104 passed, 4.273 subtests passed (356,50 s), rc=0** — lima skip tadi menjadi lulus.
 
 ### 22.3 Gerbang PII (`make pii-scan`)
 
@@ -1202,7 +1211,7 @@ biaya kesalahan, bukan menggantikan kehati-hatian.
 
 ### 22.4 Rentang interpreter yang diuji (`SCALING_AND_UPGRADE` §6.2, potret 2026-10-25)
 
-3.11.16 → seluruh suite lulus · 3.12.3 → seluruh suite lulus · 3.14.9 → **58/58 modul `src/` berhasil diimpor** (diukur ulang 2026-11-13), suite belum dijalankan di bawah 3.14.9. Aturan naik versi: jalankan `make check` dengan interpreter baru; bukti = lulus, bukan asumsi. Tidak ada `pip install` di produksi.
+3.11.16 → seluruh suite lulus · 3.12.3 → seluruh suite lulus · 3.14.9 → **58/58 modul `src/` berhasil diimpor** (diukur 2026-11-13, saat `src/` masih 58 modul; belum diulang untuk 60 modul), suite belum dijalankan di bawah 3.14.9. Aturan naik versi: jalankan `make check` dengan interpreter baru; bukti = lulus, bukan asumsi. Tidak ada `pip install` di produksi.
 
 ### 22.5 Kategori tes yang masih kurang (potret 2026-09-28)
 
@@ -1298,19 +1307,26 @@ Semua angka di bawah diambil langsung dari repo/DB pada hari penulisan, bukan da
 
 | Ukuran | Nilai | Cara memeriksa |
 |---|---|---|
-| Komit | potret `2cb0696` = 181; 185 per 2026-11-13 sebelum commit dokumen ini; pertama 2026-09-21 (`8c4c777`, "Phase 1 reservation kernel"); terakhir sebelum dokumen ini `5647b23` | `git log` |
-| Modul `src/` | **59** berkas `.py`, 54.043 baris (2026-11-14; potret `2cb0696` = 58 / 52.924) | `cat src/*.py \| wc -l` |
-| Tes | **104** `test_*.py`, 57.995 baris; seluruh `.py` di `tests/` 106 / 58.235 (diukur 2026-11-13 atas HEAD `23a0a0d` + uji konkurensi; potret `2cb0696` = 102 / 57.649) | `git ls-tree` + `wc -l` per berkas |
-| `make check` rc=0 · **4.009 passed · 4 skipped · 4.054 subtests** (319,87 s) · SECRET-SCAN 0/402 · UNSAFE-SCAN 0/402 · PII-SCAN 0/377 berkas teks · `schema-parity` OK | Bab 22.2 |
-| ADR | 70 berkas di `docs/adr/` (Lampiran B) | `ls` |
-| Migrasi terpasang di DB hidup | 14 baris `schema_migrations` (003–008, 010–017; 001 dan 002 adalah skema dasar); **tidak ada nomor 009** | `select` baca-saja |
+| Komit | **220** pada `f5665c5` (dihitung pada SHA itu supaya angkanya stabil); potret `2cb0696` = 181; pertama 2026-09-21 (`8c4c777`, "Phase 1 reservation kernel") | `git log` |
+| Modul `src/` | **60** berkas `.py`, 54.152 baris (2026-11-14, `f5665c5`; potret `2cb0696` = 58 / 52.924) | `cat src/*.py \| wc -l` |
+| Tes | **118** `test_*.py`, 61.020 baris; seluruh `.py` di `tests/` 122 / 61.425 (diukur 2026-11-14 pada `f5665c5`; potret `2cb0696` = 102 / 57.649) | `git ls-tree` + `wc -l` per berkas |
+| Gerbang `make check` | CI `f5665c5` (Python 3.12): **4.099 passed · 5 skipped · 4.176 subtests** (294,27 s) · SECRET-SCAN 0/414 · UNSAFE-SCAN 0/414 · PII-SCAN 0/389 berkas teks · `schema-parity` OK | Bab 22.2 (run `43558380150`) |
+| ADR | 71 berkas di `docs/adr/` (Lampiran B), 71 `Accepted` | `ls` |
+| Migrasi terpasang di DB hidup | 14 baris `schema_migrations` (003–008, 010–017; 001 dan 002 adalah skema dasar); **tidak ada nomor 009**; **018 (Workforce Ops) belum terpasang** — `apply_migrations --dry-run`: "1 pending", 73 tabel, 0 tabel `workforce_*` | `select` baca-saja |
 | Properti di DB hidup | 3, semua `geo_precision = UNKNOWN` | `select` baca-saja |
-| Preflight | `VERDICT: GO` dengan 4 peringatan; audit chain utuh sampai seq 22; "1 agency(ies) ready"; tak ada kasus terbuka/approval tertunda/rekonsiliasi terbuka | `scripts/preflight.py --db data/villa.db` |
+| Preflight | `VERDICT: GO` dengan 3 peringatan (diukur 2026-11-14 hanya dengan `--db`; tanpa env, anchor, dan backup); audit chain utuh sampai seq 22; "1 agency(ies) ready"; tak ada kasus terbuka/approval tertunda/rekonsiliasi terbuka | `scripts/preflight.py --db data/villa.db` |
 | Keputusan Go-Live | 15 dari 17 baris `DECIDED`; **D15 (sumber bukti level A) dan D16 (jumlah unit & rate card yang dipublikasikan) masih OPEN, keduanya NON-BLOCKING** | `GO_LIVE_DECISIONS.md` |
 
 > Catatan: D1–D17 lengkap; di berkas, baris D17 tertulis sebelum D16.
 
-**Perubahan sejak potret Status-Gap (2026-09-28/10-08):** tes naik dari 3.768 ke **4.009** (dihitung 2026-11-14; 112 berkas `test_*.py`); berkas pindai dari 344 ke **402**; lapisan AI yang pada potret "nol" kini ada sebagian (di bawah); D17 sudah `DECIDED`; peta geo (017), `--token-file`, dan gerbang secret-scan yang lebih ketat masuk pada 2026-11-12.
+**Perubahan sejak potret Status-Gap (2026-09-28/10-08):** tes naik dari 3.768 ke **4.099** lulus + 5 dilewati (CI `master` `f5665c5`, 2026-11-14; 118 berkas `test_*.py`); berkas pindai dari 344 ke **414**; lapisan AI yang pada potret "nol" kini ada sebagian (di bawah); D17 sudah `DECIDED`; peta geo (017), `--token-file`, dan gerbang secret-scan yang lebih ketat masuk pada 2026-11-12.
+
+**Tambahan sejak 2026-11-13 (diukur 2026-11-14 pada `f5665c5`):**
+
+- **ADR-0070** (Rupiah adalah nilainya, USD rujukan berlabel; `src/money_display.py` + `money()` di `src/dashboard.py`) dan **ADR-0069** (`CONFIRMED` hanya setelah pembayaran terverifikasi + bukti blok villa) berstatus `Accepted`.
+- **ADR-0071 — Workforce Ops** (`Accepted`, 2026-11-14): kerja = data operasional, upah = ledger terpisah. Migrasi `018_workforce_ops.sql` menambah **16 tabel, 14 indeks, 2 trigger** (tabel upah — `workforce_pay_rates`, `workforce_payroll_runs`, `workforce_payslips`, `workforce_payslip_lines`, `workforce_staff_private` — terpisah dari tabel kerja). Rencana: `docs/SPRINT_WORKFORCE_OPS_2_WEEKS.md`.
+- **Status jujur Workforce Ops: kontrak, bukan sistem berjalan.** Penulis data di `src/` = 0 (`grep -rl 'workforce_' src/*.py` kosong), kalkulator upah = 0, layar Workforce di dashboard = 0. Yang hijau: 32 tes kontrak `tests/test_workforce_ops.py`. Migrasi 018 **belum diterapkan ke DB hidup** (lihat tabel di atas); menerapkannya adalah keputusan Owner.
+- **Sistem desain tampilan:** dashboard staf — `docs/UI_DESIGN_SYSTEM.md` ("Hutan & Pura", `templates/base.html`); situs publik — `templates/marketing/base.html`.
 
 ### 24.1 Lapisan AI Workforce — keadaan kode
 
@@ -1414,9 +1430,9 @@ Daftar ini menggabungkan Status-Gap (potret), temuan hari ini, dan hasil membang
 | `UNKNOWN` | presisi geo/ketersediaan tanpa klaim — tidak boleh dijual atau ditampilkan sebagai pasti |
 | Potret | isi dokumen sumber yang bertanggal dan bisa sudah usang |
 
-## Lampiran B — Indeks 70 ADR
+## Lampiran B — Indeks 71 ADR
 
-Seluruh 70 berkas berstatus *Accepted*. Dua yang terakhir naik pada 2026-11-13: ADR-0069 (`CONFIRMED` hanya setelah pembayaran terverifikasi dan bukti blok villa — temuan K2, sekaligus keputusan opsi (a) memasukkan empat sisi pembatalan langsung ke graf kanonik) dan ADR-0070 (rupiah adalah nilainya, USD rujukan berlabel). Kedua status itu dibaca `tests/test_adr_status.py` dari tiga ejaan yang pernah dipakai repo. Dibangkitkan dari judul tiap berkas.
+Seluruh 71 berkas berstatus *Accepted*. ADR-0071 (Workforce Ops) naik pada 2026-11-14, menyusul dua yang naik pada 2026-11-13: ADR-0069 (`CONFIRMED` hanya setelah pembayaran terverifikasi dan bukti blok villa — temuan K2, sekaligus keputusan opsi (a) memasukkan empat sisi pembatalan langsung ke graf kanonik) dan ADR-0070 (rupiah adalah nilainya, USD rujukan berlabel). Kedua status itu dibaca `tests/test_adr_status.py` dari tiga ejaan yang pernah dipakai repo. Dibangkitkan dari judul tiap berkas.
 
 | No. | Judul |
 |---|---|
@@ -1490,10 +1506,11 @@ Seluruh 70 berkas berstatus *Accepted*. Dua yang terakhir naik pada 2026-11-13: 
 | 0068 | Lokasi villa: presisi, sumber, dan satu aturan untuk dua penulis |
 | 0069 | `CONFIRMED` hanya setelah pembayaran terverifikasi dan bukti blok villa (ACCEPTED 2026-11-13, audit K2; opsi a: empat sisi pembatalan langsung masuk graf) |
 | 0070 | Rupiah adalah nilainya, USD adalah rujukan berlabel (ACCEPTED 2026-11-13) |
+| 0071 | Workforce Ops: kerja adalah data operasional, upah adalah ledger terpisah (ACCEPTED 2026-11-14) |
 
-## Lampiran C — Indeks 59 modul `src/`
+## Lampiran C — Indeks 60 modul `src/`
 
-Dibangkitkan dari AST: nama berkas, jumlah baris, kalimat pertama docstring modul (— bila tak ada).
+Dibangkitkan dari AST: nama berkas, jumlah baris, kalimat pertama docstring modul (— bila tak ada). Jumlah baris per berkas = `splitlines` (jumlahnya 54.155); `cat src/*.py | wc -l` = 54.152 — selisih 3 karena `deposit_resolutions.py`, `reservation_kpi.py`, `supplier_settlements.py` tidak berakhir dengan newline.
 
 | Modul | Baris | Docstring modul |
 |---|---|---|
@@ -1505,14 +1522,14 @@ Dibangkitkan dari AST: nama berkas, jumlah baris, kalimat pertama docstring modu
 | `audit.py` | 935 | Append-only, tamper-evident, PII-safe audit trail (``audit_events``). |
 | `availability.py` | 399 | The canonical availability state (§7, §11, Appendix A). |
 | `booking_closure.py` | 553 | §30's booking closure gate — the blocker list, computed from the modules that own the facts. |
-| `booking_states.py` | 1051 | Canonical booking state machine for Villa Agency OS. |
-| `cases.py` | 1509 | Case lifecycle: guest requests over ``cases``, ``case_messages`` and ``case_events``. |
+| `booking_states.py` | 1065 | Canonical booking state machine for Villa Agency OS. |
+| `cases.py` | 1517 | Case lifecycle: guest requests over ``cases``, ``case_messages`` and ``case_events``. |
 | `channels.py` | 267 | §Phase 4's channel adapters — the only door between the outside world and the estate. |
 | `connectors.py` | 2553 | Kanal masuk/keluar: from channel traffic to cases, and from an approved draft to the wire. |
 | `control_tower.py` | 310 | AI Control Tower / Orchestrator — Agent 1 of the AI workforce (§7 of V1.1). |
-| `crm.py` | 481 | CRM: guest master, inquiry intake and confirmed trip requirements (v1.1 §5, §6, §50 WAVE 3). |
-| `dashboard.py` | 3292 | Internal dashboard — read-only operational views, approval-only write path. |
-| `deposit_resolutions.py` | 270 | §30's security-deposit resolution — the fact that answers "what happened to the hold". |
+| `crm.py` | 513 | CRM: guest master, inquiry intake and confirmed trip requirements (v1.1 §5, §6, §50 WAVE 3). |
+| `dashboard.py` | 3499 | Internal dashboard — read-only operational views, approval-only write path. |
+| `deposit_resolutions.py` | 271 | §30's security-deposit resolution — the fact that answers "what happened to the hold". |
 | `discounts.py` | 668 | The discount engine — §11 Pricing, Quote & Discount; §16 policy; §15 approval; §21 deny. |
 | `documents.py` | 1672 | Deterministic, identifier-free document issuance on top of ``documents``. |
 | `evidence.py` | 747 | Evidence objects: the quarantine pipeline for files that arrive from outside. |
@@ -1520,13 +1537,13 @@ Dibangkitkan dari AST: nama berkas, jumlah baris, kalimat pertama docstring modu
 | `finance_admin.py` | 392 | Agent 5 — the Finance Admin AI Agent: read-only financial telemetry. |
 | `fx.py` | 399 | Currency conversion — turning an amount in one currency into another, honestly. |
 | `gates.py` | 1492 | Fail-closed domain gates for Villa Agency OS. |
-| `geo.py` | 418 | Where a villa is — and how much of that the public is allowed to know. |
+| `geo.py` | 472 | Where a villa is — and how much of that the public is allowed to know. |
 | `hold_states.py` | 128 | The canonical hold vocabulary (§7, Appendix A). |
 | `identity.py` | 716 | Identity: sessions, TOTP enrolment, and step-up (ADR-0005, accepted). |
 | `incidents.py` | 1667 | Incident management with **deterministic playbooks**. |
 | `intake.py` | 1413 | Structured intake: deterministic, rule-first extraction of guest requests. |
 | `invoicing.py` | 1281 | Guest billing — the invoice a stay is settled against. |
-| `marketing_site.py` | 1230 | Public marketing website: the guest-facing surface of Villa Agency OS. |
+| `marketing_site.py` | 1328 | Public marketing website: the guest-facing surface of Villa Agency OS. |
 | `matching.py` | 1590 | Explainable unit matching (Phase 2). |
 | `messages.py` | 1661 | Grounded outbound message drafts for Villa Agency OS. |
 | `money_display.py` | 288 | Rupiah-first amounts with an automatic reference conversion (audit 2026-11-13, T8). |
@@ -1536,36 +1553,39 @@ Dibangkitkan dari AST: nama berkas, jumlah baris, kalimat pertama docstring modu
 | `option_sets.py` | 474 | Option sets: the villas an agency offers for one inquiry (§5, §34). |
 | `outbox.py` | 640 | The transactional outbox — a typed letter, written with the state it describes. |
 | `payments.py` | 2850 | Money movement — hosted payment intents, verified webhooks, the double-entry ledger and reconciliation of the payments that do not match. |
-| `policy_engine.py` | 1115 | Versioned policy objects — the single home for every business number. |
-| `primitives.py` | 771 | Shared kernel primitives for Villa Agency OS. |
+| `policy_engine.py` | 1179 | Versioned policy objects — the single home for every business number. |
+| `primitives.py` | 839 | Shared kernel primitives for Villa Agency OS. |
 | `quotation.py` | 821 | Quotation versions, their snapshots, and the acceptance (§11). |
-| `quote_calculator.py` | 711 | Deterministic quote arithmetic. |
+| `quote_calculator.py` | 750 | Deterministic quote arithmetic. |
 | `references.py` | 149 | Human-readable references (Master Spec v1.1 Appendix B). |
-| `reservation_kernel.py` | 2815 | The reservation kernel: holds, bookings and the no-double-booking guarantee. |
-| `reservation_kpi.py` | 245 | Agent 3's §22 KPI telemetry — the reservation funnel and its governance numbers. |
+| `reservation_kernel.py` | 3194 | The reservation kernel: holds, bookings and the no-double-booking guarantee. |
+| `reservation_kpi.py` | 246 | Agent 3's §22 KPI telemetry — the reservation funnel and its governance numbers. |
 | `reservation_service.py` | 1651 | §9 Agent 3 — the AI Reservation Service: the conversation ledger and the §13 ladder. |
-| `reservation_workers.py` | 1602 | §9's capability workers — the AI employee's hands, and the only ones it has. |
+| `reservation_workers.py` | 1603 | §9's capability workers — the AI employee's hands, and the only ones it has. |
 | `revenue_bi_agent.py` | 448 | Agent 6 — the Revenue & BI AI Agent: revenue telemetry with zero write paths. |
 | `roles.py` | 299 | The human role vocabulary, in one place — ADR-0035 §5, ADR-0036, Master Spec §18. |
 | `scheduler.py` | 589 | The heartbeat: one tick that charges every deadline in the system. |
-| `schema_loader.py` | 849 | Schema loading, statement splitting and cross-dialect parity parsing. |
+| `schema_loader.py` | 854 | Schema loading, statement splitting and cross-dialect parity parsing. |
 | `settings.py` | 478 | Agency settings: the values a **tenant** owns, and whether a tenant is ready to go live. |
 | `shadow_eval.py` | 236 | §22/D7 shadow-mode measurement — did the agent decide what the human decided? |
 | `supplier_route.py` | 664 | Supplier route: villa↔supplier relationship, contract versions, rate versions. |
-| `supplier_settlements.py` | 261 | §30's supplier settlement — what the agency owes, and has paid, the supplier. |
+| `supplier_settlements.py` | 262 | §30's supplier settlement — what the agency owes, and has paid, the supplier. |
+| `time_display.py` | 85 | Human-readable timestamps for the internal dashboard. |
 | `totp.py` | 235 | TOTP (RFC 6238) and HOTP (RFC 4226) — stdlib only. |
-| `villa_import.py` | 552 | Bulk inventory import: a tenant's villa list arrives as one file, not two hundred forms. |
+| `villa_import.py` | 605 | Bulk inventory import: a tenant's villa list arrives as one file, not two hundred forms. |
 | `villa_showcase.py` | 174 | Per-villa showcase content for the public marketing surface. |
 
 ## Lampiran D — Migrasi, skrip, dan target make
 
-**Berkas `src/schema/`:** `001_initial.sql` (+ `.pg.sql`), `002_pg_range_exclusions.pg.sql` (khusus PostgreSQL), `003_policy_catalogue_and_deny_registry`, `004_currency_aware_margin_floor`, `005_fx_rate_max_age_hours`, `006_outbox_and_integration_inbox`, `007_exception_fingerprints`, `008_agency_settings`, `010_agency_roles`, `011_ai_ladder`, `012_reservation_service`, `013_deposit_resolutions`, `014_supplier_settlements`, `015_shadow_bars`, `016_guest_preferred_currency`, `017_property_geo`. **Nomor 009 tidak ada** sebagai berkas — dijelaskan 2026-11-13 di `src/schema/README.md`: riwayat git membuktikan `009_*.sql` tidak pernah ada dan tidak ada migrasi yang dihapus, jadi nomor itu dilompati sejak awal dan tidak boleh dipakai ulang (lihat Lampiran F butir 9).
+**Berkas `src/schema/`:** `001_initial.sql` (+ `.pg.sql`), `002_pg_range_exclusions.pg.sql` (khusus PostgreSQL), `003_policy_catalogue_and_deny_registry`, `004_currency_aware_margin_floor`, `005_fx_rate_max_age_hours`, `006_outbox_and_integration_inbox`, `007_exception_fingerprints`, `008_agency_settings`, `010_agency_roles`, `011_ai_ladder`, `012_reservation_service`, `013_deposit_resolutions`, `014_supplier_settlements`, `015_shadow_bars`, `016_guest_preferred_currency`, `017_property_geo`, `018_workforce_ops`. **Nomor 009 tidak ada** sebagai berkas — dijelaskan 2026-11-13 di `src/schema/README.md`: riwayat git membuktikan `009_*.sql` tidak pernah ada dan tidak ada migrasi yang dihapus, jadi nomor itu dilompati sejak awal dan tidak boleh dipakai ulang (lihat Lampiran F butir 9).
 
-**`scripts/` (24 berkas + `__pycache__`):** `access_matrix_probe`, `ai_mode`, `apply_migrations`, `audit_structure`, `build_deliverables`, `closure_facts`, `generate_pg_twin`, `go_live_smoke`, `import_villas`, `manage_roles`, `perf_probe`, `phishing_drill_score`, `pii_scan`, `preflight`, `publish_ai_allowance`, `publish_anchor`, `publish_policy_value`, `refresh_fx_rate`, `render_az_doc`, `reservation_kpi`, `secret_scan.sh`, `seed_demo`, `session_token`, `unsafe_config_scan.sh`.
+**`scripts/` (25 berkas + `__pycache__`):** `access_matrix_probe`, `ai_mode`, `apply_migrations`, `audit_structure`, `build_deliverables`, `closure_facts`, `generate_pg_twin`, `go_live_smoke`, `import_villas`, `manage_roles`, `perf_probe`, `phishing_drill_score`, `pii_scan`, `preflight`, `publish_ai_allowance`, `publish_anchor`, `publish_policy_value`, `refresh_fx_rate`, `render_az_doc`, `reservation_kpi`, `scan_stored_pii`, `secret_scan.sh`, `seed_demo`, `session_token`, `unsafe_config_scan.sh`.
 
-**Target make:** `test verify syntax lint secret-scan unsafe-scan pii-scan check interpreter schema-parity pg-twin anchor-publish anchor-verify allowance-status policy-status migrate-check render-az audit-structure` (daftar `.PHONY` di `Makefile`; `make help` mencetak deskripsinya).
+**Target make:** `test verify syntax lint secret-scan unsafe-scan pii-scan check check-store interpreter schema-parity pg-twin anchor-publish anchor-verify allowance-status policy-status migrate-check render-az audit-structure` (daftar `.PHONY` di `Makefile`; `make help` mencetak deskripsinya).
 
 ## Lampiran E — Apa yang diverifikasi dan apa yang hanya dikutip
+
+**Catatan 2026-11-14:** angka status di Bab 22.2 dan 24 serta Lampiran B–D diukur ulang pada `master` `f5665c5` (CI run `43558380150`); paragraf berikut adalah catatan verifikasi bertanggal 2026-11-12/13 dan sengaja tidak ditimpa.
 
 **Dihitung/dibaca ulang dari repo/DB pada 2026-11-12 (dan 2026-11-13 untuk: 58/58 modul `src/` berhasil diimpor pada 3.14.9; isi `src/schema/README.md`; riwayat `git log --all -- src/schema/009*` yang kosong; byte vs karakter `STATUS_AND_GAP_MAP.md`; dan, diukur ulang 2026-11-13: 72 tabel/62 indeks/64 trigger/**106 enum**/77 `INSERT` seed pada model skema, 183 indeks DB hidup (122 `sqlite_autoindex`), 103 berkas `test_*.py` (57.723 baris, dihitung pada `1c0dd2f` yang sama), **187 komit pada commit `1c0dd2f`** — dihitung pada SHA itu supaya angkanya stabil, bukan bergeser tiap kali ada commit dokumen):** jumlah komit dan komit pertama; jumlah modul/baris `src/`; berkas dan baris tes; jumlah ADR dan status; `PAGE_ROLES` (14 entri) dan 6 peran; 73 nama tabel §9.2 vs `sqlite_master` DB hidup (73/73 cocok; 72 tabel model + `schema_migrations`); nama tabel/kolom Bab 13 (semua ada, kecuali `approvals` yang adalah modul); 14 baris `schema_migrations`; 3 properti `UNKNOWN`; keluaran preflight; target make; isi `GO_LIVE_DECISIONS.md`; CSP/rate limit/honeypot/token form pada `marketing_site.py`; keberadaan/ketiadaan `validate_geo_fields`; rujukan "ADR-0061".
 
