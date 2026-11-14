@@ -212,6 +212,26 @@ def test_no_go_when_decisions_are_open_and_anchor_is_missing(tmp_path):
     assert "go-live decisions" in result.stdout
 
 
+def test_the_policy_ladder_check_is_wired_into_the_run(tmp_path, monkeypatch):
+    """The drift gate must be *called*, not merely defined.
+
+    ``tests/test_roles.py`` reads the operator's store when one is present and skips in a
+    clean clone, which has no ``data/villa.db``. That skip is only honest while the same drift
+    is caught here, so this pins the wiring: drop the call from ``check_database`` and every
+    refusal test below keeps passing against a function nobody runs.
+    """
+    db = tmp_path / "villa.db"
+    _make_db(db)
+
+    calls: list[int] = []
+    original = PF.check_published_ladder_roles
+    monkeypatch.setattr(
+        PF, "check_published_ladder_roles", lambda conn: (calls.append(1), original(conn))[1]
+    )
+    checks = PF.check_database(db, None)
+    assert len(calls) == 1
+    assert "policy role names" in [check.name for check in checks]
+
 
 def _staff_ladder(conn) -> None:
     """Give the money ladder real holders: without them readiness must refuse (D17)."""

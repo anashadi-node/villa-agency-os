@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import sys
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 
@@ -38,6 +40,35 @@ from primitives import FrozenClock, IdFactory
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LIVE_DB = Path(os.environ.get("VILLA_DB", REPO_ROOT / "data" / "villa.db"))
+
+#: ``VILLA_DB_REQUIRED=1`` turns "no store in this checkout" from a skip into a failure —
+#: the same switch the PostgreSQL twin uses (``VILLA_PG_REQUIRED``). A clean clone has no
+#: ``data/villa.db``, so skipping is right by default; a deployment that *must* read its own
+#: store turns the switch on. Without it, a store that never adopted ADR-0036 could stay
+#: unnoticed by the code gate forever.
+LIVE_DB_REQUIRED = os.environ.get("VILLA_DB_REQUIRED") == "1"
+
+
+def _refuse_or_skip(path: Path) -> NoReturn:
+    """Raise the failure or the skip — never return, so callers have no second branch."""
+    if LIVE_DB_REQUIRED:
+        raise pytest.fail.Exception(
+            f"VILLA_DB_REQUIRED=1 but no store at {path}: point VILLA_DB at the database this"
+            " deployment runs on, or leave VILLA_DB_REQUIRED unset to allow the skip",
+            pytrace=False,
+        )
+    raise pytest.skip.Exception(
+        f"no live database at {path} in this checkout"
+        " (VILLA_DB_REQUIRED=1 turns this skip into a failure)"
+    )
+
+
+def _live_db(path: Path = LIVE_DB) -> Path:
+    """The operator's store, or an explicit skip/failure that names which one it is."""
+    if path.exists():
+        return path
+    _refuse_or_skip(path)
+
 
 #: Every capability the vocabulary declares, in one tuple, so the negative assertions below
 #: can say "none of these" instead of listing four names and forgetting the fifth.
@@ -293,7 +324,6 @@ def test_a_ladder_that_cannot_be_honoured_is_refused(ladder):
         roles.approval_ladder(ladder)
 
 
-@pytest.mark.skipif(not LIVE_DB.exists(), reason="no live database in this checkout")
 def test_the_ladder_published_in_this_database_names_known_roles():
     """The drift the reconciliation was written to catch, checked against the real store.
 
@@ -303,7 +333,7 @@ def test_the_ladder_published_in_this_database_names_known_roles():
     vocabulary are checked together here — and this check belongs in preflight, not only here,
     because a fresh checkout has no ``data/villa.db`` to read.
     """
-    conn = sqlite3.connect(f"file:{LIVE_DB}?mode=ro", uri=True)
+    conn = sqlite3.connect(f"file:{_live_db()}?mode=ro", uri=True)
     try:
         row = conn.execute(
             "SELECT value FROM policy_revisions WHERE policy_key = ?"
@@ -323,6 +353,26 @@ def test_the_ladder_published_in_this_database_names_known_roles():
         pytest.skip("this revision predates the ladder shape")
     assert roles.approval_ladder(ladder) == ("finance_manager", "gm")
     assert roles.MONEY_OUT_APPROVER_ROLES >= set(roles.approval_ladder(ladder))
+
+
+def test_the_store_switch_turns_a_missing_database_into_a_failure(tmp_path, monkeypatch):
+    """``VILLA_DB_REQUIRED`` has to be able to stop a run, or it is decoration.
+
+    Proven by behaviour rather than by reading the source: the resolver is handed a path that
+    does not exist, once with the switch off (skip) and once with it on (failure). A clean
+    clone's skip is indistinguishable from a passing gate in a summary line, so a deployment
+    that wants its own store read must be able to make the absence loud.
+    """
+    module = sys.modules[__name__]
+    missing = tmp_path / "tidak-ada.db"
+
+    monkeypatch.setattr(module, "LIVE_DB_REQUIRED", False)
+    with pytest.raises(pytest.skip.Exception, match="VILLA_DB_REQUIRED=1"):
+        _live_db(missing)
+
+    monkeypatch.setattr(module, "LIVE_DB_REQUIRED", True)
+    with pytest.raises(pytest.fail.Exception, match="no store at"):
+        _live_db(missing)
 
 
 def test_the_gm_can_open_the_pages_the_owner_granted_and_owes_a_second_factor():
