@@ -132,6 +132,11 @@ python3 scripts/go_live_smoke.py --db /tmp/go-live.db --report /tmp/go-live.json
 # Gerbang pre-deploy lengkap (syntax + test + secret scan + unsafe scan + parity skema)
 make check
 
+# Gerbang yang sama, dibaca dari store milik deployment ini: tes yang membaca `data/villa.db`
+# di-skip di clone bersih (clone tidak punya store), jadi di sini ketiadaannya jadi GAGAL.
+# Jalankan sebelum rilis ke produksi dengan VILLA_DB menunjuk store yang sebenarnya dipakai.
+make check-store VILLA_DB=data/villa.db
+
 # Audit struktur menyeluruh (read-only, tanpa database): jejak modul→tes, perintah dokumentasi
 # yang sudah tidak ada, filter tenant di setiap baca, agregat uang lintas mata uang, aset
 # pihak ketiga. Bukan bagian `make check` — temuannya keputusan manusia, bukan penghalang rilis.
