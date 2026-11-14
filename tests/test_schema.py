@@ -38,6 +38,24 @@ def load_generator():
     return module
 
 
+def pg_driver():
+    """The PostgreSQL driver, resolved exactly the way ``schema_loader.open_pg`` does.
+
+    ``requirements-dev.txt`` pins ``psycopg`` (v3). This module used to hard-import
+    ``psycopg2``, so on a machine installed from that manifest the four live-server
+    tests failed at import instead of proving the twin — and because they only run
+    when ``VILLA_PG_DSN`` is set, nobody saw it: the suite still reported PASS with
+    the PostgreSQL checks skipped. Resolving the driver here keeps test and
+    production on one code path.
+    """
+    try:
+        import psycopg  # type: ignore
+    except ImportError:  # pragma: no cover - host without either driver
+        import psycopg2  # type: ignore
+        return psycopg2
+    return psycopg
+
+
 class TestSqliteSchemaApplies(unittest.TestCase):
     """The development dialect must build a complete, self-guarding database."""
 
@@ -293,7 +311,10 @@ class TestPostgresOnlyHardening(unittest.TestCase):
                 self.assertIn(f"ck_bookings_{column}_iso", self.text)
 
 
-@unittest.skipUnless(os.environ.get("VILLA_PG_DSN"), "set VILLA_PG_DSN to run the live PostgreSQL parity test")
+@unittest.skipUnless(
+    os.environ.get("VILLA_PG_DSN") or os.environ.get("VILLA_PG_REQUIRED") == "1",
+    "set VILLA_PG_DSN to run the live PostgreSQL parity test",
+)
 class TestLivePostgres(unittest.TestCase):
     """Apply both PostgreSQL files to a real server and compare the catalogue.
 
@@ -313,9 +334,19 @@ class TestLivePostgres(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        import psycopg2  # noqa: F401  (import error here is a hard failure, by design)
+        psycopg2 = pg_driver()  # import error here is a hard failure, by design
 
-        cls.dsn = os.environ["VILLA_PG_DSN"]
+        dsn = os.environ.get("VILLA_PG_DSN")
+        if not dsn:
+            # Fail closed: a gate that reports PASS while the PostgreSQL twin was never
+            # applied to a server is a false negative, not a saving. CI sets
+            # VILLA_PG_REQUIRED=1 together with a service container, so a workflow that
+            # loses the service turns red instead of green-with-skips.
+            raise RuntimeError(
+                "VILLA_PG_REQUIRED=1 but VILLA_PG_DSN is unset: refusing to report a "
+                "passing gate while the PostgreSQL twin is unproven."
+            )
+        cls.dsn = dsn
         cls.conn = psycopg2.connect(cls.dsn)
         cls.conn.autocommit = True
         with cls.conn.cursor() as cur:
@@ -355,7 +386,7 @@ class TestLivePostgres(unittest.TestCase):
         be applied to an empty server. A probe that cannot insert its own first row proves
         nothing about the constraint it means to test.
         """
-        import psycopg2
+        psycopg2 = pg_driver()
 
         seed = [
             "INSERT INTO properties (property_id, name, property_type, region, province,"
@@ -481,7 +512,7 @@ class TestLivePostgres(unittest.TestCase):
         the third layer — ``ex_bookings_no_overlap`` on a live server — and it is the
         one that has to hold when a row reaches the table by any other route.
         """
-        import psycopg2
+        psycopg2 = pg_driver()
 
         cases = (
             ("CANCELLATION_REQUESTED", "2026-11-01", "2026-11-03", "2026-11-02", "2026-11-04"),
@@ -524,7 +555,7 @@ class TestLivePostgres(unittest.TestCase):
         carries the guards too — a silent conversion bug would otherwise only show
         up in production.
         """
-        import psycopg2
+        psycopg2 = pg_driver()
 
         logs = (
             "case_messages", "case_events", "intake_proposals",
