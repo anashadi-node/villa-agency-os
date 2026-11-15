@@ -58,6 +58,16 @@ ROSTER_STATUSES = BLOCKING_STATUSES + ("CANCELLED",)
 ACTIVE_STAFF_STATUS = "ACTIVE"
 MIN_REASON_LENGTH = 4
 
+#: Kueri bentrok dipakai apa adanya oleh penulis roster dan oleh uji rencana
+#: kueri: satu sumber, supaya indeks yang diuji tidak bisa berbeda dari indeks
+#: yang benar-benar dipakai. Setengah terbuka: ``starts < ends`` dan ``ends > start``.
+OVERLAP_PROBE = (
+    "SELECT roster_entry_id, starts_at_utc, ends_at_utc, property_id FROM workforce_roster_entries"
+    " WHERE agency_id = ? AND staff_id = ? AND status <> 'CANCELLED'"
+    " AND starts_at_utc < ? AND ends_at_utc > ?"
+    " LIMIT 1"
+)
+
 
 class RosterError(DomainError):
     """Kegagalan penulisan jadwal."""
@@ -362,10 +372,7 @@ class RosterWriter:
 
     def _reject_conflict(self, row: Mapping[str, Any]) -> None:
         hit = self.conn.execute(
-            "SELECT roster_entry_id, starts_at_utc, ends_at_utc, property_id FROM workforce_roster_entries"
-            " WHERE agency_id = ? AND staff_id = ? AND status <> 'CANCELLED'"
-            " AND starts_at_utc < ? AND ends_at_utc > ?"
-            " LIMIT 1",
+            OVERLAP_PROBE,
             (self.agency_id, row["staff_id"], row["ends_at_utc"], row["starts_at_utc"]),
         ).fetchone()
         if hit is not None:

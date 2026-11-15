@@ -16,6 +16,7 @@ import pytest
 
 from primitives import DomainError, EntityNotFound
 from workforce.roster import (
+    OVERLAP_PROBE,
     RosterDuplicateStart,
     RosterError,
     RosterOverlap,
@@ -397,3 +398,27 @@ def test_shifts_for_staff_returns_only_live_shifts_in_start_order(world):
 
     assert [row["roster_entry_id"] for row in ordered] == [early["roster_entry_id"],
                                                            late["roster_entry_id"]]
+
+
+def test_the_conflict_probe_rides_the_staff_index(world, conn):
+    """Bentrok dicek per orang, bukan dengan memindai seluruh roster.
+
+    Roster tumbuh sepanjang musim; pemindaian penuh berarti setiap shift baru
+    makin lambat, dan perlambatan itu terjadi tepat saat villa sibuk.
+    """
+    plan = " | ".join(
+        str(row[-1])
+        for row in conn.execute("EXPLAIN QUERY PLAN " + OVERLAP_PROBE, (AGENCY, "stf_1", NOW, NOW))
+    )
+
+    # Indeks mana pun yang memakai awalan (agency_id, staff_id) sah — yang tidak
+    # sah adalah pemindaian penuh tabel.
+    assert "SEARCH workforce_roster_entries USING" in plan, plan
+    assert "SCAN workforce_roster_entries" not in plan, plan
+
+
+def test_the_conflict_probe_treats_touching_shifts_as_free(world, conn):
+    """Probe yang sama dipakai penulis: 15:00 selesai vs 15:00 mulai = tidak bentrok."""
+    assert conn.execute(
+        OVERLAP_PROBE, (AGENCY, "stf_1", "2026-11-20T15:00:00Z", "2026-11-20T07:00:00Z")
+    ).fetchone() is None
