@@ -316,6 +316,21 @@ MAX_CONCURRENT_CONNECTIONS = 64
 #: handler, which refuses them without reading.
 MAX_PREBUFFERED_BODY = 64 * 1024
 
+#: The unlock cookie (ADR-0072). One name, one value: the dashboard token. It is
+#: ``HttpOnly`` and ``SameSite=Strict`` so a page script cannot read it and a
+#: cross-site form cannot ride it, and ``Path=/`` so every page sees it. No
+#: ``Secure``: the server speaks plain HTTP on loopback/LAN, and marking the
+#: cookie ``Secure`` would make the browser drop it — a silent lockout.
+SESSION_COOKIE = "villa_dashboard"
+
+#: Twelve hours: long enough for a working day, short enough that a shared
+#: laptop left open overnight is not authenticated tomorrow.
+SESSION_COOKIE_MAX_AGE_SECONDS = 12 * 60 * 60
+
+#: Longer than any token this server issues (``token_urlsafe(32)`` is 43 chars).
+#: The cap is what stops a hostile cookie from turning comparison into work.
+SESSION_COOKIE_MAX_BYTES = 256
+
 DEFAULT_IDENTITIES: Mapping[str, str] = MappingProxyType(
     {
         "reservation": "agent-reservation-1",
@@ -914,6 +929,57 @@ def _bearer(header: Optional[str]) -> Optional[str]:
     return None
 
 
+def _cookie_jar(header: Any) -> "dict[str, str]":
+    """The ``Cookie`` header as a name → value map; first occurrence wins.
+
+    A browser sends cookies whether or not the caller wanted them, so this parses
+    defensively: no exceptions, no decoding, no length growth.
+    """
+    jar: dict[str, str] = {}
+    if not header:
+        return jar
+    for chunk in str(header).split(";"):
+        name, separator, value = chunk.partition("=")
+        if separator and name.strip():
+            jar.setdefault(name.strip(), value.strip())
+    return jar
+
+
+def _session_cookie_value(headers: Any) -> Optional[str]:
+    """The unlock cookie's value, bounded before any comparison happens.
+
+    Anything longer than a token can be is not a token: returning ``None`` here
+    keeps a hostile cookie on the same plain-401 path as a missing one.
+    """
+    value = _cookie_jar(headers.get("Cookie") if headers is not None else None).get(
+        SESSION_COOKIE
+    )
+    if not value or len(value) > SESSION_COOKIE_MAX_BYTES:
+        return None
+    return value
+
+
+_COOKIE_SAFE_RE = re.compile(r"^[A-Za-z0-9._~+/=:-]{0,%d}$" % SESSION_COOKIE_MAX_BYTES)
+
+
+def _set_cookie_header(value: str, *, max_age: int = SESSION_COOKIE_MAX_AGE_SECONDS) -> str:
+    """A ``Set-Cookie`` value that cannot be split, quote or path-escape.
+
+    The token comes from configuration, so it is untrusted here: a value carrying
+    ``;`` or a newline would otherwise add a second cookie or a second header.
+    Refusing (fail-closed) is the only option — silently dropping characters would
+    hand out a cookie that does not authenticate.
+    """
+    if not _COOKIE_SAFE_RE.match(value) or (max_age > 0 and not value):
+        raise InvalidInput(
+            "token cannot be carried in a cookie", value_length=len(value)
+        )
+    return (
+        f"{SESSION_COOKIE}={value}; Path=/; Max-Age={int(max_age)}; "
+        "HttpOnly; SameSite=Strict"
+    )
+
+
 def _token_registry(
     actor: str,
     actor_role: str,
@@ -1145,17 +1211,27 @@ class Dashboard:
         )
 
     def authenticate(self, headers: Any) -> Principal:
-        """Identity **and** role come from the token; nothing else is trusted."""
+        """Identity **and** role come from the token; nothing else is trusted.
+
+        Two carriers, one token rule: the ``X-Dashboard-Token`` header (scripts,
+        curl) and the unlock cookie a browser gets from ``/unlock`` (ADR-0072).
+        A request carrying neither is still a plain 401, and a bad carrier is not
+        rescued by a good one — every candidate gets the same comparison.
+        """
         supplied = headers.get("X-Dashboard-Token") or _bearer(headers.get("Authorization"))
-        if not supplied:
+        candidates: list[str] = [str(supplied).strip()] if supplied else []
+        cookie = _session_cookie_value(headers)
+        if cookie and cookie not in candidates:
+            candidates.append(cookie)
+        if not candidates:
             raise Unauthenticated("token dashboard tidak dikirim")
-        candidate = str(supplied).strip()
-        for token, principal in self.tokens.items():
-            if secrets.compare_digest(token, candidate):
+        for candidate in candidates:
+            for token, principal in self.tokens.items():
+                if secrets.compare_digest(token, candidate):
+                    return principal
+            principal = self._principal_from_session(candidate)
+            if principal is not None:
                 return principal
-        principal = self._principal_from_session(candidate)
-        if principal is not None:
-            return principal
         raise Unauthenticated("token dashboard tidak dikenal")
 
     def page_allowed(self, page: str, role: str) -> bool:
@@ -3045,8 +3121,15 @@ class DashboardRequestHandler(SafeHeaderMixin, BaseHTTPRequestHandler):
         self._write(self.dashboard.error_response(exc))
 
     def _serve(self, method: str) -> None:
-        if method == "GET" and urlsplit(self.path).path == "/healthz":
+        path = urlsplit(self.path).path
+        if method == "GET" and path == "/healthz":
             self._write_health()
+            return
+        if path == "/unlock" and method in ("GET", "POST"):
+            self._serve_unlock(method)
+            return
+        if method == "POST" and path == "/lock":
+            self._serve_lock()
             return
         try:
             request = self._build_request(method)
@@ -3058,6 +3141,67 @@ class DashboardRequestHandler(SafeHeaderMixin, BaseHTTPRequestHandler):
                 InvalidInput("galat internal", code="INTERNAL_ERROR", kind=type(exc).__name__)
             )
         self._write(response)
+
+    # -- browser session (ADR-0072) ---------------------------------------- #
+    def _serve_unlock(self, method: str) -> None:
+        """One form, one cookie: the only route a browser can reach without a token.
+
+        ``GET`` renders the form; ``POST`` validates the token with the same
+        ``authenticate`` the header uses, and only then sets the cookie. A refusal
+        carries no ``Set-Cookie`` at all — so a wrong guess cannot be replayed and
+        nothing behind the gate is read.
+        """
+        if method == "GET":
+            failed = "e" in parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+            self._write(_Response(200, self._unlock_page(failed=failed)))
+            return
+        try:
+            form = self._read_form()
+        except DomainError as exc:
+            self._write(self.dashboard.error_response(exc))
+            return
+        supplied = (form.get("token") or [""])[0].strip()
+        cookie: Optional[str] = None
+        if supplied:
+            try:
+                self.dashboard.authenticate({"X-Dashboard-Token": supplied})
+            except DomainError:
+                cookie = None
+            else:
+                try:
+                    cookie = _set_cookie_header(supplied)
+                except DomainError as exc:
+                    # Accepted by the token check but unrepresentable as a cookie:
+                    # say so instead of pretending the token was wrong.
+                    self._write(self.dashboard.error_response(exc))
+                    return
+        if cookie is None:
+            self._redirect("/unlock?e=1")
+            return
+        self._redirect("/", cookie=cookie)
+
+    def _serve_lock(self) -> None:
+        """Forget the cookie in the browser: empty value, ``Max-Age=0``, no server state.
+
+        The cookie carries the token itself, so this route cannot revoke it — a copy
+        taken from the browser still authenticates. Rotation of the token is the only
+        revocation, and the ADR must say so.
+        """
+        self._redirect("/unlock", cookie=_set_cookie_header("", max_age=0))
+
+    def _unlock_page(self, *, failed: bool) -> str:
+        text = _template_path("unlock").read_text(encoding="utf-8")
+        message = Markup(
+            '<p class="err" role="alert">That token was not accepted. '
+            "No cookie was set and nothing was read.</p>"
+        )
+        return _render_fragment(text, {"error": message if failed else ""}, source="unlock.html")
+
+    def _redirect(self, location: str, *, cookie: Optional[str] = None) -> None:
+        headers = [("Location", location)]
+        if cookie is not None:
+            headers.append(("Set-Cookie", cookie))
+        self._write(_Response(303, ""), headers=headers)
 
     def _build_request(self, method: str) -> _Request:
         parsed = urlsplit(self.path)
@@ -3116,7 +3260,7 @@ class DashboardRequestHandler(SafeHeaderMixin, BaseHTTPRequestHandler):
         self.close_connection = True
         self.wfile.write(body)
 
-    def _write(self, response: _Response) -> None:
+    def _write(self, response: _Response, headers: Sequence[tuple[str, str]] = ()) -> None:
         payload = response.body.encode("utf-8")
         self.send_response(response.status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -3137,6 +3281,10 @@ class DashboardRequestHandler(SafeHeaderMixin, BaseHTTPRequestHandler):
             self.send_header("Allow", "GET, POST")
         if response.status == 401:
             self.send_header("WWW-Authenticate", 'Bearer realm="villa-dashboard"')
+        # ``SafeHeaderMixin.send_header`` rejects CR/LF/NUL in either name or
+        # value, so a caller cannot split one header into two.
+        for name, value in headers:
+            self.send_header(name, value)
         self.send_header("Connection", "close")
         self.end_headers()
         self.close_connection = True
