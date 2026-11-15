@@ -2359,8 +2359,11 @@ CREATE TABLE workforce_roster_entries (
     CONSTRAINT uq_workforce_roster_start UNIQUE (agency_id, staff_id, starts_at_utc),
     CONSTRAINT ck_workforce_roster_order CHECK (ends_at_utc > starts_at_utc),
     -- A published shift is an announcement: it names who published it and when.
+    -- A draft cancelled before publication was never announced: it carries the
+    -- reason but no publisher, and demanding one would force a fake attribution.
     CONSTRAINT ck_workforce_roster_published CHECK (
-        status = 'DRAFT' OR (published_by IS NOT NULL AND published_at IS NOT NULL)),
+        status IN ('DRAFT', 'CANCELLED')
+        OR (published_by IS NOT NULL AND published_at IS NOT NULL)),
     -- A swap or a cancellation is a decision: it carries a reason.
     CONSTRAINT ck_workforce_roster_reason CHECK (
         status NOT IN ('SWAPPED','CANCELLED','NO_SHOW')

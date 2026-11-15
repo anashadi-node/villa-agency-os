@@ -83,6 +83,21 @@ Setiap tugas punya **pemilik peran**, **artefak**, **DoD**, dan **perintah bukti
 | T1.6 | 5 | Uji regresi "NULL bukan FALSE" untuk **semua** CHECK beralasan di 018 + 001 | `tests/test_workforce_null_semantics.py` | ≥6 kasus, semuanya menolak `NULL` | `pytest -q tests/test_workforce_null_semantics.py` |
 | T1.7 | 5 | **Gate G1**: jalur tulis lulus di SQLite **dan** Postgres (kontainer), paritas skema OK | log gerbang | 0 gagal; `--check` OK; jalur tulis idempoten terbukti | `make check` + `generate_pg_twin.py --check` |
 
+**Status pelaksanaan (2026-11-15):**
+
+| ID | Status | Bukti |
+|---|---|---|
+| T1.1 | **Selesai** | `src/workforce/repository.py` + `tests/test_workforce_repository.py` (10 uji) |
+| T1.2 | **Selesai** | `src/workforce/roster.py` + `tests/test_workforce_roster.py` (37 uji, termasuk uji rencana kueri `EXPLAIN QUERY PLAN`) |
+| T1.3 | Belum mulai | `src/workforce/attendance.py` |
+| T1.6 | Selesai (sudah ada) | `tests/test_workforce_null_semantics.py` |
+| T1.7 | Menunggu | gate G1 dijalankan saat PR T1.1–T1.2 diperiksa CI |
+
+Dua temuan saat T1.1–T1.2 dikerjakan, keduanya masuk ke kode dan tes:
+
+1. `ck_workforce_roster_published` menuntut `published_by` untuk **semua** status selain DRAFT, termasuk `CANCELLED` — artinya membatalkan draft mustahil tanpa mengarang nama penerbit. Constraint diubah menjadi `status IN ('DRAFT', 'CANCELLED') OR (published_by IS NOT NULL AND published_at IS NOT NULL)`.
+2. `publish_shift()` membaca jam dua kali, sehingga `published_at` dan `updated_at` bisa berbeda mikrodetik. Kini satu pembacaan per tindakan.
+
 ### Minggu 2 — upah deterministik (H2) + tampilan (H3)
 
 | ID | Hari | Tugas | Artefak | DoD (bisa diuji) | Bukti |
