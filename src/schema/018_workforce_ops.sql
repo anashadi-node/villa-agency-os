@@ -333,6 +333,7 @@ CREATE TABLE IF NOT EXISTS workforce_timesheets (
                            'OPEN','SUBMITTED','APPROVED','REJECTED','LOCKED')),
     regular_minutes    INTEGER NOT NULL DEFAULT 0 CHECK (regular_minutes BETWEEN 0 AND 2400),
     overtime_minutes   INTEGER NOT NULL DEFAULT 0 CHECK (overtime_minutes BETWEEN 0 AND 1080),
+    break_minutes      INTEGER NOT NULL DEFAULT 0 CHECK (break_minutes BETWEEN 0 AND 1440),
     leave_days         INTEGER NOT NULL DEFAULT 0 CHECK (leave_days BETWEEN 0 AND 31),
     submitted_at       TEXT,
     approved_by        TEXT,
