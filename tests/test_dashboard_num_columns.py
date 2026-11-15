@@ -77,3 +77,10 @@ def test_finance_invoice_amounts_are_right_aligned(seeded_app):
     # Status columns must stay ordinary text even though they sit beside amounts.
     assert '<td class="num">ISSUED</td>' not in page
     assert '<td class="num">PAID</td>' not in page
+
+
+def test_command_center_case_count_is_right_aligned(seeded_app):
+    page = render(seeded_app, "command_center", "owner")
+    assert '<th class="num">Jumlah</th>' in page
+    # "Status" tetap teks biasa meskipun bersebelahan dengan kolom hitungan.
+    assert '<th class="num">Status</th>' not in page
