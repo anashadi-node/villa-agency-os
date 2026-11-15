@@ -55,7 +55,14 @@ AGENCY = G2.AGENCY
 class World:
     """Satu dunia sintetis yang sudah lengkap: staf, kerja, slip, run, audit."""
 
-    def __init__(self) -> None:
+    def __init__(self, tamper_before_issue=None) -> None:
+        """``tamper_before_issue`` menyisipkan kerusakan SEBELUM slip terbit.
+
+        Ini satu-satunya cara menguji batas gerbang: apa pun yang berubah setelah
+        slip terbit sudah tertangkap R3 (slip tidak lagi cocok dengan tarif/policy),
+        tetapi perubahan yang terjadi lebih dulu menghasilkan slip yang konsisten
+        dengan data yang salah.
+        """
         self.conn = G2.connect_sqlite(":memory:")
         self.clock = G2.FrozenClock.at(G2.CLOCK_NOW)
         self.ids = G2.IdFactory(deterministic=True, seed="reconcile")
@@ -65,6 +72,8 @@ class World:
         G2.seed_world(self.conn, self.clock.now().isoformat())
         self.extra = G2.build_attendance(self.conn, self.clock, self.ids)
         self.sheets = G2.close_timesheets(self.conn, self.clock, self.ids)
+        if tamper_before_issue is not None:
+            tamper_before_issue(self.conn)
         G2.issue_slips(self.conn, self.writer, self.clock, self.ids, self.sheets)
 
     def check(self):
@@ -110,6 +119,7 @@ def test_every_stage_actually_ran_and_checked_something(world):
         "R5 slips -> run total",
         "R6 trace",
         "R7 audit chain",
+        "R8 policy+rate integrity",
     }
     assert expected_stages <= set(report.checks)
     for stage in expected_stages:
@@ -245,6 +255,76 @@ def test_a_consistent_but_wrong_slip_header_is_caught_by_r4_and_r5(world):
     report = world.check()
     assert "R4 lines -> slip header" in stages(report)
     assert "R5 slips -> run total" in stages(report)
+
+
+def test_a_policy_payload_edited_in_place_is_caught_by_r8_and_stops_r3(world):
+    """Mengubah ``tax_percent`` tanpa versi baru: checksum tidak lagi cocok.
+
+    Ini serangan yang paling menarik secara bisnis — menurunkan/menaikkan potongan
+    tanpa meninggalkan jejak versi. R8 membandingkan checksum tersimpan dengan
+    checksum yang dihitung dari payload, dan R3 menolak menghitung ulang memakai
+    policy yang tidak bisa dipercaya (temuan, bukan traceback).
+    """
+    world.conn.execute(
+        "UPDATE workforce_policy_versions SET payload_json ="
+        " replace(payload_json, '\"5\"', '\"7\"') WHERE policy_code = 'PAYROLL_TAX'")
+    report = world.check()
+    assert "R8 policy+rate integrity" in stages(report)
+    assert "R3 rate+policy -> slip gross" in stages(report)
+
+
+def test_the_schema_refuses_a_rate_without_an_approver(world):
+    """Lapis pertama: NULL dan string terlalu pendek ditolak constraint."""
+    with pytest.raises(Exception) as excinfo:
+        world.conn.execute(
+            "UPDATE workforce_pay_rates SET approved_by = NULL WHERE component_code = 'BASE_DAILY'")
+    assert "approved_by" in str(excinfo.value)
+    with pytest.raises(Exception) as excinfo:
+        world.conn.execute(
+            "UPDATE workforce_pay_rates SET approved_by = '' WHERE component_code = 'BASE_DAILY'")
+    assert "approved_by" in str(excinfo.value)
+
+
+def test_a_rate_that_lost_its_approver_is_caught_by_r8(world):
+    """Lapis kedua: dengan constraint dimatikan, R8 yang menangkap tarif tak berpenanggung.
+
+    ``PRAGMA ignore_check_constraints`` menyerupai operator/penyerang yang memegang
+    basis data secara langsung. Tanpa R8, tarif tanpa penanggung jawab akan lolos sebagai
+    "tarif yang sah" — padahal tarif yang tidak bisa ditunjuk pengesahnya bukan bukti.
+    """
+    world.conn.execute("PRAGMA ignore_check_constraints = ON")
+    world.conn.execute(
+        "UPDATE workforce_pay_rates SET approved_by = '' WHERE component_code = 'BASE_DAILY'")
+    report = world.check()
+    assert "R8 policy+rate integrity" in stages(report)
+
+
+def test_internal_consistency_cannot_vouch_for_a_wrong_but_signed_rate(world):
+    """Batas gerbang ini, dikunci sebagai uji — bukan disembunyikan.
+
+    Tarif yang salah **sebelum** slip terbit akan menghasilkan slip yang konsisten
+    dengan tarif itu, sehingga R1–R5 tidak punya alasan untuk mengeluh: yang
+    diperiksa adalah kecocokan slip dengan tarif dan policy *yang ada di basis data*,
+    bukan apakah tarifnya sesuai kontrak owner. Yang bisa dikatakan gerbang ini adalah
+    "tarif ini utuh dan ditandatangani" (R8). Membandingkan tarif dengan rate card yang
+    disetujui owner adalah kontrol lain — keputusan manusia, di luar lingkup rekonsiliasi.
+    """
+    def wrong_rate(conn) -> None:
+        conn.execute(
+            "UPDATE workforce_pay_rates SET amount_minor = amount_minor + 7000"
+            " WHERE component_code = 'BASE_DAILY'")
+
+    world = World(tamper_before_issue=wrong_rate)
+    try:
+        report = world.check()
+        assert report.findings == [], (
+            "kalau ini gagal, ada tahap yang tiba-tiba bisa menilai kewajaran tarif: "
+            f"{[(f.stage, f.subject) for f in report.findings]}"
+        )
+        # R8 tetap hijau: tarifnya memang utuh dan ditandatangani — hanya salah.
+        assert report.checks["R8 policy+rate integrity"] > 0
+    finally:
+        world.close()
 
 
 def _disarm_append_only_guard(conn) -> None:

@@ -27,6 +27,7 @@ Yang diperiksa, per tahap (semua harus 0 selisih):
 * **R4** baris slip → tajuk slip (bruto, potongan, bersih)
 * **R5** tajuk slip → total run
 * **R6** jejak: setiap slip punya rate, policy berversi, segel yang cocok, dan event audit
+* **R8** policy & tarif utuh dan disahkan (checksum payload, `approved_by`/`approved_at`)
 * **R7** rantai audit utuh (`verify_chain`)
 
 Dataset (sintetis, deterministik, tanpa satu pun data orang nyata)
@@ -400,12 +401,17 @@ def close_timesheets(conn, clock: FrozenClock, ids: IdFactory) -> dict[str, list
 
 
 def tax_line(conn, work: WorkSummary, bundle, gross_minor: int) -> Optional[PayLine]:
-    """Potongan pajak dari payload policy berversi — bukan angka di dalam kode."""
-    try:
-        policy = bundle.policy("PAYROLL_TAX")
-    except Exception:  # pragma: no cover - dataset selalu menyemai policy ini
+    """Potongan pajak dari payload policy berversi — bukan angka di dalam kode.
+
+    Sengaja **tidak** menelan galat: policy yang tidak bisa dimuat (mis. checksum
+    tidak cocok karena payload disunting di tempat) harus muncul sebagai temuan,
+    bukan menghilang menjadi "tidak ada potongan".
+    """
+    policy = bundle.policy("PAYROLL_TAX")
+    raw_payload = getattr(policy, "payload", None)
+    if raw_payload is None:  # pragma: no cover - kebijakan tanpa payload bukan dataset ini
         return None
-    raw_percent = policy.payload.get("tax_percent")
+    raw_percent = raw_payload.get("tax_percent")
     if raw_percent is None:
         return None
     percent = Decimal(str(raw_percent))
@@ -720,11 +726,22 @@ def reconcile(conn, report: ReconcileReport, writer: PayslipWriter) -> None:
             regular_minutes=expected_minutes, overtime_minutes=expected_overtime,
             days_worked=days, absence_days=absence,
         )
-        bundle = load_bundle(conn, staff_id, period_end, agency_id=agency)
-        fresh = calculate(summary, bundle)
-        tax = tax_line(conn, summary, bundle, fresh.gross_minor)
-        if tax is not None:
-            fresh = calculate(summary, bundle, deductions=[tax])
+        try:
+            bundle = load_bundle(conn, staff_id, period_end, agency_id=agency)
+            fresh = calculate(summary, bundle)
+            tax = tax_line(conn, summary, bundle, fresh.gross_minor)
+            if tax is not None:
+                fresh = calculate(summary, bundle, deductions=[tax])
+        except Exception as exc:  # noqa: BLE001 - gerbang melapor, tidak boleh mati
+            # Mis. checksum policy tidak cocok: tarif/policy tidak bisa dipercaya, jadi
+            # seluruh tahap R3 untuk slip ini dicatat sebagai temuan, bukan dilewati.
+            report.record(
+                "R3 rate+policy -> slip gross",
+                f"{staff_id} dapat dihitung ulang",
+                "berhasil",
+                f"gagal: {type(exc).__name__}: {exc}",
+            )
+            continue
 
         report.record(
             "R3 rate+policy -> slip gross", f"{staff_id} gross_minor",
@@ -877,6 +894,33 @@ def reconcile(conn, report: ReconcileReport, writer: PayslipWriter) -> None:
         ).fetchone()
         report.record(
             "R6 trace", f"{staff_id} slip punya event audit", 1, int(seal_events[0])
+        )
+
+    # -- R8: apakah tarif dan policy-nya sendiri masih utuh dan disahkan? ------ #
+    #
+    # R1–R5 membuktikan rantai internal konsisten: menit dan uang yang tertulis sama
+    # dengan buktinya. Dua hal berikut tidak bisa dibuktikan dengan konsistensi internal,
+    # jadi diperiksa langsung: payload policy yang disunting di tempat (checksum tidak
+    # cocok, artinya tarif/persentase berubah tanpa versi baru), dan tarif yang tidak
+    # pernah disahkan siapa pun.
+    for row in conn.execute(
+        "SELECT * FROM workforce_policy_versions WHERE agency_id = ? ORDER BY policy_code, version",
+        (agency,),
+    ).fetchall():
+        stored = str(row["checksum_sha256"])
+        recomputed = sha256_hex(canonical_json(json.loads(str(row["payload_json"]))))
+        report.record(
+            "R8 policy+rate integrity", f"checksum {row['policy_version_id']}", stored, recomputed
+        )
+    for row in conn.execute(
+        "SELECT * FROM workforce_pay_rates WHERE agency_id = ? ORDER BY staff_id, component_code",
+        (agency,),
+    ).fetchall():
+        report.record(
+            "R8 policy+rate integrity",
+            f"disahkan {row['pay_rate_id']}",
+            True,
+            bool(str(row["approved_by"] or "")) and bool(str(row["approved_at"] or "")),
         )
 
     # -- R7: rantai audit ------------------------------------------------------ #
