@@ -118,7 +118,7 @@ adalah **menandai ulang halaman**, bukan menulis CSS baru.
 |---|---|
 | `prefers-color-scheme: light` | Seluruh token ditimpa; chip nav, badge, `empty`, `role-pill` diberi override eksplisit karena aslinya “kaca gelap”. |
 | `prefers-reduced-motion: reduce` | Semua transisi dimatikan. |
-| `max-width: 860px` | Nav membungkus, tabel bisa digulir mendatar, padding kanvas mengecil. |
+| `max-width: 860px` | Nav membungkus, padding kanvas mengecil, dan **setiap tabel data menjadi wadah gulir miliknya sendiri** (lihat di bawah). |
 | `@media print` | Latar putih, teks hitam, `th` tanpa gradien, tinggi baris padat — supaya laporan bisa dicetak untuk owner. |
 
 **Aturan angka di tabel:** kolom angka dinyatakan **oleh pemanggil**, bukan
@@ -132,6 +132,31 @@ teks, dan setiap sel tetap di-escape (`_cell`).
 + `width: 1%`; `td.num` juga `white-space: nowrap`. Ini mencegah nomor invoice
 terpotong di tengah token (`INV-202609-` / `0001`) ketika layar sempit, membuat
 digit rupiah rata per kolom, dan membuat kolom catatan mendapat sisa ruang.
+
+**Tabel lebar di layar sempit.** Halaman Keuangan punya 10 kolom dan Operasi 13
+kolom; pada 390px tabel seperti itu dulu menyeret seluruh dokumen ke samping
+(`documentElement.scrollWidth` 954px untuk viewport 390px) sehingga header,
+sidebar, dan tombol tema ikut bergeser. Perbaikannya satu aturan CSS, tanpa
+JavaScript:
+
+```css
+table:not([data-table="kpi"]) {
+  display: block;          /* agar overflow-x berlaku pada tabel */
+  overflow-x: auto;        /* tabel menggulir sendiri, bukan halaman */
+  max-width: 100%;
+}
+```
+
+`display: block` pada `<table>` membuat `overflow-x` benar-benar bekerja; isi
+tabel mempertahankan lebar alaminya dan digulir di dalam kotak tabel. Diukur
+pada render nyata 2026-11-15: halaman Keuangan 390px → `scrollWidth` **954 → 390**
+(tabel `clientWidth` 358, `scrollWidth` 868); pada 1440px metrik **tidak berubah**
+(lebar tabel 1118, `scrollWidth` 1116 — tanpa scrollbar internal).
+
+Tabel KPI **dikecualikan** karena ia grid kartu (`table[data-table="kpi"]` →
+`tbody{display:grid}`), bukan tabel data; memaksakan `display: block` di sana
+akan merusak grid 2 kolom (390px) / 4 kolom (1440px). Pengunci: paragraf ini,
+`tests/test_ui_table_scroll.py`, dan `tests/test_dashboard_num_columns.py`.
 
 ---
 

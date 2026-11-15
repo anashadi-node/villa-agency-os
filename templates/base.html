@@ -644,6 +644,16 @@ table {
   overflow: hidden;
   box-shadow: var(--shadow);
 }
+/* Wide tables (10 columns in Finance, 13 in Operations) must not drag the whole
+   page sideways on narrow screens: the table itself becomes the scroll
+   container. `display: block` is what makes `overflow-x` apply to a table; on
+   wide screens the result is identical to a normal table (measured at 1440px).
+   The KPI wall is excluded because it is a card grid, not a data table. */
+table:not([data-table="kpi"]) {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
 caption {
   caption-side: top; text-align: left; padding: 0 0 8px;
   color: var(--muted); font-size: 12px;

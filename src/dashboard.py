@@ -1607,11 +1607,13 @@ class Dashboard:
                 ["Status", "Jumlah"],
                 status_rows,
                 empty="kasus per status",
+                num=(1,),
             ),
             "sla_table": table(
                 ["Breach", "Subjek", "ID", "Jenis", "Jatuh tempo", "Terlambat (menit)"],
                 sla_rows,
                 empty="SLA breach terbuka",
+                num=(5,),
             ),
             "audit_table": self._audit_table(events),
             "kpi_note": Markup(
@@ -1702,7 +1704,7 @@ class Dashboard:
                 table_rows,
                 empty="kasus",
             ),
-            "status_table": table(["Status", "Jumlah"], status_rows, empty="kasus per status"),
+            "status_table": table(["Status", "Jumlah"], status_rows, empty="kasus per status", num=(1,)),
         }
 
     def view_case_detail(self, case_id: str, principal: Principal) -> dict[str, Any]:
@@ -2830,6 +2832,7 @@ class Dashboard:
                     for row in pending
                 ],
                 empty="pending outbox event",
+                num=(3,),
             ),
             "dead_table": table(
                 ["Event", "Type", "Attempts", "Last error", "Created"],
@@ -2844,6 +2847,7 @@ class Dashboard:
                     for row in dead
                 ],
                 empty="dead-lettered event",
+                num=(2,),
             ),
             "inbox_table": table(
                 ["Source", "Received", "Unprocessed", "Last received"],
