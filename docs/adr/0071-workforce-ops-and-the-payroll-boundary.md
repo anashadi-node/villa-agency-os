@@ -104,10 +104,15 @@ berbeda dengan pemilik berbeda.
 
 - **Skema bertambah 16 tabel** (`workforce_*`) pada `018_workforce_ops.sql`, dengan bentuk yang
   sama di `001_initial.sql` sehingga basis baru dan basis hasil migrasi memegang kontrak identik.
+  Dua kolom bertambah saat T1.3–T1.4: `workforce_attendance_events.supersedes_event_id` dan
+  `workforce_timesheets.break_minutes` (CHECK 0–1440) — keduanya dibutuhkan agar koreksi menunjuk
+  baris asal dan agar istirahat benar-benar memotong menit kerja, bukan tampil sebagai upah.
   `001_initial.pg.sql` diregenerasi dari sumber SQLite — kembaran tidak boleh menyimpang.
-- **Belum ada satu baris pun kode aplikasi** yang menulis tabel ini. ADR ini menetapkan kontrak;
-  Sprint 1–2 di `docs/SPRINT_WORKFORCE_OPS_2_WEEKS.md` mengisi penulis, pembaca, dan gerbangnya.
-  Sampai itu selesai, tabel kosong adalah keadaan yang benar — bukan cacat.
+- **Penulis tabel sudah ada untuk jalur kerja (T1.1–T1.4).** `workforce/repository.py` (transaksi +
+  `idempotency_key`), `workforce/roster.py` (terbit roster + deteksi bentrok), `workforce/attendance.py`
+  (append-only, koreksi menunjuk `supersedes_event_id`), dan `workforce/timesheet.py` (menit & upah
+  dari bukti kehadiran, `APPROVED` disegel `lock_hash`). Sisa Sprint 1–2 — `tasks.py`, upah versi
+  policy, slip — belum ditulis; selama itu tabel upah kosong adalah keadaan yang benar, bukan cacat.
 - **Data yang tidak boleh masuk repo:** tidak ada NIK, NPWP, rekening, atau koordinat di tree
   publik; contoh di tes memakai nilai sintetis. Penjaga PII (`make pii-scan`) tetap fail-closed.
 - **Yang harus ditinjau counsel sebelum produksi:** dasar pemotongan PPh 21 (TER vs tarif
