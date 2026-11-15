@@ -891,6 +891,8 @@ footer::before {
   font-size: 10px; letter-spacing: .9px; text-transform: uppercase;
   white-space: nowrap;
 }
+.footlock { color: inherit; text-decoration: none; border-bottom: 1px solid currentColor; padding-bottom: 1px; }
+.footlock:hover, .footlock:focus-visible { color: var(--acc); }
 
 [aria-busy="true"] { opacity: .6; }
 ::selection { background: var(--acc-soft); color: var(--ink); }
@@ -1037,7 +1039,7 @@ footer::before {
 <footer>
   <span class="footnote">Data ditampilkan apa adanya dari database; halaman ini tidak mengubah apa pun.
   Perubahan hanya lewat antrean approval (<code>ApprovalService</code>).</span>
-  <span class="footmeta"><span>{{ schema_version }}</span><span>read-only</span></span>
+  <span class="footmeta"><a class="footlock" href="/lock" rel="nofollow">Lock</a><span>{{ schema_version }}</span><span>read-only</span></span>
 </footer>
 <span id="tema-terang" class="themesink" aria-hidden="true"></span>
 <span id="tema-gelap" class="themesink" aria-hidden="true"></span>

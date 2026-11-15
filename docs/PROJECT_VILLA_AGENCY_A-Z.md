@@ -1432,7 +1432,7 @@ Daftar ini menggabungkan Status-Gap (potret), temuan hari ini, dan hasil membang
 
 ## Lampiran B — Indeks 72 ADR
 
-72 berkas; 71 berstatus *Accepted* dan ADR-0072 masih *PROPOSED* (sesi browser, menunggu keputusan pemilik). ADR-0071 (Workforce Ops) naik pada 2026-11-14, menyusul dua yang naik pada 2026-11-13: ADR-0069 (`CONFIRMED` hanya setelah pembayaran terverifikasi dan bukti blok villa — temuan K2, sekaligus keputusan opsi (a) memasukkan empat sisi pembatalan langsung ke graf kanonik) dan ADR-0070 (rupiah adalah nilainya, USD rujukan berlabel). Kedua status itu dibaca `tests/test_adr_status.py` dari tiga ejaan yang pernah dipakai repo. Dibangkitkan dari judul tiap berkas.
+72 berkas, seluruhnya berstatus *Accepted*. ADR-0072 (sesi browser: cookie sebagai karier kedua token yang sama) naik pada 2026-11-15 setelah pemilik menetapkan tiga kebijakannya — TLS diterminasi reverse proxy dengan `Secure` kondisional, umur sesi 12 jam, dan tautan `/lock` di setiap halaman; ketiganya dikunci tes. ADR-0071 (Workforce Ops) naik pada 2026-11-14, menyusul dua yang naik pada 2026-11-13: ADR-0069 (`CONFIRMED` hanya setelah pembayaran terverifikasi dan bukti blok villa — temuan K2, sekaligus keputusan opsi (a) memasukkan empat sisi pembatalan langsung ke graf kanonik) dan ADR-0070 (rupiah adalah nilainya, USD rujukan berlabel). Kedua status itu dibaca `tests/test_adr_status.py` dari tiga ejaan yang pernah dipakai repo. Dibangkitkan dari judul tiap berkas.
 
 | No. | Judul |
 |---|---|
@@ -1507,7 +1507,7 @@ Daftar ini menggabungkan Status-Gap (potret), temuan hari ini, dan hasil membang
 | 0069 | `CONFIRMED` hanya setelah pembayaran terverifikasi dan bukti blok villa (ACCEPTED 2026-11-13, audit K2; opsi a: empat sisi pembatalan langsung masuk graf) |
 | 0070 | Rupiah adalah nilainya, USD adalah rujukan berlabel (ACCEPTED 2026-11-13) |
 | 0071 | Workforce Ops: kerja adalah data operasional, upah adalah ledger terpisah (ACCEPTED 2026-11-14) |
-| 0072 | Sesi browser: cookie adalah karier kedua untuk token yang sama (PROPOSED 2026-11-15) |
+| 0072 | Sesi browser: cookie adalah karier kedua untuk token yang sama (ACCEPTED 2026-11-15) |
 
 ## Lampiran C — Indeks 60 modul `src/`
 

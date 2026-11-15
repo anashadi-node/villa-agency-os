@@ -52,6 +52,7 @@ def request(
     cookie: str | None = None,
     form: dict[str, str] | None = None,
     content_type: str = "application/x-www-form-urlencoded",
+    extra_headers: dict[str, str] | None = None,
 ) -> Reply:
     """One request over a fresh connection: ``http.client`` never follows a 303."""
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=15)
@@ -65,6 +66,7 @@ def request(
         headers["X-Dashboard-Token"] = token
     if cookie is not None:
         headers["Cookie"] = cookie
+    headers.update(extra_headers or {})
     try:
         connection.request(method, path, body=body, headers=headers)
         response = connection.getresponse()
@@ -362,3 +364,114 @@ def test_healthz_needs_no_credential(port: int) -> None:
 
     assert reply.status == 200
     assert reply.set_cookie is None
+
+
+# -- the three policies settled in ADR-0072 -------------------------------
+
+
+def test_session_ttl_is_twelve_hours(port: int) -> None:
+    """Policy (b): one working day. Changing it means editing the ADR, not a hunch."""
+    assert D.SESSION_COOKIE_MAX_AGE_SECONDS == 12 * 60 * 60
+
+
+def test_cookie_is_plain_over_plain_http(port: int) -> None:
+    """Policy (a): no ``Secure`` on a loopback plain-HTTP hop — it would vanish."""
+    reply = request(port, "POST", "/unlock", form={"token": TOKEN})
+
+    cookie = reply.set_cookie or ""
+    assert "Max-Age=43200" in cookie
+    assert "Secure" not in cookie
+
+
+def test_cookie_is_secure_when_tls_terminates_in_front(port: int) -> None:
+    """Policy (a): behind a TLS proxy the cookie must carry ``Secure``."""
+    reply = request(
+        port,
+        "POST",
+        "/unlock",
+        form={"token": TOKEN},
+        extra_headers={"X-Forwarded-Proto": "https"},
+    )
+
+    cookie = reply.set_cookie or ""
+    assert cookie.startswith(f"{COOKIE_NAME}={TOKEN}")
+    assert "Secure" in cookie
+    assert "HttpOnly" in cookie and "SameSite=Strict" in cookie
+
+
+def test_forwarded_proto_chain_is_read_from_the_first_hop(port: int) -> None:
+    """``http, https`` means the browser spoke HTTP to the edge: keep the cookie plain."""
+    reply = request(
+        port,
+        "POST",
+        "/unlock",
+        form={"token": TOKEN},
+        extra_headers={"X-Forwarded-Proto": "http, https"},
+    )
+
+    cookie = reply.set_cookie or ""
+    assert cookie.startswith(f"{COOKIE_NAME}={TOKEN}")
+    assert "Secure" not in cookie
+
+
+def test_forwarded_proto_scheme_is_case_insensitive(port: int) -> None:
+    """RFC 3986: schemes are case-insensitive, and proxies pad the value."""
+    reply = request(
+        port,
+        "POST",
+        "/unlock",
+        form={"token": TOKEN},
+        extra_headers={"X-Forwarded-Proto": " HTTPS , http"},
+    )
+
+    cookie = reply.set_cookie or ""
+    assert cookie.startswith(f"{COOKIE_NAME}={TOKEN}")
+    assert "Secure" in cookie
+
+
+def test_lock_clears_with_secure_under_tls(port: int) -> None:
+    """Clearing must use the same attributes, or a ``Secure`` cookie survives the lock."""
+    reply = request(
+        port,
+        "POST",
+        "/lock",
+        cookie=f"{COOKIE_NAME}={TOKEN}",
+        extra_headers={"X-Forwarded-Proto": "https"},
+    )
+
+    cookie = reply.set_cookie or ""
+    assert "Max-Age=0" in cookie
+    assert "Secure" in cookie
+
+
+def test_lock_link_is_a_get_so_a_plain_anchor_works(port: int) -> None:
+    """Policy (c): the footer link is a hyperlink, not a form — GET must lock too."""
+    reply = request(port, "GET", "/lock", cookie=f"{COOKIE_NAME}={TOKEN}")
+
+    assert reply.status == 303
+    assert reply.location == "/unlock"
+    assert "Max-Age=0" in (reply.set_cookie or "")
+
+
+def test_lock_without_a_cookie_is_not_an_error(port: int) -> None:
+    """A stale tab pressing Lock must land on the form, not on 401 with a token prompt."""
+    reply = request(port, "GET", "/lock")
+
+    assert reply.status == 303
+    assert reply.location == "/unlock"
+
+
+def test_lock_link_is_on_every_page(port: int) -> None:
+    """Policy (c): reachable from the page the operator is already looking at."""
+    for page in ("/", "/finance"):
+        reply = request(port, "GET", page, token=TOKEN)
+        assert reply.status == 200, page
+        assert 'href="/lock"' in reply.body, page
+
+
+def test_unlock_page_offers_no_lock_link(port: int) -> None:
+    """Nothing is unlocked yet, so there is nothing to lock."""
+    reply = request(port, "GET", "/unlock")
+
+    assert reply.status == 200
+    assert 'href="/lock"' not in reply.body

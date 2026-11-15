@@ -318,9 +318,10 @@ MAX_PREBUFFERED_BODY = 64 * 1024
 
 #: The unlock cookie (ADR-0072). One name, one value: the dashboard token. It is
 #: ``HttpOnly`` and ``SameSite=Strict`` so a page script cannot read it and a
-#: cross-site form cannot ride it, and ``Path=/`` so every page sees it. No
-#: ``Secure``: the server speaks plain HTTP on loopback/LAN, and marking the
-#: cookie ``Secure`` would make the browser drop it — a silent lockout.
+#: cross-site form cannot ride it, and ``Path=/`` so every page sees it.
+#: ``Secure`` is added only when a front proxy reports TLS (ADR-0072): the server
+#: itself speaks plain HTTP on loopback/LAN, and marking the cookie ``Secure`` over
+#: plain HTTP would make the browser drop it — a silent lockout.
 SESSION_COOKIE = "villa_dashboard"
 
 #: Twelve hours: long enough for a working day, short enough that a shared
@@ -962,7 +963,30 @@ def _session_cookie_value(headers: Any) -> Optional[str]:
 _COOKIE_SAFE_RE = re.compile(r"^[A-Za-z0-9._~+/=:-]{0,%d}$" % SESSION_COOKIE_MAX_BYTES)
 
 
-def _set_cookie_header(value: str, *, max_age: int = SESSION_COOKIE_MAX_AGE_SECONDS) -> str:
+def _forwarded_proto_is_https(headers: Any) -> bool:
+    """Whether a front proxy reports TLS termination for this request (ADR-0072).
+
+    Only the first ``X-Forwarded-Proto`` element counts, and it must name
+    ``https`` — schemes are case-insensitive (RFC 3986 §3.1) and proxies pad
+    whitespace, so both are tolerated. A chain such as ``http, https`` means the
+    browser spoke plain HTTP to the edge, which is the leg the cookie actually
+    travels over, so it stays plain.
+    A client able to fake this header can only ask for a ``Secure`` cookie it
+    then fails to send back over HTTP: a self-inflicted lockout, not a
+    privilege gain.
+    """
+    raw = headers.get("X-Forwarded-Proto") if headers is not None else None
+    if not raw:
+        return False
+    return str(raw).split(",")[0].strip().lower() == "https"
+
+
+def _set_cookie_header(
+    value: str,
+    *,
+    max_age: int = SESSION_COOKIE_MAX_AGE_SECONDS,
+    secure: bool = False,
+) -> str:
     """A ``Set-Cookie`` value that cannot be split, quote or path-escape.
 
     The token comes from configuration, so it is untrusted here: a value carrying
@@ -974,10 +998,13 @@ def _set_cookie_header(value: str, *, max_age: int = SESSION_COOKIE_MAX_AGE_SECO
         raise InvalidInput(
             "token cannot be carried in a cookie", value_length=len(value)
         )
-    return (
+    attributes = (
         f"{SESSION_COOKIE}={value}; Path=/; Max-Age={int(max_age)}; "
         "HttpOnly; SameSite=Strict"
     )
+    # ``Secure`` only when TLS is really in front of us: over plain HTTP a browser
+    # discards a Secure cookie, which would lock the operator out silently.
+    return attributes + "; Secure" if secure else attributes
 
 
 def _token_registry(
@@ -3128,7 +3155,7 @@ class DashboardRequestHandler(SafeHeaderMixin, BaseHTTPRequestHandler):
         if path == "/unlock" and method in ("GET", "POST"):
             self._serve_unlock(method)
             return
-        if method == "POST" and path == "/lock":
+        if path == "/lock" and method in ("GET", "POST"):
             self._serve_lock()
             return
         try:
@@ -3169,7 +3196,9 @@ class DashboardRequestHandler(SafeHeaderMixin, BaseHTTPRequestHandler):
                 cookie = None
             else:
                 try:
-                    cookie = _set_cookie_header(supplied)
+                    cookie = _set_cookie_header(
+                        supplied, secure=_forwarded_proto_is_https(self.headers)
+                    )
                 except DomainError as exc:
                     # Accepted by the token check but unrepresentable as a cookie:
                     # say so instead of pretending the token was wrong.
@@ -3183,11 +3212,19 @@ class DashboardRequestHandler(SafeHeaderMixin, BaseHTTPRequestHandler):
     def _serve_lock(self) -> None:
         """Forget the cookie in the browser: empty value, ``Max-Age=0``, no server state.
 
+        Answers ``GET`` as well as ``POST``: the footer link is a plain anchor, and a
+        browser refresh after locking must land on ``/unlock``, not a 401.
+
         The cookie carries the token itself, so this route cannot revoke it — a copy
         taken from the browser still authenticates. Rotation of the token is the only
         revocation, and the ADR must say so.
         """
-        self._redirect("/unlock", cookie=_set_cookie_header("", max_age=0))
+        self._redirect(
+            "/unlock",
+            cookie=_set_cookie_header(
+                "", max_age=0, secure=_forwarded_proto_is_https(self.headers)
+            ),
+        )
 
     def _unlock_page(self, *, failed: bool) -> str:
         text = _template_path("unlock").read_text(encoding="utf-8")
