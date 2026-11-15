@@ -26,7 +26,7 @@
 - Bagian VI — Kontrol: **20** Keamanan, privasi, audit · **21** Legal, pajak, kepatuhan · **22** Kualitas: tes, gerbang, CI
 - Bagian VII — Menjalankan: **23** Deployment, tenant, skalabilitas, backup
 - Bagian VIII — Status jujur: **24** Status hari ini · **25** Celah dan risiko terbuka · **26** Keputusan Owner dan langkah berikutnya
-- Lampiran: **A** Glosarium · **B** Indeks 71 ADR · **C** Indeks 60 modul `src/` · **D** Migrasi, skrip, target make · **E** Apa yang diverifikasi dan apa yang dikutip · **F** Ketidakkonsistenan yang ditemukan
+- Lampiran: **A** Glosarium · **B** Indeks 72 ADR · **C** Indeks 60 modul `src/` · **D** Migrasi, skrip, target make · **E** Apa yang diverifikasi dan apa yang dikutip · **F** Ketidakkonsistenan yang ditemukan
 
 ---
 
@@ -391,7 +391,7 @@ Keduanya **loopback saja**. Membuka dashboard ke internet butuh lapisan login ta
 | `src/` | Seluruh logika domain, Python stdlib saja | 60 modul `.py`, 54.152 baris (diukur 2026-11-14 pada `f5665c5`; potret `2cb0696`: 58 / 52.924) |
 | `src/schema/` | Skema SQLite + twin PostgreSQL + migrasi | `001_initial.sql`, `001_initial.pg.sql`, `002_pg_range_exclusions.pg.sql`, migrasi `003`–`008`, `010`–`018` (tidak ada `009`) |
 | `tests/` | Uji otomatis (pytest + subtests) | **118** berkas `test_*.py` (61.020 baris) + `conftest.py`, `seed_support.py`, dan dua helper lain → seluruh `.py` di `tests/`: **122 berkas / 61.425 baris**. Diukur 2026-11-14 pada `master` `f5665c5`; pada potret `2cb0696` terukur 102 / 57.649 (seluruh `.py`: 104 / 57.881) |
-| `docs/` | Dokumen kerja, ADR, keamanan, laporan desain | 33 berkas `.md` di akar `docs/` (48 entri termasuk HTML/PDF dan subfolder), `docs/adr/` (71 ADR), `docs/security/` |
+| `docs/` | Dokumen kerja, ADR, keamanan, laporan desain | 33 berkas `.md` di akar `docs/` (48 entri termasuk HTML/PDF dan subfolder), `docs/adr/` (72 ADR), `docs/security/` |
 | `scripts/` | CLI operator, gerbang, utilitas | 22 berkas |
 | `templates/` | HTML dashboard (`base`, `error`, dan halaman), `templates/marketing/` (9 berkas), `templates/messages/id-ID.json` (templat pesan) | 15 `.html` dashboard |
 | `deploy/systemd-user/` | Dua unit layanan | 2 berkas |
@@ -1430,9 +1430,9 @@ Daftar ini menggabungkan Status-Gap (potret), temuan hari ini, dan hasil membang
 | `UNKNOWN` | presisi geo/ketersediaan tanpa klaim — tidak boleh dijual atau ditampilkan sebagai pasti |
 | Potret | isi dokumen sumber yang bertanggal dan bisa sudah usang |
 
-## Lampiran B — Indeks 71 ADR
+## Lampiran B — Indeks 72 ADR
 
-Seluruh 71 berkas berstatus *Accepted*. ADR-0071 (Workforce Ops) naik pada 2026-11-14, menyusul dua yang naik pada 2026-11-13: ADR-0069 (`CONFIRMED` hanya setelah pembayaran terverifikasi dan bukti blok villa — temuan K2, sekaligus keputusan opsi (a) memasukkan empat sisi pembatalan langsung ke graf kanonik) dan ADR-0070 (rupiah adalah nilainya, USD rujukan berlabel). Kedua status itu dibaca `tests/test_adr_status.py` dari tiga ejaan yang pernah dipakai repo. Dibangkitkan dari judul tiap berkas.
+72 berkas; 71 berstatus *Accepted* dan ADR-0072 masih *PROPOSED* (sesi browser, menunggu keputusan pemilik). ADR-0071 (Workforce Ops) naik pada 2026-11-14, menyusul dua yang naik pada 2026-11-13: ADR-0069 (`CONFIRMED` hanya setelah pembayaran terverifikasi dan bukti blok villa — temuan K2, sekaligus keputusan opsi (a) memasukkan empat sisi pembatalan langsung ke graf kanonik) dan ADR-0070 (rupiah adalah nilainya, USD rujukan berlabel). Kedua status itu dibaca `tests/test_adr_status.py` dari tiga ejaan yang pernah dipakai repo. Dibangkitkan dari judul tiap berkas.
 
 | No. | Judul |
 |---|---|
@@ -1507,6 +1507,7 @@ Seluruh 71 berkas berstatus *Accepted*. ADR-0071 (Workforce Ops) naik pada 2026-
 | 0069 | `CONFIRMED` hanya setelah pembayaran terverifikasi dan bukti blok villa (ACCEPTED 2026-11-13, audit K2; opsi a: empat sisi pembatalan langsung masuk graf) |
 | 0070 | Rupiah adalah nilainya, USD adalah rujukan berlabel (ACCEPTED 2026-11-13) |
 | 0071 | Workforce Ops: kerja adalah data operasional, upah adalah ledger terpisah (ACCEPTED 2026-11-14) |
+| 0072 | Sesi browser: cookie adalah karier kedua untuk token yang sama (PROPOSED 2026-11-15) |
 
 ## Lampiran C — Indeks 60 modul `src/`
 
