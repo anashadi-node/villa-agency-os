@@ -35,6 +35,7 @@
 
   --basalt:      #090d0c;
   --basalt-2:    #0d1312;
+  --rail-solid:  #0c1211;
   --surface:     #131b19;
   --surface-2:   #1a2421;
   --surface-3:   #101917;
@@ -110,6 +111,7 @@
 
     --basalt:      #f4f1e8;
     --basalt-2:    #ebe6da;
+    --rail-solid:  #ece5d5;
     --surface:     #fffdf7;
     --surface-2:   #f8f4e9;
     --surface-3:   #ffffff;
@@ -178,6 +180,7 @@ html:has(#tema-gelap:target) {
 
   --basalt:      #090d0c;
   --basalt-2:    #0d1312;
+  --rail-solid:  #0c1211;
   --surface:     #131b19;
   --surface-2:   #1a2421;
   --surface-3:   #101917;
@@ -244,6 +247,7 @@ html:has(#tema-terang:target) {
 
   --basalt:      #f4f1e8;
   --basalt-2:    #ebe6da;
+  --rail-solid:  #ece5d5;
   --surface:     #fffdf7;
   --surface-2:   #f8f4e9;
   --surface-3:   #ffffff;
@@ -487,7 +491,10 @@ nav.nav span.badge[data-nav-denied] {
 
 /* 3.2 theme switch: three fragments, no request */
 .railfoot {
-  margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line);
+  position: sticky; bottom: -20px; z-index: 2;
+  margin-top: auto; padding: 10px 0 4px; border-top: 1px solid var(--line);
+  background: var(--rail-solid);
+  box-shadow: 0 -14px 18px -16px rgba(0, 0, 0, .5);
   display: flex; flex-direction: column; gap: 7px;
 }
 .railfoot .k {
@@ -587,9 +594,17 @@ section[data-page] > h2:first-of-type::after {
   background: linear-gradient(90deg, color-mix(in srgb, var(--gold) 65%, transparent) 0 26px, var(--line) 26px, transparent);
 }
 
-/* The sentence under a display title reads as a lede. */
-section[data-page] > h2:first-of-type + p.lede,
-section[data-page] > h2:first-of-type + p.muted { color: var(--ink-soft); }
+/* The first classless sentence under a display title reads as a lede.
+   Restricted to :not([class]) so a banner or an empty-state keeps its own colour. */
+section[data-page] > h2:first-of-type + p:not([class]),
+section[data-page] > h2:first-of-type + p.hint {
+  margin: 12px 0 20px;
+  max-width: 74ch;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+section[data-page] > h2:first-of-type + p.hint { margin-top: 12px; }
 
 /* 5. surfaces -------------------------------------------------------------- */
 .badge {
@@ -791,7 +806,7 @@ section[data-page="error"] button[type="submit"] {
   font: 600 clamp(84px, 12vw, 148px)/.82 ui-serif, "Iowan Old Style", Georgia, serif;
   letter-spacing: -.05em; color: transparent;
   -webkit-text-stroke: 1px var(--line-strong);
-  user-select: none; padding-right: 6px;
+  user-select: none; padding-right: 16px;
 }
 .steps { counter-reset: s; list-style: none; margin: 0 0 18px; padding: 0; display: grid; gap: 11px; }
 .steps li { counter-increment: s; position: relative; padding-left: 34px; color: var(--ink-soft); font-size: 13.5px; }
@@ -908,7 +923,7 @@ footer::before {
   .principal { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 5px; margin: 2px 0; font-size: 12px; }
   .principal .pk { flex: 0 0 48px; }
   .principal code { min-width: 0; font-size: 11.5px; padding: 1px 5px; }
-  nav.nav { flex-direction: column; flex-wrap: nowrap; gap: 10px; }
+  nav.nav { flex-direction: column; flex-wrap: nowrap; gap: 10px; padding-bottom: 62px; }
   nav.nav .navgroup { flex-direction: column; align-items: stretch; gap: 1px; }
   nav.nav .navgroup-label { margin: 0 0 3px 6px; }
   nav.nav .navgroup > a, nav.nav .navgroup > span.badge { display: flex; align-items: center; gap: 10px; border-radius: 10px; }
