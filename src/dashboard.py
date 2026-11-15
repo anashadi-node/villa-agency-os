@@ -799,14 +799,33 @@ def table(
     *,
     empty: str,
     attrs: str = "",
+    num: Sequence[int] = (),
 ) -> Markup:
-    """A table whose every cell is escaped; empty input renders ``empty_note``."""
+    """A table whose every cell is escaped; empty input renders ``empty_note``.
+
+    ``num`` lists the 0-based column indices that hold numbers (amounts, counters).
+    Those cells and their headers get ``class="num"`` so money lines up on the
+    right with tabular figures instead of ragged left-aligned text. Nothing is
+    guessed from the cell value: a column is numeric only when the caller says so.
+    """
     materialised = [list(row) for row in rows]
     if not materialised:
         return empty_note(empty)
-    head = "".join(f"<th>{_cell(h)}</th>" for h in headers)
+    numeric = frozenset(num)
+
+    def cell_class(index: int) -> str:
+        return ' class="num"' if index in numeric else ""
+
+    head = "".join(
+        f"<th{cell_class(index)}>{_cell(h)}</th>" for index, h in enumerate(headers)
+    )
     body = "".join(
-        "<tr>" + "".join(f"<td>{_cell(cell)}</td>" for cell in row) + "</tr>"
+        "<tr>"
+        + "".join(
+            f"<td{cell_class(index)}>{_cell(cell)}</td>"
+            for index, cell in enumerate(row)
+        )
+        + "</tr>"
         for row in materialised
     )
     return Markup(
@@ -2046,6 +2065,7 @@ class Dashboard:
                 ],
                 invoices,
                 empty="invoice",
+                num=(5, 6),
             ),
             "payment_table": table(
                 [
@@ -2061,6 +2081,7 @@ class Dashboard:
                 ],
                 payments,
                 empty="payment",
+                num=(4,),
             ),
             "recon_table": table(
                 ["Rekonsiliasi", "Jenis", "Status", "Payment", "Invoice", "Terdeteksi", "Jatuh tempo", "Catatan"],

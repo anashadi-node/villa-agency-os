@@ -121,10 +121,17 @@ adalah **menandai ulang halaman**, bukan menulis CSS baru.
 | `max-width: 860px` | Nav membungkus, tabel bisa digulir mendatar, padding kanvas mengecil. |
 | `@media print` | Latar putih, teks hitam, `th` tanpa gradien, tinggi baris padat — supaya laporan bisa dicetak untuk owner. |
 
-**Aturan angka di tabel:** sel angka diberi `td.num` → `width: 1%` +
-`white-space: nowrap`. Ini mencegah nomor invoice terpotong di tengah token
-(`INV-202609-` / `0001`) ketika layar sempit, dan membuat kolom catatan
-mendapat sisa ruang.
+**Aturan angka di tabel:** kolom angka dinyatakan **oleh pemanggil**, bukan
+ditebak dari isi sel. `dashboard.table(headers, rows, empty=..., num=(5, 6))`
+menerima indeks kolom 0-based; hanya kolom itu yang diberi `class="num"` pada
+`th` **dan** `td`, sehingga judul dan angkanya rata kanan di sumbu yang sama.
+Isi sel tidak pernah diperiksa — kolom teks yang kebetulan berisi digit tetap
+teks, dan setiap sel tetap di-escape (`_cell`).
+
+`th.num`/`td.num` → `text-align: right` + `font-variant-numeric: tabular-nums`
++ `width: 1%`; `td.num` juga `white-space: nowrap`. Ini mencegah nomor invoice
+terpotong di tengah token (`INV-202609-` / `0001`) ketika layar sempit, membuat
+digit rupiah rata per kolom, dan membuat kolom catatan mendapat sisa ruang.
 
 ---
 
