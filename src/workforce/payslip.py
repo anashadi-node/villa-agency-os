@@ -489,7 +489,7 @@ class PayslipWriter:
         role = require_text(actor_role, "actor_role", max_len=64)
         if not isinstance(calculation, PayrollCalculation):
             raise PayslipInconsistent(
-                "issue() hanya menerima PayrollCalculation",
+                "issue() only accepts a PayrollCalculation",
                 received=type(calculation).__name__,
             )
         run = self.get_run(payroll_run_id)
@@ -544,7 +544,7 @@ class PayslipWriter:
             )
         if calculation.net_minor != gross - deduction:
             raise PayslipInconsistent(
-                "upah bersih bukan bruto dikurangi potongan",
+                "net pay is not gross minus deductions",
                 staff_id=calculation.staff_id,
                 gross_minor=gross,
                 deduction_minor=deduction,

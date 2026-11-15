@@ -106,7 +106,7 @@ class WorkSummary:
             raise InvalidWorkSummary("currency must be a three-letter code",
                                      {"currency": self.currency})
         if self.period_end < self.period_start:
-            raise InvalidWorkSummary("periode terbalik",
+            raise InvalidWorkSummary("the period ends before it starts",
                                      {"start": to_iso_date(self.period_start),
                                       "end": to_iso_date(self.period_end)})
         for name in ("regular_minutes", "overtime_minutes", "days_worked", "absence_days"):
@@ -116,7 +116,7 @@ class WorkSummary:
                                          {"field": name, "value": value})
         if self.days_worked == 0 and self.regular_minutes > 0:
             raise InvalidWorkSummary(
-                "ada menit kerja tanpa satu hari pun tercatat",
+                "minutes worked with no day recorded",
                 {"regular_minutes": self.regular_minutes},
             )
 
@@ -276,7 +276,7 @@ def _earning_line(component: str, rate: PayRate, work: WorkSummary,
             component_code=component,
             kind=EARNING,
             amount_minor=rate.amount_minor,
-            basis_note=f"gaji bulanan penuh {to_iso_date(work.period_start)}"
+            basis_note=f"full monthly salary {to_iso_date(work.period_start)}"
                        f"–{to_iso_date(work.period_end)}",
             policy_version_id=rate.policy_version_id,
             rate_minor=rate.amount_minor,
@@ -290,7 +290,7 @@ def _earning_line(component: str, rate: PayRate, work: WorkSummary,
             component_code=component,
             kind=EARNING,
             amount_minor=amount,
-            basis_note=f"{work.days_worked} hari × {rate.amount_minor}",
+            basis_note=f"{work.days_worked} days × {rate.amount_minor}",
             policy_version_id=rate.policy_version_id,
             rate_minor=rate.amount_minor,
         )
@@ -305,7 +305,7 @@ def _earning_line(component: str, rate: PayRate, work: WorkSummary,
             component_code=component,
             kind=EARNING,
             amount_minor=amount,
-            basis_note=f"{work.regular_minutes} menit kerja × {rate.amount_minor}/jam",
+            basis_note=f"{work.regular_minutes} minutes worked × {rate.amount_minor}/hour",
             policy_version_id=rate.policy_version_id,
             quantity_minutes=work.regular_minutes,
             rate_minor=rate.amount_minor,
@@ -321,7 +321,7 @@ def _earning_line(component: str, rate: PayRate, work: WorkSummary,
             component_code=component,
             kind=EARNING,
             amount_minor=amount,
-            basis_note=f"{work.overtime_minutes} menit lembur × {rate.amount_minor}/jam",
+            basis_note=f"{work.overtime_minutes} minutes overtime × {rate.amount_minor}/hour",
             policy_version_id=rate.policy_version_id,
             quantity_minutes=work.overtime_minutes,
             rate_minor=rate.amount_minor,
@@ -335,7 +335,7 @@ def _earning_line(component: str, rate: PayRate, work: WorkSummary,
             component_code=component,
             kind=EARNING,
             amount_minor=amount,
-            basis_note=f"{work.days_worked} hari hadir × {rate.amount_minor}",
+            basis_note=f"{work.days_worked} days present × {rate.amount_minor}",
             policy_version_id=rate.policy_version_id,
             rate_minor=rate.amount_minor,
         )
@@ -350,7 +350,7 @@ def _earning_line(component: str, rate: PayRate, work: WorkSummary,
             component_code=component,
             kind=EARNING,
             amount_minor=rate.amount_minor,
-            basis_note=f"absen {work.absence_days} hari ≤ ambang {threshold}",
+            basis_note=f"{work.absence_days} days absent ≤ threshold {threshold}",
             policy_version_id=rate.policy_version_id,
             rate_minor=rate.amount_minor,
         )
@@ -366,7 +366,7 @@ class PayRateUnitMismatchFor(PayrollError):
 
     def __init__(self, component_code: str, unit: str, expected: str) -> None:
         super().__init__(
-            f"tarif '{component_code}' bersatuan {unit}, diharapkan {expected}",
+            f"pay rate '{component_code}' is in {unit}, expected {expected}",
             {"component_code": component_code, "unit": unit, "expected": expected},
         )
 
@@ -401,7 +401,7 @@ def calculate(work: WorkSummary, bundle: PolicyBundle, *,
     net = gross - deduction_total
     if net < 0:
         raise NegativeNetPay(
-            "potongan melebihi pendapatan: periksa policy potongan",
+            "deductions exceed earnings: check the deduction policy",
             {"gross_minor": gross, "deduction_minor": deduction_total},
         )
 

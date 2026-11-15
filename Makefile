@@ -16,7 +16,7 @@ ifneq ($(strip $(VILLA_DB)),)
 export VILLA_DB
 endif
 
-.PHONY: help test verify syntax lint secret-scan unsafe-scan pii-scan check check-store interpreter schema-parity pg-twin anchor-publish anchor-verify allowance-status policy-status migrate-check render-az audit-structure
+.PHONY: help test verify syntax lint secret-scan unsafe-scan pii-scan check check-store interpreter schema-parity pg-twin workforce-language workforce-reconcile anchor-publish anchor-verify allowance-status policy-status migrate-check render-az audit-structure
 
 help:
 	@echo "make test          - run the full pytest suite"
@@ -37,7 +37,10 @@ help:
 	@echo "make migrate-check - list schema migrations still pending for VILLA_DB (writes nothing)"
 	@echo "                     applying one is an ops act: NOT a make target (see README)"
 	@echo "make render-az     - render docs/PROJECT_VILLA_AGENCY_A-Z.md to HTML + PDF in docs/rendered/"
-	@echo "make check         - interpreter + syntax + lint + test + secret scan + unsafe scan + pii scan + schema parity (pre-deploy gate)"
+	@echo "make check         - interpreter + syntax + lint + test + secret scan + unsafe scan + pii scan + schema parity"
+	@echo "                     + workforce language ratchet + G2 payroll reconciliation (pre-deploy gate)"
+	@echo "make workforce-language - fail if src/workforce/ gains Indonesian text (0 findings allowed)"
+	@echo "make workforce-reconcile - Gate G2: 30 days x 12 staff synthetic payroll, recomputed from raw tables"
 	@echo "make check-store   - read THIS deployment's store with the live-store tests made strict"
 	@echo "                     (VILLA_DB + VILLA_DB_REQUIRED=1: a missing store fails instead of skipping)"
 
@@ -63,10 +66,22 @@ pii-scan:
 schema-parity:
 	$(PYTHON) scripts/generate_pg_twin.py --check
 
+
+# Ratchet bahasa khusus src/workforce/. Tes global memakai daftar penanda terbatas + pin berkas
+# legacy, sehingga kata Indonesia yang tidak terdaftar (mis. "hanya menerima") lolos dan berkas
+# workforce baru tidak punya pin. Cakupan di sini 0 temuan, tanpa pengecualian.
+workforce-language:
+	@$(PYTHON) scripts/check_workforce_language.py
+
+# Gate G2. Dijalankan di dalam `check` supaya angka "0 selisih" selalu berasal dari eksekusi
+# nyata: dataset sintetis 30 hari x 12 staf disemai, rantai upah dijalankan, lalu dihitung ulang
+# dari tabel mentah. Skripnya keluar 1 bila ada satu selisih, jadi hijau berarti benar-benar nol.
+workforce-reconcile:
+	@$(PYTHON) scripts/workforce_reconcile.py
 pg-twin:
 	$(PYTHON) scripts/generate_pg_twin.py --write
 
-check: interpreter syntax lint test secret-scan unsafe-scan pii-scan schema-parity
+check: interpreter syntax lint test secret-scan unsafe-scan pii-scan schema-parity workforce-language workforce-reconcile
 	@echo "=== PRE-DEPLOY GATE: PASS ==="
 
 # The store-reading tests are skipped in a clean clone (`check` must stay runnable there), so

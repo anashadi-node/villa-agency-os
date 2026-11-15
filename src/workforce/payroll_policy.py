@@ -173,7 +173,7 @@ class PolicyBundle:
             ) from None
         if rate.unit != unit:
             raise PayRateUnitMismatch(
-                f"tarif '{component_code}' bersatuan {rate.unit}, diharapkan {unit}",
+                f"pay rate '{component_code}' is in {rate.unit}, expected {unit}",
                 {"component_code": component_code, "unit": rate.unit, "expected": unit},
             )
         return rate
