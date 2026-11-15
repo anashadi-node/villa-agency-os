@@ -93,6 +93,30 @@ class RosterMismatch(AttendanceError):
     code = "WORKFORCE_ATTENDANCE_ROSTER_MISMATCH"
 
 
+class IdempotencyKeyReused(AttendanceError):
+    """Kunci kiriman dipakai ulang untuk isi yang berbeda — bukan replay."""
+
+    code = "WORKFORCE_ATTENDANCE_IDEMPOTENCY_MISMATCH"
+
+
+#: Kolom yang menentukan arti sebuah bukti. Kunci kiriman hanya boleh dipakai ulang
+#: untuk baris yang identik pada semua kolom ini; kalau tidak, itu penulisan baru yang
+#: salah kunci, bukan kiriman ulang.
+REPLAY_COMPARABLE_FIELDS = (
+    "staff_id",
+    "roster_entry_id",
+    "supersedes_event_id",
+    "event_type",
+    "occurred_at_utc",
+    "source",
+    "device_ref",
+    "geofence_verdict",
+    "accuracy_bucket_m",
+    "evidence_ref",
+    "actor_id",
+)
+
+
 def _aware(value: Any, field_name: str) -> datetime:
     moment = parse_iso(value) if not isinstance(value, datetime) else value
     if moment.tzinfo is None:
@@ -362,6 +386,21 @@ class AttendanceWriter:
             " WHERE agency_id = ? AND idempotency_key = ?",
             (self.agency_id, record["idempotency_key"]),
         ).fetchone()
+        mutated = [
+            name
+            for name in REPLAY_COMPARABLE_FIELDS
+            if str(existing[name]) != str(record[name])
+        ]
+        if mutated:
+            # Kunci yang sama untuk isi berbeda tidak boleh lolos sebagai "replay":
+            # perangkat yang mengirim ulang dengan jam berbeda sedang melaporkan
+            # kejadian lain, dan menelannya diam-diam akan menghilangkan bukti.
+            raise IdempotencyKeyReused(
+                "this idempotency_key was already used for a different event",
+                idempotency_key=str(record["idempotency_key"]),
+                differing_fields=",".join(mutated),
+                existing_event_id=str(existing["attendance_event_id"]),
+            )
         return dict(existing), False
 
     def _require_clockable(self, staff_id: str) -> None:
