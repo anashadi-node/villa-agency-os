@@ -108,11 +108,13 @@ berbeda dengan pemilik berbeda.
   `workforce_timesheets.break_minutes` (CHECK 0–1440) — keduanya dibutuhkan agar koreksi menunjuk
   baris asal dan agar istirahat benar-benar memotong menit kerja, bukan tampil sebagai upah.
   `001_initial.pg.sql` diregenerasi dari sumber SQLite — kembaran tidak boleh menyimpang.
-- **Penulis tabel sudah ada untuk jalur kerja (T1.1–T1.4).** `workforce/repository.py` (transaksi +
+- **Penulis tabel sudah ada untuk jalur kerja (T1.1–T1.5).** `workforce/repository.py` (transaksi +
   `idempotency_key`), `workforce/roster.py` (terbit roster + deteksi bentrok), `workforce/attendance.py`
-  (append-only, koreksi menunjuk `supersedes_event_id`), dan `workforce/timesheet.py` (menit & upah
-  dari bukti kehadiran, `APPROVED` disegel `lock_hash`). Sisa Sprint 1–2 — `tasks.py`, upah versi
-  policy, slip — belum ditulis; selama itu tabel upah kosong adalah keadaan yang benar, bukan cacat.
+  (append-only, koreksi menunjuk `supersedes_event_id`), `workforce/timesheet.py` (menit & upah
+  dari bukti kehadiran, `APPROVED` disegel `lock_hash`), dan `workforce/tasks.py` (penugasan
+  `ops_tasks` ke staf aktif dengan identitas staf, `DROPPED` wajib alasan). Sisa Sprint 1–2 — upah
+  versi policy dan slip — belum ditulis; selama itu tabel upah kosong adalah keadaan yang benar,
+  bukan cacat.
 - **Data yang tidak boleh masuk repo:** tidak ada NIK, NPWP, rekening, atau koordinat di tree
   publik; contoh di tes memakai nilai sintetis. Penjaga PII (`make pii-scan`) tetap fail-closed.
 - **Yang harus ditinjau counsel sebelum produksi:** dasar pemotongan PPh 21 (TER vs tarif

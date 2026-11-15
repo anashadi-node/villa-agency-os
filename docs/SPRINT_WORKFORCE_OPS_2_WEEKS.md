@@ -91,6 +91,7 @@ Setiap tugas punya **pemilik peran**, **artefak**, **DoD**, dan **perintah bukti
 | T1.2 | **Selesai** | `src/workforce/roster.py` + `tests/test_workforce_roster.py` (37 uji, termasuk uji rencana kueri `EXPLAIN QUERY PLAN`) |
 | T1.3 | **Selesai** | `src/workforce/attendance.py` + `tests/test_workforce_attendance.py` (17 uji): koreksi menambah baris `MANUAL_ADJUST` bertanda `supersedes_event_id`, baris lama utuh, `UPDATE`/`DELETE` ditolak trigger |
 | T1.4 | **Selesai** | `src/workforce/timesheet.py` + `tests/test_workforce_timesheet.py` (19 uji): menit dihitung dari event kehadiran, istirahat memotong, lembur hanya di luar shift terbit, punch menggantung menolak penutupan, `APPROVED` membekukan isi lewat `lock_hash` |
+| T1.5 | **Selesai** | `src/workforce/tasks.py` + `tests/test_workforce_tasks.py` (28 uji): penugasan terikat identitas staf aktif, staf nonaktif/asing properti ditolak, `DROPPED` wajib alasan ≥3 karakter, penugasan `DONE` tidak bisa dibuka lagi |
 | T1.6 | Selesai (sudah ada) | `tests/test_workforce_null_semantics.py` |
 | T1.7 | Menunggu | gate G1 dijalankan setelah seluruh jalur tulis T1.1–T1.6 selesai |
 
