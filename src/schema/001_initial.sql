@@ -2421,6 +2421,10 @@ CREATE TABLE workforce_attendance_events (
     agency_id           TEXT NOT NULL DEFAULT 'agency_default',
     staff_id            TEXT NOT NULL,
     roster_entry_id     TEXT,
+    -- A correction never rewrites the event it corrects: it points at it. The
+    -- corrected row stays where it is, so two readers looking at different times
+    -- cannot disagree about what the device reported.
+    supersedes_event_id TEXT,
     event_type          TEXT NOT NULL CHECK (event_type IN (
                             'CLOCK_IN','CLOCK_OUT','BREAK_START','BREAK_END',
                             'MANUAL_ADJUST','DEVICE_PING','GEOFENCE_REJECT')),
@@ -2442,6 +2446,12 @@ CREATE TABLE workforce_attendance_events (
     CONSTRAINT ck_workforce_attendance_manual CHECK (
         source <> 'MANUAL' OR (evidence_ref IS NOT NULL AND length(evidence_ref) >= 3)),
     CONSTRAINT ck_workforce_attendance_recorded CHECK (recorded_at_utc >= occurred_at_utc),
+    CONSTRAINT ck_workforce_attendance_supersede_type CHECK (
+        supersedes_event_id IS NULL OR event_type = 'MANUAL_ADJUST'),
+    CONSTRAINT ck_workforce_attendance_supersede_other CHECK (
+        supersedes_event_id IS NULL OR supersedes_event_id <> attendance_event_id),
+    CONSTRAINT fk_workforce_attendance_supersedes FOREIGN KEY (supersedes_event_id)
+        REFERENCES workforce_attendance_events (attendance_event_id),
     CONSTRAINT fk_workforce_attendance_staff FOREIGN KEY (staff_id) REFERENCES workforce_staff (staff_id),
     CONSTRAINT fk_workforce_attendance_roster FOREIGN KEY (roster_entry_id)
         REFERENCES workforce_roster_entries (roster_entry_id)
