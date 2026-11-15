@@ -1,6 +1,6 @@
 # ADR-0072 — Sesi browser: cookie adalah karier kedua untuk token yang sama
 
-- Status: **PROPOSED** (menunggu persetujuan Mas Anas)
+- Status: **ACCEPTED** (Mas Anas, 2026-11-15 — tiga kebijakan ditetapkan di §Keputusan kebijakan)
 - Date: 2026-11-15
 - Deciders: Mas Anas (owner) · divisi Villa Management & Agency
 - Melengkapi: ADR-0004 (append-only evidence), ADR-0024 (header token sebagai gerbang), ADR-0032
@@ -58,16 +58,26 @@ menyerahkannya sekali, tanpa menambah jalur masuk baru yang lebih lemah daripada
    Nilai yang tidak lolos **ditolak** (`InvalidInput("token cannot be carried in a cookie")`),
    bukan dibersihkan diam-diam — token yang karakternya dibuang akan menghasilkan cookie yang
    tidak pernah lolos autentikasi, dan pengguna akan melihat "token salah" untuk token yang benar.
-6. **Atribut cookie:** `Path=/`, `Max-Age=43200` (12 jam), `HttpOnly`, `SameSite=Strict`.
-   `HttpOnly` menutup pembacaan oleh skrip; `SameSite=Strict` menutup pengiriman lintas situs.
-   **Tanpa `Secure`** secara sengaja: server ini bicara HTTP polos di loopback/LAN, dan browser
-   membuang cookie `Secure` yang datang lewat HTTP — hasilnya penguncian senyap pada percobaan
-   login yang sebenarnya benar.
+6. **Atribut cookie:** `Path=/`, `Max-Age=43200` (12 jam), `HttpOnly`, `SameSite=Strict`, dan
+   `Secure` **hanya bila permintaan benar-benar tiba lewat TLS**. `HttpOnly` menutup pembacaan
+   oleh skrip; `SameSite=Strict` menutup pengiriman lintas situs. Penentu TLS adalah
+   `_forwarded_proto_is_https()`: elemen pertama `X-Forwarded-Proto` harus `https` (spasi dipangkas;
+   skema tidak peka huruf per RFC 3986, jadi `HTTPS` juga diterima).
+   Rantai `http, https` berarti browser bicara HTTP ke tepi — kaki yang dilalui cookie justru
+   HTTP — jadi cookie tetap polos. Tanpa TLS di depan, `Secure` **tidak** dipasang: browser
+   membuang cookie `Secure` yang datang lewat HTTP, dan hasilnya penguncian senyap pada percobaan
+   login yang sebenarnya benar. Klien yang memalsukan header ini hanya bisa meminta cookie
+   `Secure` yang ia sendiri gagal kirim kembali lewat HTTP — mengunci diri sendiri, bukan naik hak.
 7. **Tanpa JavaScript.** CSP `default-src 'none'` memblokir `<script>`, jadi alurnya memakai form
    POST + `Set-Cookie` + redirect HTTP biasa. `templates/unlock.html` berdiri sendiri (tidak
    mewarisi `base.html`) supaya tidak membawa navigasi dashboard ke halaman pra-autentikasi.
-8. **`POST /lock` melupakan cookie di browser** (`Max-Age=0`, nilai kosong) lalu redirect ke
-   `/unlock`. Rute ini **tidak** mencabut token — lihat Konsekuensi.
+8. **`/lock` melupakan cookie di browser** (`Max-Age=0`, nilai kosong) lalu redirect ke
+   `/unlock`. Diterima sebagai `GET` **dan** `POST`: tombolnya adalah tautan biasa
+   (`<a href="/lock">` di footer `templates/base.html`, jadi ada di setiap halaman ber-auth),
+   dan `GET` ke rute itu tidak boleh jatuh ke gerbang autentikasi lalu menjawab 401. Atribut
+   `Secure` pada cookie penghapus mengikuti aturan yang sama seperti cookie pemasang — tanpa itu,
+   cookie `Secure` akan bertahan setelah `/lock`. Rute ini **tidak** mencabut token — lihat
+   Konsekuensi.
 
 ## Alasan
 
@@ -77,9 +87,9 @@ menyerahkannya sekali, tanpa menambah jalur masuk baru yang lebih lemah daripada
 - **Fail-closed lebih jujur daripada pintar.** Menolak nilai cookie yang tidak aman membuat
   kegagalan terlihat sebagai kegagalan. Memperbaiki nilai diam-diam membuat kegagalan terlihat
   sebagai "token salah", yaitu kebohongan yang paling mahal di halaman login.
-- **Tanpa `Secure` adalah pilihan yang dipaksakan topologi, bukan kelalaian.** Yang harus
-  diperbaiki adalah topologinya (TLS di depan server), bukan atribut cookie yang membuat login
-  mustahil di topologi sekarang.
+- **`Secure` mengikuti topologi, bukan dinyalakan buta.** Memasang `Secure` di atas HTTP polos
+  membuat login mustahil; tidak memasangnya di belakang TLS membuang proteksi yang sudah tersedia.
+  Satu pemeriksaan header, dua jawaban berbeda, masing-masing benar untuk topologinya.
 - **12 jam = satu hari kerja.** Cukup panjang untuk tidak mengganggu, cukup pendek untuk tidak
   hidup sampai besok di laptop yang dipakai bergantian.
 - **Browser butuh karier, bukan header baru.** Setiap alternatif (token di URL, basic-auth)
@@ -102,5 +112,17 @@ menyerahkannya sekali, tanpa menambah jalur masuk baru yang lebih lemah daripada
   (64 KiB) dengan `Content-Type` form; `tests/test_server_hardening.py` ikut mengujinya.
 - **Tidak ada perubahan pada peran, route, gerbang PII, atau format uang.** Cookie hanya
   mengubah cara kredensial tiba, bukan apa yang boleh dilakukan setelah masuk.
-- **Yang harus ditinjau sebelum produksi:** kebijakan TLS di depan dashboard, apakah 12 jam sesuai
-  kebiasaan operasional, dan apakah `/lock` perlu tombol di setiap halaman atau cukup di beranda.
+## Keputusan kebijakan (disetujui pemilik, 2026-11-15)
+
+Tiga pertanyaan terbuka di draf PROPOSED sudah diputuskan; ketiganya dikunci tes.
+
+| Kebijakan | Keputusan | Dikunci oleh |
+|---|---|---|
+| Transport | TLS diterminasi **reverse proxy di depan** dashboard; aplikasi tetap HTTP polos di loopback dan membaca `X-Forwarded-Proto` untuk memasang `Secure`. Tidak ada TLS di dalam proses Python. | `test_cookie_is_secure_when_tls_terminates_in_front`, `test_cookie_is_plain_over_plain_http`, `test_forwarded_proto_chain_is_read_from_the_first_hop` |
+| Umur sesi | **12 jam** (`SESSION_COOKIE_MAX_AGE_SECONDS = 43200`). | `test_session_ttl_is_twelve_hours` |
+| Tombol `/lock` | **Ada di setiap halaman** ber-auth lewat footer `base.html`; halaman `/unlock` tidak memuatnya. | `test_lock_link_is_on_every_page`, `test_unlock_page_offers_no_lock_link`, `test_lock_link_is_a_get_so_a_plain_anchor_works` |
+
+Konsekuensi operasional dari baris pertama: **wajib** proxy yang menimpa (bukan meneruskan)
+`X-Forwarded-Proto`. Proxy yang meneruskan header kiriman klien apa adanya membuat klien bisa
+memilih atribut cookienya sendiri — tidak berbahaya (lihat butir 6), tetapi membuat perilaku
+tidak dapat diprediksi dari sisi server.
