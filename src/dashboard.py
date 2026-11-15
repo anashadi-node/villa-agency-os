@@ -96,6 +96,7 @@ __all__ = [
     "KPI_KEYS",
     "PAGE_ROLES",
     "READ_ONLY_BADGE",
+    "ROLE_DISPLAY_LABEL",
     "ROLES",
     "Dashboard",
     "DashboardError",

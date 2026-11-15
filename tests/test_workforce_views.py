@@ -294,6 +294,43 @@ def test_rendering_a_screen_writes_nothing(rich):
     assert before == after
 
 
+def test_no_escaped_markup_reaches_a_reader(rich) -> None:
+    """Markup yang seharusnya jadi elemen tidak boleh muncul sebagai teks.
+
+    Dunia uji ini tidak punya nama yang mengandung ``<``, jadi setiap ``&lt;`` di halaman
+    berarti ada potongan HTML yang ter-escape dua kali dan pembaca melihat tag-nya. Kontrol
+    negatifnya adalah uji berikutnya di berkas ini: nama bersisi ``<script>`` memang HARUS
+    tampil ter-escape — jadi aturan ini hanya berlaku untuk data bersih.
+    """
+    for screen, role in (("workforce_supervisor", "operations"),
+                         ("workforce_finance", "finance"),
+                         ("workforce_owner", "owner")):
+        html = str(rich.views.render(screen, role=role, actor="anas", title=screen))
+        assert "&lt;" not in html, f"{screen}: markup ter-escape tampil sebagai teks"
+        assert "<time datetime=" in html, f"{screen}: slot waktu bukan elemen"
+
+
+def test_the_role_title_comes_from_the_blueprint_map(rich) -> None:
+    """Judul peran di kepala halaman = nama peran dari blueprint, bukan nama orang.
+
+    Modul ini tidak boleh punya daftar nama peran sendiri: dua sumber nama peran akan
+    bercabang dari bagan organisasi (ADR-0035). Nama peran yang memuat ``&`` diuji apa
+    adanya supaya ekspektasinya ikut ter-escape seperti yang dibaca di halaman.
+    """
+    from dashboard import ROLE_DISPLAY_LABEL, escape_value
+
+    for screen, role in (("workforce_supervisor", "operations"),
+                         ("workforce_finance", "finance"),
+                         ("workforce_owner", "owner")):
+        html = str(rich.views.render(screen, role=role, actor="anas", title="Tenaga kerja"))
+        assert escape_value(ROLE_DISPLAY_LABEL[role]) in html, screen
+        assert "&amp;" in html if "&" in ROLE_DISPLAY_LABEL[role] else True
+    # Peran di luar bagan jatuh ke kodenya sendiri — bukan kata karangan, bukan nama orang.
+    shell = rich.views.shell_context(role="roving_manager", actor="anas", title="x")
+    assert shell["actor_role_label"] == "roving_manager"
+    assert shell["actor_role"] == "roving_manager"
+
+
 def test_a_role_cannot_open_a_screen_it_does_not_own(rich):
     assert V.screens_for_role("operations") == ("workforce_supervisor",)
     assert V.screens_for_role("finance") == ("workforce_finance",)

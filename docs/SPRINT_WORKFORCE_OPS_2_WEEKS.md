@@ -285,7 +285,7 @@ Empat keputusan saat T2.4 dikerjakan:
 | T2.3 | 7 | `src/workforce/payslip.py` — tulis `workforce_payslips` + `workforce_payslip_lines`, segel `PayrollCalculation.digest()` (sha256 kanonik) ke `audit_events.evidence_ref`; `workforce_payslips` tidak punya kolom `lock_hash`, jadi segel tidak mengarang kolom baru | modul + uji | mengubah 1 baris setelah segel → terdeteksi | uji: ubah `gross`/hapus baris, `verify_seal()` menolak |
 | T2.4 | 7–8 | Alur status `DRAFT → CALCULATED → APPROVED → PAID → (VOID)`; `PAID` wajib `calculated_at` + `approved_at` | uji alur | lompat status ditolak; `VOID` tanpa alasan ditolak (regresi §1.1) | uji tabel transisi |
 | T2.5 | 8 | **Gate G2**: rekonsiliasi 0 selisih pada dataset uji 30 hari × 12 staf sintetis | laporan angka | setiap slip punya jejak rate+policy+timesheet; 0 slip tanpa jejak | skrip `scripts/workforce_reconcile.py` — **selesai 2026-11-15: 1.000 pemeriksaan, 0 selisih (30 hari x 12 staf x 2 properti), 20 uji + 11 kontrol/batas, keluar 1 saat data dirusak, masuk `make check`** (lihat §4.5) |
-| T2.6 | **Selesai** (2026-11-15) | `src/workforce/views.py` + 3 templat (`workforce_supervisor/finance/owner.html`) + katalog label `src/workforce/screen_labels.json` + 12 uji pada `tests/test_workforce_views.py`: tiga layar per peran, uang selalu lewat `money_display` (IDR dulu, referensi USD hanya bila policy menerbitkan kurs yang masih segar), layar read-only, gerbang peran *deny by default*, dan 0 istilah mesin di layar supervisor — lihat §4.6 | templat + uji render | 0 istilah teknis di layar supervisor; 0 nilai uang tanpa USD | uji render + grep templat |
+| T2.6 | **Selesai** (2026-11-15) | `src/workforce/views.py` + 3 templat (`workforce_supervisor/finance/owner.html`) + katalog label `src/workforce/screen_labels.json` + 14 uji pada `tests/test_workforce_views.py`: tiga layar per peran, uang selalu lewat `money_display` (IDR dulu, referensi USD hanya bila policy menerbitkan kurs yang masih segar), layar read-only, gerbang peran *deny by default*, dan 0 istilah mesin di layar supervisor — lihat §4.6 | templat + uji render | 0 istilah teknis di layar supervisor; 0 nilai uang tanpa USD | uji render + grep templat |
 | T2.7 | 9 | Tema premium: token warna, tipografi, motif etnik-alam, kontras AA, `prefers-reduced-motion` | `src/static/theme.css` + uji kontras | ≥8 pasangan warna lulus AA; animasi mati saat reduced-motion | skrip uji kontras (dibuat hari itu) |
 | T2.8 | 10 | **Gate G3 + G4**: suite penuh hijau, `make check`, audit PII, dokumen status diperbarui | log + PR | 0 gagal; 0 PII; angka status cocok kenyataan | `pytest -q`, `make check`, `git diff --stat` |
 
@@ -314,6 +314,8 @@ kata-katanya `src/workforce/screen_labels.json`.
 | Tabel kosong selebar tajuknya; `colspan` = jumlah `<th>` | `test_an_empty_table_spans_exactly_its_header_row` | 3 layar, tiap tabel |
 | Layar read-only: dua kali render tidak mengubah satu baris | `test_rendering_a_screen_writes_nothing` | 6 tabel, jumlah baris sebelum = sesudah |
 | Peran tidak bisa membuka layar yang bukan miliknya | `test_a_role_cannot_open_a_screen_it_does_not_own` | `operations`→supervisor, `finance`, `owner`, `guest`→(), `None`→() |
+| Tidak ada markup yang tampil sebagai teks (tag ter-escape dua kali) | `test_no_escaped_markup_reaches_a_reader` | 3 layar, 0 `&lt;` di seluruh halaman |
+| Judul peran di kepala halaman = nama peran blueprint, bukan nama orang | `test_the_role_title_comes_from_the_blueprint_map` | 3 peran dari `ROLE_DISPLAY_LABEL`; peran di luar bagan jatuh ke kodenya sendiri |
 
 **Bahasa.** Copy yang dibaca staf berbahasa Indonesia (pembacanya di Bali dan Yogyakarta, alasan
 yang sama dengan katalog pesan tamu ADR-0037), sementara `src/workforce/*.py` tetap **0 kata
@@ -325,7 +327,7 @@ Cara mereproduksi angkanya:
 
 ```
 make workforce-language                      # 0 temuan di src/workforce/*.py + katalog 9 kata
-/usr/bin/python3 -m pytest tests/test_workforce_views.py -q   # 12 uji
+/usr/bin/python3 -m pytest tests/test_workforce_views.py -q   # 14 uji
 ```
 
 Kontrol negatif gate katalog (dijalankan, bukan diasumsikan): satu kata `tidak` disisipkan ke
@@ -340,14 +342,28 @@ diukur ulang oleh tes kontras WCAG AA di mode gelap **dan** terang. Kicker ditul
 Inggris karena begitulah konvensi `base.html` (kicker halaman lain pun Inggris), sehingga pin bahasa
 shell tidak bergeser.
 
+**Dua cacat yang ditemukan render nyata, bukan oleh ekspektasi saya.** Setelah tes hijau, tiga
+layar dirender dari dunia G2 (12 staf, 30 hari) lewat skrip terpisah, lalu teksnya dibaca sendiri:
+(1) slot `waktu` diisi string biasa sehingga penggantian templat meng-escape-nya dan pembaca melihat
+tag `<time ...>` sebagai teks — diperbaiki dengan `_clock_slot()` dan dikunci oleh
+`test_no_escaped_markup_reaches_a_reader`; (2) kepala halaman menampilkan **nama orang** sebagai
+label peran (`peran anas (anas)`) — diperbaiki dengan mengambil `ROLE_DISPLAY_LABEL` dari dashboard
+(bagan organisasi ADR-0035) dan dikunci oleh `test_the_role_title_comes_from_the_blueprint_map`.
+Pelajaran: tes yang saya tulis mengunci janji yang saya ingat; membaca keluaran nyata menemukan janji
+yang tidak saya ingat.
+
 **Batas yang jujur (belum selesai di T2.6):**
 
 1. Layar ini **belum dirutekan** dashboard HTTP: `views.render()` menghasilkan halaman utuh, tetapi
-   `nav` sengaja kosong dan tautan antar layar masih jangkar dalam halaman. Penyaluran ke
-   `dashboard.py` (rute + peran) adalah pekerjaan tersendiri.
-2. `footnote`/`NO_RATE_NOTE` berasal dari `money_display` dan berbahasa **Inggris** (ADR-0011 §55),
-   sehingga satu paragraf catatan kurs di halaman Indonesia tampil campur bahasa. Ini keputusan
-   produk yang perlu ditetapkan, bukan bug yang bisa saya putuskan sendiri.
+   `nav` sengaja kosong dan tautan antar layar masih jangkar dalam halaman. Konsekuensinya terlihat:
+   dengan `actor`/`role` kosong (belum ada principal), kepala halaman menampilkan `peran ()` — bukan
+   bug, melainkan tanda bahwa belum ada yang menyalurkannya. Penyaluran ke `dashboard.py`
+   (rute + peran + `nav`) adalah pekerjaan tersendiri.
+2. Campur bahasa yang memang bawaan shell: `footnote`/`NO_RATE_NOTE` dari `money_display` berbahasa
+   **Inggris** (ADR-0011 §55) dan judul peran memakai nama jabatan bagan organisasi yang juga
+   Inggris (`ROLE_DISPLAY_LABEL`, ADR-0035) — persis seperti halaman dashboard lainnya. Copy isi
+   halaman tetap Indonesia. Menyeragamkan ini keputusan produk, bukan sesuatu yang saya putuskan
+   sendiri; kalau diputuskan, ia berlaku untuk **semua** halaman, bukan hanya tiga layar ini.
 3. Bentuk run ("Bulanan"/"Pekanan") **disimpulkan** dari ada/tidaknya `timesheet_id` di slip
    (`_run_shapes`), bukan dari kolom yang memang mencatatnya. Selama tidak ada kolom itu, labelnya
    bisa keliru untuk pola run yang tidak biasa — dan itu tertulis di sini supaya tidak jadi klaim.
