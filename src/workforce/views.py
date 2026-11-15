@@ -53,6 +53,7 @@ from dashboard import (  # noqa: E402
     Markup,
     escape_value,
     render_page,
+    ROLE_DISPLAY_LABEL,
     rows_markup,
 )
 
@@ -594,7 +595,7 @@ class WorkforceViews:
             raise UnknownScreen("unknown workforce screen", screen=screen, known=SCREENS)
         return builders[screen]()
 
-    def shell_context(self, *, actor: str = "", title: str = "") -> dict[str, Any]:
+    def shell_context(self, *, role: str = "", actor: str = "", title: str = "") -> dict[str, Any]:
         """The values ``templates/base.html`` asks for.
 
         The rail is left empty on purpose: these screens are not yet routed by the HTTP
@@ -606,13 +607,25 @@ class WorkforceViews:
         return {
             "title": title,
             "actor": actor,
-            "actor_role": actor,
-            "actor_role_label": actor,
-            "now": time_display_module.humanize(to_iso(self.clock.now())),
+            # The role title comes from dashboard's ADR-0035 blueprint map, the same one
+            # every other page shows, so this module never grows a second source of role
+            # names that could drift from the org chart.
+            "actor_role": role,
+            "actor_role_label": ROLE_DISPLAY_LABEL.get(role, role),
+            # The shell substitutes this slot directly, so a plain string here would show
+            # the reader the ``<time>`` element as text. ``humanize`` returns markup-or-None;
+            # falling back to the escaped raw stamp keeps the slot honest when it declines.
+            "now": self._clock_slot(),
             "schema_version": applied_version(self.conn) or "",
             "nav": Markup(""),
             "read_only_banner": READ_ONLY_BADGE,
         }
+
+    def _clock_slot(self) -> Any:
+        """The ``waktu`` slot of the shell: time element, or the escaped stamp as a fallback."""
+        stamp = to_iso(self.clock.now())
+        rendered = time_display_module.humanize(stamp)
+        return Markup(rendered) if rendered is not None else escape_value(stamp)
 
     def render(
         self,
@@ -630,6 +643,6 @@ class WorkforceViews:
         """
         if role and screen not in screens_for_role(role):
             raise UnknownScreen("this role may not open that screen", screen=screen, role=role)
-        context = self.shell_context(actor=actor, title=title)
+        context = self.shell_context(role=role, actor=actor, title=title)
         context.update(self.context(screen))
         return render_page(screen, context, templates_dir=self.templates_dir)
