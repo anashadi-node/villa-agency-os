@@ -331,6 +331,15 @@ make workforce-language                      # 0 temuan di src/workforce/*.py + 
 Kontrol negatif gate katalog (dijalankan, bukan diasumsikan): satu kata `tidak` disisipkan ke
 katalog → skrip keluar **1** (`11 > 9`), berkas dikembalikan → keluar **0**.
 
+**Tema Bale-UI menuntut halaman baru punya identitasnya sendiri.** `make check` pertama untuk T2.6
+gagal tepat di sini: `test_every_page_has_its_own_hue_and_kicker` menolak `workforce_supervisor`,
+`workforce_finance`, dan `workforce_owner` sebagai "halaman tanpa rona". Itu bukan rintangan untuk
+dilewati — halaman yang tidak bisa dibedakan dari halaman lain adalah keluhan yang memang ingin
+dicegah tes ini. Ketiganya diberi rona sendiri (`--h: 175` / `240` / `305`) dan kicker sendiri, lalu
+diukur ulang oleh tes kontras WCAG AA di mode gelap **dan** terang. Kicker ditulis dalam bahasa
+Inggris karena begitulah konvensi `base.html` (kicker halaman lain pun Inggris), sehingga pin bahasa
+shell tidak bergeser.
+
 **Batas yang jujur (belum selesai di T2.6):**
 
 1. Layar ini **belum dirutekan** dashboard HTTP: `views.render()` menghasilkan halaman utuh, tetapi
