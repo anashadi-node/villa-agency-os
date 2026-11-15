@@ -334,7 +334,7 @@ def test_work_summary_rejects_impossible_input():
 def test_minutes_without_a_day_are_flagged_as_broken_evidence():
     with pytest.raises(InvalidWorkSummary) as excinfo:
         work(days_worked=0, regular_minutes=480)
-    assert "tanpa satu hari pun" in str(excinfo.value)
+    assert "no day recorded" in str(excinfo.value)
 
 
 # --------------------------------------------------------------------------------------
