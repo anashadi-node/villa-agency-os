@@ -489,6 +489,252 @@ footer::before {
   .empty.banner { background: rgba(223,176,84,.12); }
 }
 
+/* 8. bale kendali — control-room layer ------------------------------------------
+   Pure CSS over the existing markup (CSP stays `default-src 'none'`: no script,
+   no image, no web font). Each page gets its own hue; every colour pair is
+   asserted by tests/test_ui_contrast.py. Colour is never the only signal: state
+   cells carry a pattern + word, KPI tiles carry a text tag. */
+body {
+  --h: 160;
+  --acc:      hsl(var(--h) 58% 66%);
+  --acc-soft: hsl(var(--h) 55% 55% / .13);
+  --acc-line: hsl(var(--h) 55% 58% / .42);
+  --tile:     linear-gradient(160deg, hsl(var(--h) 30% 16% / .92), rgba(13,19,18,.92) 62%);
+  --cell-book-bg: hsl(var(--h) 46% 24%);  --cell-book-fg: hsl(var(--h) 80% 90%);
+  --cell-hold-fg: #f0c872;  --cell-hold-a: rgba(223,176,84,.26); --cell-hold-b: rgba(223,176,84,.08);
+  --cell-unk-fg:  #94a89d;  --cell-unk-line: rgba(160,196,178,.20);
+  --tone-ok: #5cc98f; --tone-warn: #e6b95f; --tone-bad: #f0807a;
+}
+nav.nav a { --acc: hsl(var(--h) 58% 66%); }
+@media (prefers-color-scheme: light) {
+  body, nav.nav a { --acc: hsl(var(--h) 64% 27%); }
+  body {
+    --acc-soft: hsl(var(--h) 55% 40% / .10);
+    --acc-line: hsl(var(--h) 55% 32% / .38);
+    --tile:     linear-gradient(160deg, hsl(var(--h) 40% 96%), #ffffff 62%);
+    --cell-book-bg: hsl(var(--h) 55% 28%);  --cell-book-fg: #ffffff;
+    --cell-hold-fg: #6b4608;  --cell-hold-a: rgba(180,120,20,.30); --cell-hold-b: rgba(180,120,20,.10);
+    --cell-unk-fg:  #51655b;  --cell-unk-line: rgba(30,60,48,.20);
+    --tone-ok: #1e7a4c; --tone-warn: #7a5210; --tone-bad: #a3322d;
+  }
+}
+
+/* 8.1 one hue per page: body picks it from the page marker, the rail link keeps its own */
+body:has([data-page="command_center"]), a[data-nav="command_center"] { --h: 160; }
+body:has([data-page="cases"]),  body:has([data-page="case_detail"]), a[data-nav="cases"] { --h: 200; }
+body:has([data-page="inventory"]),  a[data-nav="inventory"]  { --h: 140; }
+body:has([data-page="finance"]),    a[data-nav="finance"]    { --h: 42; }
+body:has([data-page="operations"]), a[data-nav="operations"] { --h: 18; }
+body:has([data-page="approvals"]),  a[data-nav="approvals"]  { --h: 275; }
+body:has([data-page="properties"]), a[data-nav="properties"] { --h: 95; }
+body:has([data-page="marketing"]),  a[data-nav="marketing"]  { --h: 335; }
+body:has([data-page="channels"]),   a[data-nav="channels"]   { --h: 215; }
+body:has([data-page="shadow_eval"]),a[data-nav="shadow_eval"]{ --h: 255; }
+body:has([data-page="outbox"]),     a[data-nav="outbox"]     { --h: 185; }
+body:has([data-page="audit"]),      a[data-nav="audit"]      { --h: 55; }
+
+/* 8.2 page hero: kicker + display title + ambient glow in the page hue */
+main::before {
+  content: ""; position: absolute; z-index: -1; left: 0; right: 0; top: 0; height: 300px;
+  background: radial-gradient(640px 240px at 14% 0, var(--acc-soft), transparent 72%);
+  pointer-events: none;
+}
+section[data-page]::before {
+  display: block; margin: 2px 0 0; color: var(--acc);
+  font-size: 11px; font-weight: 700; letter-spacing: 1.6px; text-transform: uppercase;
+}
+section[data-page="command_center"]::before { content: "Overview · today's pulse"; }
+section[data-page="cases"]::before           { content: "Reservations & guests · all cases"; }
+section[data-page="case_detail"]::before     { content: "Reservations & guests · case detail"; }
+section[data-page="inventory"]::before       { content: "Reservations & guests · availability evidence"; }
+section[data-page="operations"]::before      { content: "Field operations · tasks & incidents"; }
+section[data-page="finance"]::before         { content: "Finance · money trail"; }
+section[data-page="approvals"]::before       { content: "Approvals & compliance · human decisions"; }
+section[data-page="audit"]::before           { content: "Approvals & compliance · audit trail"; }
+section[data-page="properties"]::before      { content: "Property & partnerships · portfolio"; }
+section[data-page="marketing"]::before       { content: "Commercial & marketing · site readiness"; }
+section[data-page="channels"]::before        { content: "Technology & channels · inbound messages"; }
+section[data-page="outbox"]::before          { content: "Technology & channels · integrations"; }
+section[data-page="shadow_eval"]::before     { content: "Technology & channels · AI quality (shadow)"; }
+section[data-page] > h2:first-of-type {
+  margin: 4px 0 18px; font-size: clamp(25px, 2.6vw, 34px); line-height: 1.12; font-weight: 700;
+  letter-spacing: -.4px; text-transform: none; color: var(--ink);
+  font-family: ui-serif, Georgia, "Times New Roman", serif;
+}
+section[data-page] > h2:first-of-type::before {
+  width: 12px; height: 12px; flex-basis: 12px; border-radius: 3px; background: var(--acc); opacity: 1;
+}
+section[data-page] > h2:first-of-type::after { background: linear-gradient(90deg, var(--acc-line), transparent); }
+main section > h2:not(:first-of-type)::before { background: var(--acc); }
+
+/* 8.3 command center: KPI table becomes a tile wall */
+table[data-table="kpi"] {
+  display: block; background: none; border: 0; box-shadow: none; overflow: visible; margin: 6px 0 10px;
+}
+table[data-table="kpi"] thead {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
+table[data-table="kpi"] tbody { display: grid; grid-template-columns: repeat(auto-fill, minmax(214px, 1fr)); gap: 14px; }
+table[data-table="kpi"] tr {
+  --tone: var(--acc); --tag: "";
+  position: relative; display: grid; gap: 2px 10px; padding: 13px 16px 12px 19px; overflow: hidden;
+  grid-template-columns: 1fr auto; grid-template-areas: "lab tag" "val val" "note note";
+  background: var(--tile); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--shadow); animation: rise .5s var(--ease) both;
+}
+table[data-table="kpi"] tr::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--tone);
+}
+table[data-table="kpi"] tr::after {
+  content: var(--tag); grid-area: tag; align-self: start; color: var(--tone);
+  font-size: 9.5px; font-weight: 700; letter-spacing: .9px; text-transform: uppercase; white-space: nowrap;
+}
+table[data-table="kpi"] td { display: block; padding: 0; border: 0; background: none !important; }
+table[data-table="kpi"] td:first-child {
+  grid-area: lab; color: var(--ink-soft); font-size: 12.5px; font-weight: 600; line-height: 1.35;
+}
+table[data-table="kpi"] td.num {
+  grid-area: val; width: auto; text-align: left; padding: 0;
+  font: 700 clamp(34px, 3.4vw, 46px)/1.05 ui-serif, Georgia, "Times New Roman", serif;
+  font-variant-numeric: tabular-nums; letter-spacing: -1px; color: var(--ink);
+}
+table[data-table="kpi"] td.num + td { grid-area: note; padding: 0; font-size: 11.5px; }
+/* tone: zero = calm, non-zero = look here. Rules live in the data, never in a prompt. */
+table[data-table="kpi"] tr[data-value="0"]:not([data-kpi="cases_by_status"]):not([data-kpi="audit_chain"]) {
+  --tone: var(--tone-ok); --tag: "● clear";
+}
+table[data-table="kpi"] tr:is([data-kpi="open_sla_breaches"], [data-kpi="unmatched_payments"],
+    [data-kpi="late_ops_tasks"], [data-kpi="open_incidents"]):not([data-value="0"]):not([data-hidden]) {
+  --tone: var(--tone-bad); --tag: "▲ act now";
+}
+table[data-table="kpi"] tr:is([data-kpi="pending_approvals"], [data-kpi="holds_expiring_today"],
+    [data-kpi="unpaid_invoices"]):not([data-value="0"]):not([data-hidden]) {
+  --tone: var(--tone-warn); --tag: "◆ watch";
+}
+/* audit_chain: data-value is the EVENT COUNT; health is data-chain (OK | BROKEN). Say only what the data says. */
+table[data-table="kpi"] tr[data-kpi="audit_chain"] { --tone: var(--tone-ok); --tag: "● verified OK"; }
+table[data-table="kpi"] tr[data-kpi="audit_chain"]:not([data-chain="OK"]) { --tone: var(--tone-bad); --tag: "▲ check chain"; }
+/* hidden for this role (kpi_row data-hidden="1", value shown as an em dash): neutral, never red */
+table[data-table="kpi"] tr[data-hidden] { --tone: var(--muted); --tag: "— not available"; opacity: .72; }
+table[data-table="kpi"] tr:nth-child(2) { animation-delay: .04s; } table[data-table="kpi"] tr:nth-child(3) { animation-delay: .08s; }
+table[data-table="kpi"] tr:nth-child(4) { animation-delay: .12s; } table[data-table="kpi"] tr:nth-child(5) { animation-delay: .16s; }
+table[data-table="kpi"] tr:nth-child(6) { animation-delay: .20s; } table[data-table="kpi"] tr:nth-child(7) { animation-delay: .24s; }
+table[data-table="kpi"] tr:nth-child(8) { animation-delay: .28s; } table[data-table="kpi"] tr:nth-child(9) { animation-delay: .32s; }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* 8.4 unit calendar: a heat strip, not a grid of words */
+table[data-table="calendar"] { margin-top: 12px; }
+table[data-table="calendar"] th[data-day] { text-align: center; font-size: 10px; letter-spacing: .3px; padding: 9px 4px; }
+table[data-table="calendar"] td[data-state] {
+  text-align: center; font-size: 9.5px; font-weight: 700; letter-spacing: .8px;
+  padding: 11px 4px; border-left: 1px solid var(--line); transition: filter .15s var(--ease);
+}
+table[data-table="calendar"] td[data-state]:hover { filter: brightness(1.18); }
+table[data-table="calendar"] td[data-state="BOOKED"] { background: var(--cell-book-bg) !important; color: var(--cell-book-fg); }
+table[data-table="calendar"] td[data-state="HOLD"] {
+  background: repeating-linear-gradient(135deg, var(--cell-hold-a) 0 6px, var(--cell-hold-b) 6px 12px) !important;
+  color: var(--cell-hold-fg);
+}
+table[data-table="calendar"] td[data-state="UNKNOWN"] {
+  background: repeating-linear-gradient(45deg, transparent 0 7px, var(--cell-unk-line) 7px 8px) !important;
+  color: var(--cell-unk-fg); font-weight: 500;
+}
+p[data-note="legend"] {
+  margin: 0 0 6px; padding: 10px 14px; max-width: none; color: var(--ink-soft);
+  border: 1px solid var(--line); border-left: 3px solid var(--acc); border-radius: var(--radius-sm);
+  background: var(--acc-soft); font-size: 12.5px;
+}
+
+/* 8.5 tables, fields, forms, empties in the page hue */
+tbody tr:hover td { background: var(--acc-soft); }
+tbody tr td:first-child { box-shadow: inset 2px 0 0 transparent; transition: box-shadow .15s var(--ease); }
+tbody tr:hover td:first-child { box-shadow: inset 2px 0 0 var(--acc); }
+th { border-bottom-color: var(--acc-line); }
+dl.fields { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+dl.fields .field { border-top: 2px solid var(--acc); }
+dl.fields dd { font-size: 17px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.empty::before { content: "○ "; color: var(--acc); font-weight: 700; }
+form.card { border-left: 3px solid var(--acc); }
+button, .cta { background: linear-gradient(180deg, hsl(var(--h) 52% 60%), hsl(var(--h) 52% 46%)); color: #04110d; }
+a { color: var(--acc); }
+
+/* 8.6 desktop: the header becomes a left rail (index of the whole agency) */
+@media (min-width: 1000px) {
+  body { display: grid; grid-template-columns: 252px minmax(0, 1fr); grid-template-rows: 1fr auto; }
+  header {
+    grid-column: 1; grid-row: 1 / span 2; position: sticky; top: 0; align-self: start;
+    height: 100vh; overflow-y: auto; overflow-x: hidden; padding: 22px 16px 26px; border-bottom: 0;
+    border-right: 1px solid var(--line);
+  }
+  header::after {
+    left: auto; right: -1px; top: 0; bottom: 0; width: 1px; height: auto;
+    background: linear-gradient(180deg, transparent, var(--gold) 22%, transparent 70%); opacity: .55;
+  }
+  main   { grid-column: 2; grid-row: 1; padding: 26px 30px 72px; min-width: 0; overflow-x: auto; }
+  main th { white-space: normal; vertical-align: bottom; }
+  main th, main td { padding: 8px 9px; }
+  footer { grid-column: 2; grid-row: 2; width: 100%; }
+  h1 { font-size: 17px; line-height: 1.2; }
+  .principal { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 5px; margin: 12px 0 2px; font-size: 12px; }
+  .principal .pf { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .principal .pk { flex: 0 0 48px; color: var(--muted); font-size: 9.5px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+  .principal .raw-role { display: none; }
+  .principal code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; font-size: 11.5px; padding: 1px 5px; }
+  nav.nav { flex-direction: column; flex-wrap: nowrap; gap: 9px; margin-top: 14px; padding-top: 14px; }
+  nav.nav .navgroup { flex-direction: column; align-items: stretch; gap: 1px; }
+  nav.nav .navgroup-label { color: var(--muted); font-size: 9.5px; margin: 0 0 3px 6px; }
+  nav.nav .navgroup > a, nav.nav .navgroup > span.badge { display: flex; align-items: center; gap: 10px; border-radius: 10px; }
+  nav.nav a {
+    padding: 5px 10px; background: transparent; border-color: transparent; font-size: 13px; position: relative;
+  }
+  nav.nav a::before {
+    content: "◆"; flex: 0 0 auto; width: 16px; font-size: 11px; text-align: center; color: var(--acc);
+  }
+  nav.nav a[data-nav="command_center"] { background: transparent; border-color: transparent; color: var(--ink-soft); font-weight: 500; }
+  nav.nav a:hover { background: var(--acc-soft); border-color: var(--acc-line); color: var(--ink); box-shadow: none; transform: none; }
+  body:has([data-page="command_center"]) a[data-nav="command_center"],
+  body:has([data-page="cases"]) a[data-nav="cases"],
+  body:has([data-page="case_detail"]) a[data-nav="cases"],
+  body:has([data-page="inventory"]) a[data-nav="inventory"],
+  body:has([data-page="operations"]) a[data-nav="operations"],
+  body:has([data-page="finance"]) a[data-nav="finance"],
+  body:has([data-page="approvals"]) a[data-nav="approvals"],
+  body:has([data-page="audit"]) a[data-nav="audit"],
+  body:has([data-page="properties"]) a[data-nav="properties"],
+  body:has([data-page="marketing"]) a[data-nav="marketing"],
+  body:has([data-page="channels"]) a[data-nav="channels"],
+  body:has([data-page="outbox"]) a[data-nav="outbox"],
+  body:has([data-page="shadow_eval"]) a[data-nav="shadow_eval"] {
+    background: linear-gradient(90deg, var(--acc-soft), transparent); border-color: var(--acc-line);
+    color: var(--ink); font-weight: 700; box-shadow: inset 3px 0 0 var(--acc);
+  }
+  nav.nav a[data-nav="command_center"]::before { content: "◉"; }
+  nav.nav a[data-nav="cases"]::before        { content: "▤"; }
+  nav.nav a[data-nav="inventory"]::before    { content: "▦"; }
+  nav.nav a[data-nav="operations"]::before   { content: "◧"; }
+  nav.nav a[data-nav="finance"]::before      { content: "◈"; }
+  nav.nav a[data-nav="approvals"]::before    { content: "◐"; }
+  nav.nav a[data-nav="audit"]::before        { content: "◫"; }
+  nav.nav a[data-nav="properties"]::before   { content: "▣"; }
+  nav.nav a[data-nav="marketing"]::before    { content: "◭"; }
+  nav.nav a[data-nav="channels"]::before     { content: "◍"; }
+  nav.nav a[data-nav="outbox"]::before       { content: "◨"; }
+  nav.nav a[data-nav="shadow_eval"]::before  { content: "◌"; }
+}
+@media (max-width: 999px) {
+  header { position: static; }
+  .principal .pf { display: inline-flex; align-items: center; gap: 6px; margin-right: 10px; }
+  .principal .pk { color: var(--muted); font-size: 11px; }
+  table[data-table="kpi"] tbody { grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 10px; }
+  table[data-table="calendar"] { display: block; overflow-x: auto; white-space: nowrap; }
+}
+@media print {
+  body { display: block; }
+  main::before, section[data-page]::before { display: none; }
+  table[data-table="kpi"] tr { background: #fff; box-shadow: none; animation: none; }
+  header { height: auto; position: static; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
   nav.nav a:hover, button:hover, .cta:hover { transform: none; }
@@ -528,11 +774,11 @@ footer::before {
     <h1>Villa Agency OS — Dashboard Internal</h1>
   </div>
   <p class="principal">
-    identitas <code data-actor="1">{{ actor }}</code> ·
-    peran <span class="role-pill" data-role="1">{{ actor_role_label }}</span> <code style="opacity:.6">({{ actor_role }})</code> ·
-    waktu <code>{{ now }}</code> ·
-    skema <code>{{ schema_version }}</code> ·
-    {{ read_only_banner }}
+    <span class="pf"><span class="pk">identitas</span> <code data-actor="1">{{ actor }}</code></span>
+    <span class="pf"><span class="pk">peran</span> <span class="role-pill" data-role="1">{{ actor_role_label }}</span> <code class="raw-role" style="opacity:.6">({{ actor_role }})</code></span>
+    <span class="pf"><span class="pk">waktu</span> <code>{{ now }}</code></span>
+    <span class="pf"><span class="pk">skema</span> <code>{{ schema_version }}</code></span>
+    <span class="pf">{{ read_only_banner }}</span>
   </p>
   {{ nav }}
 </header>
