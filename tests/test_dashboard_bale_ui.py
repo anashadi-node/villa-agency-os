@@ -78,9 +78,16 @@ def test_page_hues_meet_wcag_aa_on_canvas_and_card(scheme: str) -> None:
 
 
 def test_formula_matches_css() -> None:
-    """Kontrol: rumus aksen di test sama dengan di CSS, supaya test tidak mengukur warna lain."""
-    assert "--acc:      hsl(var(--h) 58% 66%)" in BASE
-    assert "body, nav.nav a { --acc: hsl(var(--h) 64% 27%); }" in BASE
+    """Kontrol: rumus aksen di test sama dengan di CSS, supaya test tidak mengukur warna lain.
+
+    Aksen kini dirakit dari satu rumus (``--acc-s``/``--acc-l``) supaya rona
+    halaman tetap satu sumber dan mode gelap/terang hanya mengganti dua angka.
+    Test ini memastikan angka yang dipakai perhitungan kontras di atas memang
+    angka yang dipakai CSS — bukan salinan yang kebetulan mirip.
+    """
+    assert "--acc:      hsl(var(--h) var(--acc-s) var(--acc-l))" in BASE
+    assert "--acc-s: 58%; --acc-l: 66%;" in BASE, "skalar aksen mode gelap berubah — ukur ulang kontras"
+    assert "--acc-s: 64%; --acc-l: 27%;" in BASE, "skalar aksen mode terang berubah — ukur ulang kontras"
 
 
 def test_state_tones_meet_aa_on_tiles() -> None:

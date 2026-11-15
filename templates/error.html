@@ -1,6 +1,34 @@
 <section data-page="error" data-status="{{ status }}" data-code="{{ error_code }}">
   <h2>Permintaan ditolak</h2>
-  <p class="empty banner" data-error="1">{{ status }} — {{ error_code }}: {{ error_message }}</p>
-  <p class="muted">Rincian teknis: <code>{{ error_details }}</code></p>
-  <p class="muted">Kembali ke <a href="/" data-nav="command_center">Command Center</a>.</p>
+  <p class="lede">The dashboard reads the database only for a caller that presents a token.
+  This request arrived without one, so nothing was read and nothing was changed.</p>
+
+  <div class="errorpanel">
+    <div class="errorbody">
+      <p class="empty banner" data-error="1">{{ status }} — {{ error_code }}: {{ error_message }}</p>
+
+      <ol class="steps">
+        <li><strong>Send the token header.</strong>
+          Every request needs <code>X-Dashboard-Token</code>; the value lives in the token
+          file the server was started with.</li>
+        <li><strong>Check the request reached the right port.</strong>
+          The dashboard binds to loopback only, and a different port is a different server.</li>
+        <li><strong>Test without a token first.</strong>
+          <code>/healthz</code> answers unauthenticated, so it separates "server down" from
+          "token missing".</li>
+      </ol>
+
+      <pre class="snippet"><code>curl -s -H "X-Dashboard-Token: $VILLA_DASHBOARD_TOKEN" \
+  http://127.0.0.1:8085/inventory</code></pre>
+
+      <details class="tech">
+        <summary>Technical details</summary>
+        <p class="muted">Error class and payload as reported by the kernel:</p>
+        <pre class="snippet"><code>{{ error_details }}</code></pre>
+      </details>
+
+      <p class="actions"><a class="cta" href="/" data-nav="command_center">Back to Command Center</a></p>
+    </div>
+    <div class="errorstatus" aria-hidden="true">{{ status }}</div>
+  </div>
 </section>
