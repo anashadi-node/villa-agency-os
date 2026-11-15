@@ -95,6 +95,7 @@ __all__ = [
     "DEFAULT_HOST",
     "KPI_KEYS",
     "PAGE_ROLES",
+    "READ_ONLY_BADGE",
     "ROLES",
     "Dashboard",
     "DashboardError",
@@ -118,6 +119,7 @@ __all__ = [
     "mask_email",
     "redact_pii",
     "render_page",
+    "rows_markup",
     "resolve_bind",
     "serve",
 ]
@@ -698,6 +700,11 @@ class Markup(str):
     __slots__ = ()
 
 
+#: The "read-only" badge every read-only page shows. One definition, so the workforce
+#: screens (src/workforce/views.py) do not have to carry their own copy of the words.
+READ_ONLY_BADGE = Markup('<span class="tag" data-mode="read-only">mode baca-saja</span>')
+
+
 def escape_value(value: Any) -> str:
     """Escape anything on its way into the page; :class:`Markup` passes through."""
     if isinstance(value, Markup):
@@ -832,6 +839,45 @@ def table(
         f'<table {escape_value(attrs)}><thead><tr>{head}</tr></thead>'
         f"<tbody>{body}</tbody></table>"
     )
+
+
+def rows_markup(
+    rows: Iterable[Sequence[Any]],
+    *,
+    columns: int,
+    num: Sequence[int] = (),
+) -> Markup:
+    """Table body rows with escaped cells, **without** a header row.
+
+    :func:`table` also prints its headers, which are words a reader sees. The workforce
+    screens keep every visible word in ``templates/workforce_*.html`` so that no page
+    copy lives in Python; they therefore need the body alone. Escaping and the numeric
+    column classes are identical to :func:`table` — a numeric column is declared by the
+    caller, never guessed from the value.
+
+    ``columns`` is the width of the table the caller has in the template. It is used
+    only for the empty case, which renders one row spanning the whole table with an em
+    dash: an empty table says "nothing here" without this module inventing a sentence.
+    """
+    materialised = [list(row) for row in rows]
+    numeric = frozenset(num)
+    if not materialised:
+        return Markup(
+            f'<tbody><tr><td class="empty" colspan="{int(columns)}">—</td></tr></tbody>'
+        )
+
+    def cell_class(index: int) -> str:
+        return ' class="num"' if index in numeric else ""
+
+    body = "".join(
+        "<tr>"
+        + "".join(
+            f"<td{cell_class(index)}>{_cell(cell)}</td>" for index, cell in enumerate(row)
+        )
+        + "</tr>"
+        for row in materialised
+    )
+    return Markup(f"<tbody>{body}</tbody>")
 
 
 def definition_list(items: Iterable[tuple[str, Any]]) -> Markup:
@@ -1516,9 +1562,7 @@ class Dashboard:
             "now": _stamp(to_iso(self.clock.now())),
             "schema_version": self.schema_version(),
             "nav": nav_links(principal.role),
-            "read_only_banner": Markup(
-                '<span class="tag" data-mode="read-only">mode baca-saja</span>'
-            ),
+            "read_only_banner": READ_ONLY_BADGE,
         }
 
     def render(self, page: str, principal: Principal, context: Mapping[str, Any]) -> str:

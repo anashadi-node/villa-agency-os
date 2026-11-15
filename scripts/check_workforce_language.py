@@ -24,6 +24,7 @@ menandai contoh Indonesia yang nyata.
 from __future__ import annotations
 
 import ast
+import json
 import re
 import sys
 from pathlib import Path
@@ -139,6 +140,35 @@ def indonesian_literals(source: str) -> list[tuple[int, str, str]]:
     return sorted(hits)
 
 
+#: Katalog label layar (T2.6) -> jumlah kata Indonesia terukur.
+#:
+#: Berkasnya sengaja di luar jangkauan ratchet global (yang hanya membaca ``src/**/*.py``,
+#: ``templates/*.html`` dan ``templates/messages/*.json``). Karena itu jumlahnya dipaku **di
+#: sini**: tanpa pin, copy Indonesia di layar staf bisa tumbuh tanpa tercatat siapa pun —
+#: persis kelemahan yang membuat ratchet berhenti jadi ratchet.
+CATALOGUE = REPO_ROOT / "src" / "workforce" / "screen_labels.json"
+RECORDED_CATALOGUE = {"screen_labels.json": 9}
+
+
+def catalogue_hits() -> int:
+    """Kata Indonesia di **nilai** katalog. Nama grup dan kunci tidak dihitung.
+
+    Mengembalikan -1 kalau berkasnya tidak terbaca atau tidak bisa di-parse: katalog yang
+    rusak dihitung sebagai temuan, bukan sebagai bersih.
+    """
+    try:
+        raw = json.loads(CATALOGUE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return -1
+    if not isinstance(raw, dict):
+        return -1
+    hits = 0
+    for values in raw.values():
+        if isinstance(values, dict):
+            hits += sum(len(_WORDS.findall(str(text))) for text in values.values())
+    return hits
+
+
 def scan() -> list[str]:
     findings: list[str] = []
     for path in sorted(TARGET.glob("*.py")):
@@ -149,6 +179,19 @@ def scan() -> list[str]:
 
 def main() -> int:
     findings = scan()
+    measured = catalogue_hits()
+    allowed = RECORDED_CATALOGUE[CATALOGUE.name]
+    if measured < 0:
+        findings.append(f"{CATALOGUE.name}: unreadable or not a JSON object of label groups")
+    elif measured > allowed:
+        findings.append(
+            f"{CATALOGUE.name}: {measured} > {allowed} — a label added on purpose is fine, but"
+            " raise the pin in this file in the same commit so the decision is recorded"
+        )
+    elif measured < allowed:
+        findings.append(
+            f"{CATALOGUE.name}: {measured} < {allowed} — lower the pin so the progress stays visible"
+        )
     if findings:
         print("FINDINGS: Indonesian text in the workforce cluster (ADR-0011 §55):")
         for item in findings:
@@ -157,6 +200,7 @@ def main() -> int:
         return 1
     files = len(list(TARGET.glob("*.py")))
     print(f"OK: 0 Indonesian strings across {files} files in src/workforce/*.py")
+    print(f"OK: {CATALOGUE.name} holds {allowed} Indonesian strings, exactly as recorded")
     return 0
 
 

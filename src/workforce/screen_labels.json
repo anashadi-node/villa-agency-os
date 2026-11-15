@@ -1,0 +1,39 @@
+{
+  "_note": [
+    "Data, bukan kode: kata yang dibaca staf di layar workforce (T2.6).",
+    "Alasannya sama dengan templates/messages/id-ID.json (ADR-0037): penerima layar ini",
+    "berada di Bali dan Yogyakarta, dan katalog bisa disunting tanpa menyentuh Python.",
+    "src/workforce/*.py wajib tetap 0 kata Indonesia (ADR-0011 55) -- karena itu kata-kata",
+    "bermasalah itu hidup di sini, dan scripts/check_workforce_language.py memaku jumlahnya",
+    "supaya pertumbuhannya tercatat terbuka, bukan menyelinap.",
+    "Kode tak dikenal sengaja tidak punya kata: selnya dibiarkan kosong, bukan dikarang."
+  ],
+  "attendance_state": {
+    "PRESENT": "Hadir",
+    "LATE": "Terlambat",
+    "ABSENT": "Tidak hadir",
+    "INCOMPLETE": "Absen tidak lengkap",
+    "LEAVE": "Cuti",
+    "HOLIDAY": "Libur",
+    "NOT_CLOCKED_IN": "Belum absen masuk"
+  },
+  "timesheet_status": {
+    "OPEN": "Belum dikirim",
+    "SUBMITTED": "Menunggu tanda tangan",
+    "APPROVED": "Sudah disetujui",
+    "REJECTED": "Dikembalikan",
+    "LOCKED": "Terkunci"
+  },
+  "run_status": {
+    "DRAFT": "Draf",
+    "CALCULATED": "Sudah dihitung",
+    "APPROVED": "Menunggu pembayaran",
+    "PAID": "Sudah dibayar",
+    "VOID": "Dibatalkan"
+  },
+  "run_shape": {
+    "MONTHLY": "Bulanan",
+    "WEEKLY": "Pekanan",
+    "UNKNOWN": "Belum ada slip"
+  }
+}

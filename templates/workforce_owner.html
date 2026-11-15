@@ -1,0 +1,36 @@
+<section data-page="workforce_owner">
+  <h2>Pemilik — tenaga kerja dan biaya</h2>
+
+  <dl class="fields">
+    <div class="field"><dt>Orang aktif</dt><dd class="num">{{ staff_active }}</dd></div>
+    <div class="field"><dt>Orang dibekukan</dt><dd class="num">{{ staff_suspended }}</dd></div>
+    <div class="field"><dt>Properti terdaftar</dt><dd class="num">{{ properties }}</dd></div>
+    <div class="field"><dt>Upah bersih sudah dibayar</dt><dd class="num">{{ paid_net }}</dd></div>
+    <div class="field"><dt>Potongan</dt><dd class="num">{{ deductions }}</dd></div>
+    <div class="field"><dt>Proses upah sudah dibayar</dt><dd class="num">{{ runs_paid }}</dd></div>
+    <div class="field"><dt>Proses upah belum selesai</dt><dd class="num">{{ runs_unsettled }}</dd></div>
+    <div class="field"><dt>Hari kehadiran perlu diperiksa</dt><dd class="num">{{ days_needing_attention }}</dd></div>
+  </dl>
+
+  <h3>Biaya upah per properti</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Properti</th>
+        <th class="num">Jumlah orang</th>
+        <th class="num">Jumlah slip</th>
+        <th class="num">Upah kotor</th>
+        <th class="num">Upah bersih</th>
+      </tr>
+    </thead>
+    {{ property_rows }}
+  </table>
+
+  <p class="muted">{{ money_note }}</p>
+
+  <h3>Layar lain</h3>
+  <nav>
+    <a href="#workforce_supervisor">Tenaga kerja — hari ini</a>
+    <a href="#workforce_finance">Keuangan — jalankan upah</a>
+  </nav>
+</section>
