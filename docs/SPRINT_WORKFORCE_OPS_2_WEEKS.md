@@ -94,6 +94,8 @@ Setiap tugas punya **pemilik peran**, **artefak**, **DoD**, dan **perintah bukti
 | T1.5 | **Selesai** | `src/workforce/tasks.py` + `tests/test_workforce_tasks.py` (28 uji): penugasan terikat identitas staf aktif, staf nonaktif/asing properti ditolak, `DROPPED` wajib alasan ≥3 karakter, penugasan `DONE` tidak bisa dibuka lagi |
 | T1.6 | Selesai (sudah ada) | `tests/test_workforce_null_semantics.py` |
 | T1.7 | **Selesai** (2026-11-15) | `tests/test_workforce_gate_g1.py` (13 uji: 10 di SQLite, 3 di PostgreSQL sungguhan) — lihat §4.1 |
+| T2.1 | **Selesai** (2026-11-15) | `src/workforce/payroll_policy.py` + 15 uji pada `tests/test_workforce_payroll_calc.py`: jendela `[from, to)` setengah terbuka, dua versi/dua tarif pada satu tanggal = `AMBIGUOUS` (bukan "terbaru menang"), checksum kanonik menolak payload yang diubah tanpa versi baru, tarif agensi lain tidak terlihat, dan **tidak ada** angka pajak/BPJS di kode |
+| T2.2 | **Selesai** (2026-11-15) | `src/workforce/payroll_calc.py` + 20 uji: seluruh uang lewat `Decimal`, dibulatkan sekali per baris (`ROUND_HALF_UP`), batas lembur 240 mnt/hari & 1080 mnt/pekan ditolak saat dilanggar, gaji bulanan pada periode tidak penuh = `PRORATION_REQUIRED`, upah bersih negatif tidak pernah menjadi slip, setiap baris wajib `basis_note` + `policy_version_id` |
 
 Dua temuan saat T1.1–T1.2 dikerjakan, keduanya masuk ke kode dan tes:
 
@@ -152,6 +154,43 @@ Sisa celah yang dicatat jujur (utang Sprint 2, bukan klaim selesai): penulis
 PostgreSQL membuktikan **jaminan basis data**-nya (kunci + trigger), bukan eksekusi
 modul Python-nya. Menutup celah ini berarti adaptor dialek untuk lapisan SQL — ADR
 tersendiri, bukan tambahan senyap di sprint ini.
+
+### 4.2 T2.1–T2.2 — upah deterministik (2026-11-15)
+
+Yang diuji `tests/test_workforce_payroll_calc.py` (35 uji) — semuanya memakai data
+sintetis lewat SQL, tidak ada nominal upah orang sungguhan di kode:
+
+| Klaim | Uji yang memfalsifikasi |
+|---|---|
+| Jendela berlaku setengah terbuka `[from, to)` | `test_policy_window_is_half_open_at_the_seam`, `test_rate_window_end_is_exclusive` |
+| Dua versi/dua tarif pada satu tanggal **gagal keras** | `test_two_open_policy_versions_are_ambiguous_not_newest_wins`, `test_two_rates_for_one_component_on_one_date_are_ambiguous` |
+| Payload yang diubah tanpa versi baru terdeteksi | `test_policy_checksum_rejects_payload_edit_without_new_version` (dan reformat JSON bukan tamper) |
+| Orang tanpa tarif **bukan** upah nol | `test_person_without_any_rate_fails_instead_of_earning_zero` |
+| Batas lembur 240 mnt/hari & 1080 mnt/pekan mengikat | `test_overtime_over_daily_upper_bound_is_refused`, `test_weekly_upper_bound_binds_longer_periods` |
+| Pembulatan sekali, `ROUND_HALF_UP`, tanpa `float` | `test_hourly_amount_rounds_once_half_up` |
+| Gaji bulanan pada periode tidak penuh → manusia, bukan prorata tebakan | `test_monthly_salary_on_partial_month_needs_a_human_decision` |
+| Upah bersih negatif tidak pernah menjadi slip | `test_negative_net_pay_is_never_a_payslip` |
+
+Empat temuan saat T2.1–T2.2 dikerjakan:
+
+1. **`load_pay_rates` mengembalikan `{}` ketika tidak ada tarif, bukan melempar.** Itu
+   perilaku yang benar untuk pembaca per-tarif, tetapi **berbahaya** kalau dipakai
+   langsung: orang tanpa tarif akan dihitung sebagai nol. Karena itu `load_bundle`
+   wajib melempar `PayRateNotFound`, dan tes mengunci keduanya (kamus kosong **dan**
+   paket gagal). Uji awal saya menuntut `load_pay_rates` melempar — itu salah tulis
+   tes, bukan salah kode.
+2. **`DomainError` menyimpan konteks di `.details`, bukan `.context`.** Empat asersi
+   awal memakai nama yang tidak ada; diperbaiki ke `.details` supaya uji mengunci
+   kontrak primitif yang nyata, bukan nama karangan.
+3. **Ambang bonus kehadiran wajib eksplisit di payload policy.** Menebak "0 hari
+   absen" sebagai default berarti membayar/menahan bonus tanpa keputusan tertulis;
+   tanpa `attendance_bonus_max_absence_days`, perhitungan berhenti dengan
+   `PolicyPayloadInvalid`.
+4. **Iuran pemberi kerja tidak boleh menyentuh upah bersih.** Uji awal saya
+   mengharapkan bruto yang salah (memakai paket tanpa bonus); angka sebenarnya
+   Rp5.800.000 bruto → Rp5.400.000 bersih dengan potongan Rp400.000, dan
+   `BPJS_EMPLOYER` tampil di slip tanpa mengurangi net. Angka di tes diperbaiki ke
+   hasil hitung nyata, bukan sebaliknya.
 
 ### Minggu 2 — upah deterministik (H2) + tampilan (H3)
 
