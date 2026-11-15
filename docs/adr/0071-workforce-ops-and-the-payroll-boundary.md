@@ -54,6 +54,11 @@ berbeda dengan pemilik berbeda.
    lewat trigger (`trg_workforce_attendance_no_update`, `trg_workforce_attendance_no_delete`).
    Koreksi adalah **kejadian baru** bertipe `MANUAL_ADJUST` yang **wajib** membawa `evidence_ref`
    dan `actor_id` — bukan penyuntingan sejarah. Ini penerapan ADR-0004 pada domain baru.
+   Koreksi menunjuk baris yang dikoreksi lewat `supersedes_event_id` (FK ke tabel yang sama,
+   hanya sah untuk `MANUAL_ADJUST`, dan tidak boleh menunjuk dirinya sendiri). Staf serta shift
+   pada baris koreksi **diwarisi** dari baris yang dikoreksi, sehingga koreksi tidak bisa
+   memindahkan jam kerja seseorang kepada orang lain. Satu baris dikoreksi paling banyak satu
+   kali — rantai koreksi lurus, tidak bercabang.
 5. **Uang dihitung program, bukan model.** Setiap baris gaji adalah integer minor unit
    (rupiah sen), dan tabel menutup aritmetikanya sendiri:
    `CHECK (net_minor = gross_minor - deduction_minor)`, semua komponen `>= 0`. Agen AI boleh
