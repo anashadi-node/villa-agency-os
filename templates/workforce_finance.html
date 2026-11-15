@@ -1,0 +1,48 @@
+<section data-page="workforce_finance">
+  <h2>Keuangan — jalankan upah</h2>
+
+  <dl class="fields">
+    <div class="field"><dt>Jumlah proses upah</dt><dd class="num">{{ runs }}</dd></div>
+    <div class="field"><dt>Slip menunggu persetujuan</dt><dd class="num">{{ waiting_slips }}</dd></div>
+    <div class="field"><dt>Nilai yang belum selesai</dt><dd class="num">{{ unsettled }}</dd></div>
+    <div class="field"><dt>Periode paling awal</dt><dd>{{ first_period }}</dd></div>
+    <div class="field"><dt>Periode paling akhir</dt><dd>{{ last_period }}</dd></div>
+  </dl>
+
+  <h3>Semua proses upah</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Periode</th>
+        <th>Bentuk</th>
+        <th class="num">Jumlah orang</th>
+        <th class="num">Upah kotor</th>
+        <th class="num">Potongan</th>
+        <th class="num">Upah bersih</th>
+        <th>Tahap</th>
+      </tr>
+    </thead>
+    {{ run_rows }}
+  </table>
+
+  <h3>Slip menunggu persetujuan</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Nama</th>
+        <th>Periode</th>
+        <th class="num">Upah bersih</th>
+        <th>Tahap</th>
+      </tr>
+    </thead>
+    {{ approval_rows }}
+  </table>
+
+  <p class="muted">{{ money_note }}</p>
+
+  <h3>Layar lain</h3>
+  <nav>
+    <a href="#workforce_supervisor">Tenaga kerja — hari ini</a>
+    <a href="#workforce_owner">Pemilik — biaya per properti</a>
+  </nav>
+</section>

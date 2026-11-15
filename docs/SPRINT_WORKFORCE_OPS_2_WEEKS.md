@@ -285,13 +285,74 @@ Empat keputusan saat T2.4 dikerjakan:
 | T2.3 | 7 | `src/workforce/payslip.py` — tulis `workforce_payslips` + `workforce_payslip_lines`, segel `PayrollCalculation.digest()` (sha256 kanonik) ke `audit_events.evidence_ref`; `workforce_payslips` tidak punya kolom `lock_hash`, jadi segel tidak mengarang kolom baru | modul + uji | mengubah 1 baris setelah segel → terdeteksi | uji: ubah `gross`/hapus baris, `verify_seal()` menolak |
 | T2.4 | 7–8 | Alur status `DRAFT → CALCULATED → APPROVED → PAID → (VOID)`; `PAID` wajib `calculated_at` + `approved_at` | uji alur | lompat status ditolak; `VOID` tanpa alasan ditolak (regresi §1.1) | uji tabel transisi |
 | T2.5 | 8 | **Gate G2**: rekonsiliasi 0 selisih pada dataset uji 30 hari × 12 staf sintetis | laporan angka | setiap slip punya jejak rate+policy+timesheet; 0 slip tanpa jejak | skrip `scripts/workforce_reconcile.py` — **selesai 2026-11-15: 1.000 pemeriksaan, 0 selisih (30 hari x 12 staf x 2 properti), 20 uji + 11 kontrol/batas, keluar 1 saat data dirusak, masuk `make check`** (lihat §4.5) |
-| T2.6 | 8–9 | `src/workforce/views.py` — layar per peran (supervisor/finance/owner), uang IDR + USD dari `money_display` | templat + uji render | 0 istilah teknis di layar supervisor; 0 nilai uang tanpa USD | uji render + grep templat |
+| T2.6 | **Selesai** (2026-11-15) | `src/workforce/views.py` + 3 templat (`workforce_supervisor/finance/owner.html`) + katalog label `src/workforce/screen_labels.json` + 12 uji pada `tests/test_workforce_views.py`: tiga layar per peran, uang selalu lewat `money_display` (IDR dulu, referensi USD hanya bila policy menerbitkan kurs yang masih segar), layar read-only, gerbang peran *deny by default*, dan 0 istilah mesin di layar supervisor — lihat §4.6 | templat + uji render | 0 istilah teknis di layar supervisor; 0 nilai uang tanpa USD | uji render + grep templat |
 | T2.7 | 9 | Tema premium: token warna, tipografi, motif etnik-alam, kontras AA, `prefers-reduced-motion` | `src/static/theme.css` + uji kontras | ≥8 pasangan warna lulus AA; animasi mati saat reduced-motion | skrip uji kontras (dibuat hari itu) |
 | T2.8 | 10 | **Gate G3 + G4**: suite penuh hijau, `make check`, audit PII, dokumen status diperbarui | log + PR | 0 gagal; 0 PII; angka status cocok kenyataan | `pytest -q`, `make check`, `git diff --stat` |
 
 **Beban:** ±6,5 hari untuk jalur kerja, ±3 hari untuk upah, ±2 hari untuk tampilan, ±1 hari buffer. Buffer **tidak** dipakai untuk menambah fitur.
 
 ---
+
+### 4.6 T2.6 — tiga layar, satu kebenaran uang (2026-11-15)
+
+Tiga orang melihat fakta upah yang sama dan butuh tiga gambar berbeda: **supervisor** melihat
+shift yang sedang berjalan, **keuangan** melihat uangnya, **pemilik** melihat biaya per properti.
+Modulnya `src/workforce/views.py`; templatnya tiga berkas `templates/workforce_*.html`; katalog
+kata-katanya `src/workforce/screen_labels.json`.
+
+| Klaim | Uji yang menguncinya | Angka/hasil nyata |
+|---|---|---|
+| Uang selalu IDR dulu, referensi USD menempel di baris yang sama | `test_every_rupiah_figure_carries_a_dollar_reference` | 3 layar, setiap `IDR x` diikuti `(≈ USD y)` |
+| Tanpa kurs terbitan: rupiah tetap, USD hilang, halaman mengatakan sebabnya | `test_without_a_published_rate_the_rupiah_stays_and_the_dollar_goes` | `IDR` ada, `≈ USD` tidak ada, `NO_RATE_NOTE` tampil |
+| Kurs kedaluwarsa tidak dipakai (batas 48 jam diuji, bukan diasumsikan) | `test_a_stale_rate_drops_the_dollar_figure_and_says_so` | kurs 29 hari → USD hilang |
+| Total pemilik = jumlah slip tersimpan, bukan hitungan kedua | `test_the_owner_total_is_the_sum_of_the_slips_not_a_second_calculation` | `paid_net_minor` = `SUM(net_minor)`; teks = `money_display.line()` dengan jam yang sama |
+| 0 istilah mesin di layar supervisor | `test_the_supervisor_screen_shows_no_machine_words` | gaya (CSS), skrip, dan komentar dibuang dulu; yang boleh tampil hanya `IDR`, `USD`, `WIB` (ditulis terbuka sebagai daftar putih) |
+| Layar tetap berguna (gerbang "tanpa istilah mesin" tidak boleh lulus karena kosong) | `test_the_supervisor_screen_still_says_something_useful` | kata katalog benar-benar muncul di teks yang dibaca |
+| Setiap status yang boleh ada di basis data punya kata | `test_the_catalogue_covers_every_state_the_database_allows` | kode dibaca dari `CHECK (...) IN (...)` di DDL, bukan dari daftar yang saya ketik sendiri |
+| Kode tak dikenal → sel kosong, bukan kata karangan | `test_an_unknown_code_leaves_the_cell_empty_rather_than_inventing_a_word` | `""` |
+| Nama staf tidak bisa menyuntik markup | `test_a_staff_name_cannot_inject_markup_into_the_screen` | `<script>` tidak muncul, `&lt;script&gt;` muncul |
+| Tabel kosong selebar tajuknya; `colspan` = jumlah `<th>` | `test_an_empty_table_spans_exactly_its_header_row` | 3 layar, tiap tabel |
+| Layar read-only: dua kali render tidak mengubah satu baris | `test_rendering_a_screen_writes_nothing` | 6 tabel, jumlah baris sebelum = sesudah |
+| Peran tidak bisa membuka layar yang bukan miliknya | `test_a_role_cannot_open_a_screen_it_does_not_own` | `operations`→supervisor, `finance`, `owner`, `guest`→(), `None`→() |
+
+**Bahasa.** Copy yang dibaca staf berbahasa Indonesia (pembacanya di Bali dan Yogyakarta, alasan
+yang sama dengan katalog pesan tamu ADR-0037), sementara `src/workforce/*.py` tetap **0 kata
+Indonesia** (ADR-0011 §55). Yang menjembatani keduanya adalah katalog data: kata untuk setiap
+status hidup di `screen_labels.json`, jumlahnya dipaku **9** di `scripts/check_workforce_language.py`,
+dan pin templat dipaku di `tests/test_language_standard.py` (supervisor 7, finance 5, owner 9).
+
+Cara mereproduksi angkanya:
+
+```
+make workforce-language                      # 0 temuan di src/workforce/*.py + katalog 9 kata
+/usr/bin/python3 -m pytest tests/test_workforce_views.py -q   # 12 uji
+```
+
+Kontrol negatif gate katalog (dijalankan, bukan diasumsikan): satu kata `tidak` disisipkan ke
+katalog → skrip keluar **1** (`11 > 9`), berkas dikembalikan → keluar **0**.
+
+**Tema Bale-UI menuntut halaman baru punya identitasnya sendiri.** `make check` pertama untuk T2.6
+gagal tepat di sini: `test_every_page_has_its_own_hue_and_kicker` menolak `workforce_supervisor`,
+`workforce_finance`, dan `workforce_owner` sebagai "halaman tanpa rona". Itu bukan rintangan untuk
+dilewati — halaman yang tidak bisa dibedakan dari halaman lain adalah keluhan yang memang ingin
+dicegah tes ini. Ketiganya diberi rona sendiri (`--h: 175` / `240` / `305`) dan kicker sendiri, lalu
+diukur ulang oleh tes kontras WCAG AA di mode gelap **dan** terang. Kicker ditulis dalam bahasa
+Inggris karena begitulah konvensi `base.html` (kicker halaman lain pun Inggris), sehingga pin bahasa
+shell tidak bergeser.
+
+**Batas yang jujur (belum selesai di T2.6):**
+
+1. Layar ini **belum dirutekan** dashboard HTTP: `views.render()` menghasilkan halaman utuh, tetapi
+   `nav` sengaja kosong dan tautan antar layar masih jangkar dalam halaman. Penyaluran ke
+   `dashboard.py` (rute + peran) adalah pekerjaan tersendiri.
+2. `footnote`/`NO_RATE_NOTE` berasal dari `money_display` dan berbahasa **Inggris** (ADR-0011 §55),
+   sehingga satu paragraf catatan kurs di halaman Indonesia tampil campur bahasa. Ini keputusan
+   produk yang perlu ditetapkan, bukan bug yang bisa saya putuskan sendiri.
+3. Bentuk run ("Bulanan"/"Pekanan") **disimpulkan** dari ada/tidaknya `timesheet_id` di slip
+   (`_run_shapes`), bukan dari kolom yang memang mencatatnya. Selama tidak ada kolom itu, labelnya
+   bisa keliru untuk pola run yang tidak biasa — dan itu tertulis di sini supaya tidak jadi klaim.
+4. Keempat berkas baru (`views.py`, 3 templat, 1 katalog) hanya diuji lewat jalur render; belum ada
+   uji HTTP karena rutenya memang belum ada.
 
 ## 5. Gerbang (tidak boleh dilewati, tidak boleh "nanti")
 

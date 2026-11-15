@@ -1,0 +1,49 @@
+<section data-page="workforce_supervisor" data-date="{{ date }}">
+  <h2>Tenaga kerja — hari ini</h2>
+  <p class="muted">Tanggal kerja: <strong>{{ date }}</strong></p>
+
+  <dl class="fields">
+    <div class="field"><dt>Dijadwalkan</dt><dd class="num">{{ on_duty }}</dd></div>
+    <div class="field"><dt>Sudah absen masuk</dt><dd class="num">{{ clocked_in }}</dd></div>
+    <div class="field"><dt>Belum absen masuk</dt><dd class="num">{{ not_clocked_in }}</dd></div>
+    <div class="field"><dt>Perlu diperiksa</dt><dd class="num">{{ needs_attention }}</dd></div>
+    <div class="field"><dt>Timesheet menunggu tanda tangan</dt><dd class="num">{{ awaiting_signature }}</dd></div>
+  </dl>
+
+  <h3>Jadwal shift hari ini</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Nama</th>
+        <th>Properti</th>
+        <th>Jam</th>
+        <th>Kehadiran</th>
+        <th class="num">Terlambat (menit)</th>
+      </tr>
+    </thead>
+    {{ shift_rows }}
+  </table>
+
+  <h3>Timesheet menunggu tanda tangan</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Nama</th>
+        <th>Mulai periode</th>
+        <th>Akhir periode</th>
+        <th class="num">Jam kerja</th>
+        <th class="num">Upah kotor</th>
+        <th>Tahap</th>
+      </tr>
+    </thead>
+    {{ signature_rows }}
+  </table>
+
+  <p class="muted">{{ money_note }}</p>
+
+  <h3>Layar lain</h3>
+  <nav>
+    <a href="#workforce_finance">Keuangan — jalankan upah</a>
+    <a href="#workforce_owner">Pemilik — biaya per properti</a>
+  </nav>
+</section>

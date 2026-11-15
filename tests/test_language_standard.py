@@ -72,6 +72,14 @@ RECORDED_MESSAGE_CATALOGUE = {
 
 #: Template -> measured Indonesian hits. **Only ever lowered.**
 RECORDED_TEMPLATES = {
+    # The three workforce role screens (T2.6) are read by staff in Bali and Yogyakarta, so their
+    # copy is Indonesian for the same reason the guest catalogue is (ADR-0037) — the words a
+    # reader sees live in the template, and every state code is translated through
+    # src/workforce/screen_labels.json, which keeps src/workforce/*.py at zero. Pinned with a
+    # measured number on purpose: a deliberate act, not a silent one.
+    "workforce_finance.html": 5,
+    "workforce_owner.html": 9,
+    "workforce_supervisor.html": 7,
     "base.html": 5,
     "case_detail.html": 1,
     "cases.html": 4,

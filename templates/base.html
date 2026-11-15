@@ -332,6 +332,9 @@ body:has([data-page="channels"])       { --h: 215; }
 body:has([data-page="shadow_eval"])    { --h: 255; }
 body:has([data-page="outbox"])         { --h: 185; }
 body:has([data-page="audit"])          { --h: 55; }
+body:has([data-page="workforce_supervisor"]) { --h: 175; }
+body:has([data-page="workforce_finance"])    { --h: 240; }
+body:has([data-page="workforce_owner"])      { --h: 305; }
 body:has([data-page="error"])          { --h: 12; }
 
 html { scroll-behavior: smooth; }
@@ -579,6 +582,9 @@ section[data-page="marketing"]::before       { content: "Commercial & marketing 
 section[data-page="channels"]::before        { content: "Technology & channels · inbound messages"; }
 section[data-page="outbox"]::before          { content: "Technology & channels · integrations"; }
 section[data-page="shadow_eval"]::before     { content: "Technology & channels · AI quality (shadow)"; }
+section[data-page="workforce_supervisor"]::before { content: "Workforce · today's shift"; }
+section[data-page="workforce_finance"]::before    { content: "Workforce · payroll runs"; }
+section[data-page="workforce_owner"]::before      { content: "Workforce · cost by property"; }
 section[data-page="error"]::before           { content: "Diagnostics · request refused"; }
 
 section[data-page] > h2:first-of-type {
