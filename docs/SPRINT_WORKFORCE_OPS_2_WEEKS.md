@@ -97,6 +97,7 @@ Setiap tugas punya **pemilik peran**, **artefak**, **DoD**, dan **perintah bukti
 | T2.1 | **Selesai** (2026-11-15) | `src/workforce/payroll_policy.py` + 15 uji pada `tests/test_workforce_payroll_calc.py`: jendela `[from, to)` setengah terbuka, dua versi/dua tarif pada satu tanggal = `AMBIGUOUS` (bukan "terbaru menang"), checksum kanonik menolak payload yang diubah tanpa versi baru, tarif agensi lain tidak terlihat, dan **tidak ada** angka pajak/BPJS di kode |
 | T2.2 | **Selesai** (2026-11-15) | `src/workforce/payroll_calc.py` + 20 uji: seluruh uang lewat `Decimal`, dibulatkan sekali per baris (`ROUND_HALF_UP`), batas lembur 240 mnt/hari & 1080 mnt/pekan ditolak saat dilanggar, gaji bulanan pada periode tidak penuh = `PRORATION_REQUIRED`, upah bersih negatif tidak pernah menjadi slip, setiap baris wajib `basis_note` + `policy_version_id` |
 | T2.3 | **Selesai** (2026-11-15) | `src/workforce/payslip.py` + 30 uji pada `tests/test_workforce_payslip.py`: satu orang = satu slip per run (`PayslipExists`, bukan ditimpa), aritmetika dihitung ulang dari baris tersimpan, run `APPROVED/PAID/VOID` = `PayrollRunFrozen`, timesheet harus `APPROVED/LOCKED` milik staf yang sama, segel `PayrollCalculation.digest()` masuk `audit_events.evidence_ref` dan `verify_seal()` mendeteksi baris diubah/dihapus/total diubah |
+| T2.4 | **Selesai** (2026-11-15) | `src/workforce/payslip.py` (`transition_run`, `RUN_TRANSITIONS`, `IllegalRunTransition`) + 19 uji pada `tests/test_workforce_payroll_run.py`: alur satu langkah `DRAFT→CALCULATED→APPROVED→PAID`, lompat/mundur ditolak, `PAID`/`VOID` final, `VOID` wajib alasan ≥3 karakter, `PAID` hanya bila `calculated_at`+`approved_at` terisi **dan** setiap slip masih cocok dengan segelnya, balapan status ditolak lewat `expected_status`, total dihitung ulang dari slip tersimpan, satu event audit `WORKFORCE_PAYROLL_RUN_STATUS_CHANGED` per transisi — lihat §4.4 |
 
 Dua temuan saat T1.1–T1.2 dikerjakan, keduanya masuk ke kode dan tes:
 
@@ -233,6 +234,46 @@ Lima temuan saat T2.3 dikerjakan:
 5. **ADR-0011 berlaku untuk modul baru.** Pesan galat T2.1–T2.3 semula berbahasa
    Indonesia dan ditolak `tests/test_language_standard.py`; seluruh pesan produksi
    diterjemahkan ke en-US (docstring tetap Bahasa Indonesia untuk pembaca manusia).
+
+### 4.4 T2.4 — status run hanya bergerak satu langkah, lalu berhenti (2026-11-15)
+
+`tests/test_workforce_payroll_run.py` (19 uji terkolaksi, termasuk 3 varian parametrik)
+mengunci klaim berikut. Nama staf sintetis (`Kadek Uji`, `stf_2`), nominal bulat.
+
+| Klaim | Uji yang memfalsifikasi |
+|---|---|
+| Alur normal menandai setiap langkah dengan waktu dan pelakunya | `test_run_walks_calculated_to_approved_to_paid_and_stamps_each_step` |
+| Target berhuruf kecil dinormalkan, bukan diabaikan diam-diam | `test_lowercase_target_is_normalised_not_silently_ignored` |
+| Lompat status atau mundur ditolak (3 varian: `PAID`, `DRAFT`, `CALCULATED`) | `test_skipping_or_reversing_a_status_is_refused` |
+| Status tak dikenal ditolak sebelum menyentuh baris | `test_unknown_target_status_is_refused` |
+| `PAID` dan `VOID` final — tidak ada jalan keluar | `test_paid_run_is_final_for_both_forward_and_void` |
+| `VOID` wajib alasan; tanpa alasan ditolak dan status tidak berubah | `test_void_without_a_reason_is_refused` |
+| `VOID` mempertahankan slip dan mencatat alasannya | `test_void_from_calculated_keeps_payslips_and_records_the_reason` |
+| Run tanpa slip tidak pernah menjadi `CALCULATED` | `test_run_without_payslips_never_becomes_calculated` |
+| Pembayaran menolak slip yang angkanya diubah setelah persetujuan | `test_payment_refuses_a_slip_whose_numbers_were_edited_after_approval` |
+| Total run dihitung ulang dari slip tersimpan, bukan dari argumen pemanggil | `test_approval_recomputes_totals_from_stored_slips_not_from_the_caller` |
+| Setiap transisi meninggalkan **satu** event audit dengan before/after, aktor, peran, alasan | `test_every_transition_leaves_one_audit_event_with_before_and_after` |
+| Transisi yang ditolak tidak meninggalkan event audit apa pun | `test_refused_transition_leaves_no_audit_event` |
+| Aktor wajib; tanpa aktor `MISSING_FIELD` dan status tetap | `test_actor_is_required_for_every_transition` |
+| Status basi ditolak, bukan ditimpa (penjaga balapan) | `test_stale_expected_status_is_refused_instead_of_overwritten` |
+| Run `VOID` menolak slip baru | `test_void_run_refuses_new_payslips` |
+| Detail galat `open_run` rata di `details`, tidak bersarang | `test_open_run_reports_a_backwards_period_as_flat_details`, `test_open_run_reports_a_short_currency_code_as_flat_details` |
+
+Empat keputusan saat T2.4 dikerjakan:
+
+1. **Allowlist, bukan update bebas.** `RUN_TRANSITIONS` menyatakan transisi yang boleh;
+   apa pun di luar tabel ditolak `IllegalRunTransition`. Tanpa tabel ini, "pindahkan
+   status" adalah pintu belakang untuk membayar run yang belum disetujui.
+2. **`PAID` memverifikasi ulang segel setiap slip.** Menyetujui run dan membayarnya
+   adalah dua peristiwa berbeda di waktu berbeda; kalau angka slip berubah di antaranya,
+   pembayaran berhenti (`PayslipInconsistent` + `drift`), bukan melanjutkan dengan angka
+   baru yang tak pernah disetujui.
+3. **`expected_status` menutup balapan dua operator.** Dua orang membuka layar yang sama:
+   yang kedua ditolak dengan `expected`/`actual` yang bisa dibaca, bukan menimpa.
+4. **Bug halus ditemukan saat menulis tes:** `PayslipInconsistent(..., details={...})`
+   menumpuk detail satu tingkat di bawah kunci `"details"` karena `DomainError` menerima
+   `**details`. Dua tempat di `open_run` (periode terbalik, kode mata uang) diperbaiki
+   menjadi kwargs rata, dan sekarang dikunci dua uji di tabel ini.
 
 ### Minggu 2 — upah deterministik (H2) + tampilan (H3)
 

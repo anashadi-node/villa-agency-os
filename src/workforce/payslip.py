@@ -57,11 +57,23 @@ from workforce.repository import WorkforceError, require_identifier, write_trans
 OPEN_RUN_STATUSES = ("DRAFT", "CALCULATED")
 #: Status run yang menolak slip baru: keputusan manusia sudah diambil.
 FROZEN_RUN_STATUSES = ("APPROVED", "PAID", "VOID")
+#: Transisi status run yang sah (T2.4). Kunci = status sekarang, nilai = tujuan.
+#: ``PAID`` dan ``VOID`` final: tidak ada jalan kembali ke belakang.
+RUN_TRANSITIONS: dict[str, tuple[str, ...]] = {
+    "DRAFT": ("CALCULATED", "VOID"),
+    "CALCULATED": ("APPROVED", "VOID"),
+    "APPROVED": ("PAID", "VOID"),
+    "PAID": (),
+    "VOID": (),
+}
+#: Panjang minimum alasan pembatalan run (selaras CHECK di skema).
+VOID_REASON_MIN_LEN = 3
 #: Status timesheet yang boleh dibayar.
 PAYABLE_TIMESHEET_STATUSES = ("APPROVED", "LOCKED")
 
 ACTION_ISSUED = "WORKFORCE_PAYSLIP_ISSUED"
 ACTION_RUN_OPENED = "WORKFORCE_PAYROLL_RUN_OPENED"
+ACTION_RUN_TRANSITION = "WORKFORCE_PAYROLL_RUN_STATUS_CHANGED"
 SEAL_DOMAIN = "workforce.payroll"
 ENTITY_TYPE = "workforce_payslip"
 ENTITY_RUN = "workforce_payroll_run"
@@ -91,6 +103,12 @@ class EmptyPayslip(PayslipError):
 
 class TimesheetNotPayable(PayslipError):
     code = "WORKFORCE_TIMESHEET_NOT_PAYABLE"
+
+
+class IllegalRunTransition(PayslipError):
+    """Status run dilompati, dibalik, atau diminta tanpa alasan (T2.4)."""
+
+    code = "WORKFORCE_PAYROLL_ILLEGAL_TRANSITION"
 
 
 def _column_names(conn: sqlite3.Connection, table: str) -> set[str]:
@@ -206,16 +224,12 @@ class PayslipWriter:
         end = period_end if isinstance(period_end, date) else parse_iso_date(str(period_end))
         code = require_text(currency, "currency", max_len=3)
         if len(code) != 3:
-            raise PayslipInconsistent(
-                "currency must be a three-letter code", details={"currency": code}
-            )
+            raise PayslipInconsistent("currency must be a three-letter code", currency=code)
         if end < start:
             raise PayslipInconsistent(
-                "periode terbalik",
-                details={
-                    "period_start": to_iso_date(start),
-                    "period_end": to_iso_date(end),
-                },
+                "the period ends before it starts",
+                period_start=to_iso_date(start),
+                period_end=to_iso_date(end),
             )
 
         existing = self.conn.execute(
@@ -292,6 +306,173 @@ class PayslipWriter:
             "total_net_minor": int(row[3]),
             "currency": str(run["currency"]),
         }
+
+    # -- alur status run (T2.4) -------------------------------------------- #
+    def transition_run(
+        self,
+        payroll_run_id: str,
+        target_status: str,
+        *,
+        actor: str,
+        reason: Optional[str] = None,
+        actor_role: str = "PAYROLL_OPERATOR",
+        expected_status: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Pindahkan status run satu langkah: ``DRAFT->CALCULATED->APPROVED->PAID``.
+
+        Aturan yang ditegakkan di sini, bukan diserahkan ke pemanggil:
+
+        * **satu langkah saja** — ``DRAFT->PAID``, ``CALCULATED->PAID``, dan
+          transisi mundur ditolak ``IllegalRunTransition``;
+        * ``PAID`` dan ``VOID`` final — tidak ada jalan keluar;
+        * ``CALCULATED``/``APPROVED``/``PAID`` wajib punya minimal satu slip,
+          karena total run dihitung ulang dari slip tersimpan, bukan dari argumen;
+        * ``VOID`` wajib alasan minimal ``VOID_REASON_MIN_LEN`` karakter;
+        * ``PAID`` hanya kalau ``calculated_at`` **dan** ``approved_at`` terisi,
+          dan setiap slip masih cocok dengan segelnya — uang keluar hanya untuk
+          angka yang belum berubah sejak diterbitkan.
+
+        ``expected_status`` adalah penjaga balapan (optimistic check): kalau
+        status tersimpan sudah berbeda dari yang dilihat pemanggil, transisi
+        ditolak, bukan ditimpa.
+        """
+        actor_id = require_text(actor, "actor", max_len=64)
+        role = require_text(actor_role, "actor_role", max_len=64)
+        target = require_text(target_status, "target_status", max_len=16).strip().upper()
+        if target not in RUN_TRANSITIONS:
+            raise IllegalRunTransition(
+                "unknown payroll run status",
+                target_status=target,
+                allowed=sorted(RUN_TRANSITIONS),
+            )
+
+        run = self.get_run(payroll_run_id)
+        run_id = str(run["payroll_run_id"])
+        current = str(run["status"])
+        if expected_status is not None:
+            expected = require_text(
+                expected_status, "expected_status", max_len=16
+            ).strip().upper()
+            if expected != current:
+                raise IllegalRunTransition(
+                    "payroll run moved since it was read",
+                    payroll_run_id=run_id,
+                    expected=expected,
+                    actual=current,
+                )
+        if current in ("PAID", "VOID"):
+            raise PayrollRunFrozen(
+                "a final payroll run accepts no further transition",
+                payroll_run_id=run_id,
+                status=current,
+            )
+        allowed = RUN_TRANSITIONS.get(current, ())
+        if target not in allowed:
+            raise IllegalRunTransition(
+                "payroll run status cannot jump or go backwards",
+                payroll_run_id=run_id,
+                current_status=current,
+                target_status=target,
+                allowed=list(allowed),
+            )
+
+        note = (reason or "").strip()
+        if target == "VOID":
+            if len(note) < VOID_REASON_MIN_LEN:
+                raise IllegalRunTransition(
+                    "voiding a payroll run requires a reason",
+                    payroll_run_id=run_id,
+                    target_status="VOID",
+                    reason_min_len=VOID_REASON_MIN_LEN,
+                )
+        elif not note:
+            note = f"payroll run {current} -> {target}"
+
+        totals = self.run_totals(run_id)
+        if target in ("CALCULATED", "APPROVED", "PAID") and totals["slip_count"] == 0:
+            raise IllegalRunTransition(
+                "a payroll run without payslips never becomes payable",
+                payroll_run_id=run_id,
+                target_status=target,
+            )
+        if target == "PAID":
+            if not run.get("calculated_at") or not run.get("approved_at"):
+                raise IllegalRunTransition(
+                    "a run is paid only after it was calculated and approved",
+                    payroll_run_id=run_id,
+                    calculated_at=run.get("calculated_at"),
+                    approved_at=run.get("approved_at"),
+                )
+            for slip in self.for_run(run_id):
+                seal = self.verify_seal(str(slip["payslip_id"]))
+                if not seal["matches"]:
+                    raise PayslipInconsistent(
+                        "a payslip no longer matches its seal; the run is not payable",
+                        payroll_run_id=run_id,
+                        payslip_id=seal["payslip_id"],
+                        drift=seal["drift"],
+                    )
+
+        before = {
+            "status": current,
+            "total_gross_minor": int(run["total_gross_minor"]),
+            "total_net_minor": int(run["total_net_minor"]),
+        }
+        after = {
+            "status": target,
+            "slip_count": totals["slip_count"],
+            "total_gross_minor": totals["total_gross_minor"],
+            "total_net_minor": totals["total_net_minor"],
+        }
+        stamp = self._now_iso()
+        columns = ["status = ?"]
+        params: list[Any] = [target]
+        if target in ("CALCULATED", "APPROVED", "PAID"):
+            columns += ["total_gross_minor = ?", "total_net_minor = ?"]
+            params += [totals["total_gross_minor"], totals["total_net_minor"]]
+        if target == "CALCULATED":
+            columns += ["calculated_by = ?", "calculated_at = ?"]
+            params += [actor_id, stamp]
+        elif target == "APPROVED":
+            columns += ["approved_by = ?", "approved_at = ?"]
+            params += [actor_id, stamp]
+        elif target == "PAID":
+            columns += ["paid_at = ?"]
+            params += [stamp]
+        elif target == "VOID":
+            columns += ["void_reason = ?"]
+            params += [note]
+        params += [self.agency_id, run_id]
+
+        with write_transaction(self.conn):
+            updated = self.conn.execute(
+                f"UPDATE workforce_payroll_runs SET {', '.join(columns)}"
+                " WHERE agency_id = ? AND payroll_run_id = ?",
+                tuple(params),
+            )
+            if updated.rowcount != 1:
+                raise PayrollRunFrozen(
+                    "payroll run disappeared during the transition",
+                    payroll_run_id=run_id,
+                    status=current,
+                )
+            append_event(
+                self.conn,
+                clock=self._clock,
+                ids=self._ids,
+                action=ACTION_RUN_TRANSITION,
+                entity_type=ENTITY_RUN,
+                entity_id=run_id,
+                actor=actor_id,
+                actor_role=role,
+                before=before,
+                after=after,
+                reason=note,
+                verify_on_append=self._verify_on_append,
+            )
+        result = self.get_run(run_id)
+        result["slip_count"] = totals["slip_count"]
+        return result
 
     # -- terbitkan --------------------------------------------------------- #
     def issue(
