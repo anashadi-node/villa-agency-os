@@ -103,7 +103,7 @@ class WorkSummary:
 
     def __post_init__(self) -> None:
         if not isinstance(self.currency, str) or len(self.currency) != 3:
-            raise InvalidWorkSummary("currency harus kode tiga huruf",
+            raise InvalidWorkSummary("currency must be a three-letter code",
                                      {"currency": self.currency})
         if self.period_end < self.period_start:
             raise InvalidWorkSummary("periode terbalik",
@@ -112,7 +112,7 @@ class WorkSummary:
         for name in ("regular_minutes", "overtime_minutes", "days_worked", "absence_days"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                raise InvalidWorkSummary(f"{name} harus bilangan bulat >= 0",
+                raise InvalidWorkSummary(f"{name} must be an integer >= 0",
                                          {"field": name, "value": value})
         if self.days_worked == 0 and self.regular_minutes > 0:
             raise InvalidWorkSummary(
@@ -143,16 +143,16 @@ class PayLine:
 
     def __post_init__(self) -> None:
         if self.kind not in (EARNING, DEDUCTION, TAX, EMPLOYER_CONTRIBUTION):
-            raise InvalidLine(f"jenis baris tidak dikenal: {self.kind}",
+            raise InvalidLine(f"unknown pay line kind: {self.kind}",
                               {"kind": self.kind})
         if isinstance(self.amount_minor, bool) or not isinstance(self.amount_minor, int):
-            raise InvalidLine("amount_minor harus bilangan bulat",
+            raise InvalidLine("amount_minor must be an integer",
                               {"amount_minor": self.amount_minor})
         if self.amount_minor < 0:
-            raise InvalidLine("amount_minor tidak boleh negatif",
+            raise InvalidLine("amount_minor must not be negative",
                               {"component_code": self.component_code})
         if not isinstance(self.basis_note, str) or len(self.basis_note) < 3:
-            raise InvalidLine("basis_note wajib menjelaskan asal angka",
+            raise InvalidLine("basis_note must explain where the amount comes from",
                               {"component_code": self.component_code})
 
 
@@ -218,8 +218,8 @@ def check_overtime_bounds(work: WorkSummary) -> str:
     cap = min(daily_cap, weekly_cap)
     if work.overtime_minutes > cap:
         raise OvertimeLimitExceeded(
-            f"lembur {work.overtime_minutes} menit melebihi batas atas {cap} menit"
-            f" untuk periode {days} hari",
+            f"overtime {work.overtime_minutes} minutes exceeds the cap of {cap} minutes"
+            f" for a {days}-day period",
             {
                 "overtime_minutes": work.overtime_minutes,
                 "upper_bound_minutes": cap,
@@ -251,7 +251,7 @@ def _attendance_bonus_threshold(bundle: PolicyBundle) -> int:
     payload = policy.payload.get("attendance_bonus_max_absence_days")
     if payload is None:
         raise PolicyPayloadInvalid(
-            "tarif ATTENDANCE_BONUS ada, tetapi policy WORK_HOURS tidak memuat"
+            "an ATTENDANCE_BONUS rate exists, but the WORK_HOURS policy does not carry"
             " 'attendance_bonus_max_absence_days'",
             {"policy_version_id": policy.policy_version_id},
         )
@@ -266,8 +266,8 @@ def _earning_line(component: str, rate: PayRate, work: WorkSummary,
             raise PayRateUnitMismatchFor(component, rate.unit, "MONTH")
         if not is_full_calendar_month(work):
             raise MonthlyProrationRequired(
-                "gaji bulanan pada periode bukan sebulan penuh: prorata harus"
-                " diputuskan pemilik villa, bukan ditebak sistem",
+                "a monthly salary over a partial calendar month: proration must be"
+                " decided by the villa owner, never guessed by the system",
                 {"period_start": to_iso_date(work.period_start),
                  "period_end": to_iso_date(work.period_end),
                  "policy_version_id": rate.policy_version_id},
@@ -355,7 +355,7 @@ def _earning_line(component: str, rate: PayRate, work: WorkSummary,
             rate_minor=rate.amount_minor,
         )
 
-    raise InvalidLine(f"komponen upah tidak dikenal: {component}",
+    raise InvalidLine(f"unknown pay component: {component}",
                       {"component_code": component})
 
 
@@ -375,12 +375,12 @@ def calculate(work: WorkSummary, bundle: PolicyBundle, *,
               deductions: Iterable[PayLine] = ()) -> PayrollCalculation:
     """Hitung satu slip: baris pendapatan, potongan eksplisit, dan upah bersih."""
     if bundle.staff_id != work.staff_id:
-        raise StaffMismatch("paket policy milik orang lain",
+        raise StaffMismatch("policy bundle belongs to another staff member",
                             {"summary_staff": work.staff_id, "bundle_staff": bundle.staff_id})
     currency = bundle.currency
     if currency != work.currency:
         raise CurrencyMismatch(
-            "mata uang hitung dan tarif berbeda",
+            "calculation currency and rate currency differ",
             summary=work.currency,
             rates=currency,
         )

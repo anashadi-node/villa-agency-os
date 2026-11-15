@@ -96,6 +96,7 @@ Setiap tugas punya **pemilik peran**, **artefak**, **DoD**, dan **perintah bukti
 | T1.7 | **Selesai** (2026-11-15) | `tests/test_workforce_gate_g1.py` (13 uji: 10 di SQLite, 3 di PostgreSQL sungguhan) — lihat §4.1 |
 | T2.1 | **Selesai** (2026-11-15) | `src/workforce/payroll_policy.py` + 15 uji pada `tests/test_workforce_payroll_calc.py`: jendela `[from, to)` setengah terbuka, dua versi/dua tarif pada satu tanggal = `AMBIGUOUS` (bukan "terbaru menang"), checksum kanonik menolak payload yang diubah tanpa versi baru, tarif agensi lain tidak terlihat, dan **tidak ada** angka pajak/BPJS di kode |
 | T2.2 | **Selesai** (2026-11-15) | `src/workforce/payroll_calc.py` + 20 uji: seluruh uang lewat `Decimal`, dibulatkan sekali per baris (`ROUND_HALF_UP`), batas lembur 240 mnt/hari & 1080 mnt/pekan ditolak saat dilanggar, gaji bulanan pada periode tidak penuh = `PRORATION_REQUIRED`, upah bersih negatif tidak pernah menjadi slip, setiap baris wajib `basis_note` + `policy_version_id` |
+| T2.3 | **Selesai** (2026-11-15) | `src/workforce/payslip.py` + 30 uji pada `tests/test_workforce_payslip.py`: satu orang = satu slip per run (`PayslipExists`, bukan ditimpa), aritmetika dihitung ulang dari baris tersimpan, run `APPROVED/PAID/VOID` = `PayrollRunFrozen`, timesheet harus `APPROVED/LOCKED` milik staf yang sama, segel `PayrollCalculation.digest()` masuk `audit_events.evidence_ref` dan `verify_seal()` mendeteksi baris diubah/dihapus/total diubah |
 
 Dua temuan saat T1.1–T1.2 dikerjakan, keduanya masuk ke kode dan tes:
 
@@ -192,13 +193,54 @@ Empat temuan saat T2.1–T2.2 dikerjakan:
    `BPJS_EMPLOYER` tampil di slip tanpa mengurangi net. Angka di tes diperbaiki ke
    hasil hitung nyata, bukan sebaliknya.
 
+### 4.3 T2.3 — slip gaji sebagai segel, bukan pembayaran kedua (2026-11-15)
+
+`tests/test_workforce_payslip.py` (30 uji yang dikumpulkan pytest) mengunci klaim berikut. Seluruh nominal
+sintetis (`Kadek Uji`, angka bulat), tidak ada upah orang sungguhan.
+
+| Klaim | Uji yang memfalsifikasi |
+|---|---|
+| Satu orang, satu run = satu slip; yang kedua **ditolak**, bukan menimpa | `test_second_slip_for_the_same_person_in_one_run_is_refused_not_overwritten` |
+| Run yang sudah dibekukan tidak menerima slip baru | `test_frozen_run_refuses_new_slips` |
+| Aritmetika dihitung ulang dari baris, bukan dipercaya dari payload | `test_gross_that_disagrees_with_its_lines_is_refused`, `test_net_that_is_not_gross_minus_deduction_is_refused` |
+| Hitung tanpa baris / bersih nol tidak pernah menjadi slip | `test_calculation_without_lines_never_becomes_a_slip`, `test_zero_net_pay_never_becomes_a_slip` |
+| Mata uang dan periode hitung harus sama dengan run | `test_calculation_currency_must_match_the_run`, `test_calculation_for_another_period_is_refused` |
+| Timesheet wajib `APPROVED`/`LOCKED` dan milik staf yang sama | `test_timesheet_must_be_approved_before_it_is_paid`, `test_timesheet_of_another_person_cannot_pay_this_slip` |
+| Segel hanya bertambah sekali, tercatat dengan aktornya | `test_seal_is_written_to_the_audit_chain_with_the_actor` |
+| Segel yang utuh lolos, yang diubah **tidak** | `test_verify_seal_accepts_an_untouched_slip`, `test_verify_seal_detects_an_edited_line`, `test_verify_seal_detects_edited_payslip_totals`, `test_verify_seal_detects_a_dropped_line`, `test_slip_without_a_seal_is_an_error_not_a_pass` |
+| Run dibuka idempoten dan meninggalkan **satu** jejak audit | `test_open_run_is_idempotent_for_the_same_period`, `test_opening_a_run_leaves_one_audit_event_for_the_opener` |
+| Total run dihitung dari slip tersimpan, run kosong = 0 bukan `NULL` | `test_run_totals_sum_the_stored_slips_only`, `test_run_totals_of_an_empty_run_are_zero_not_null` |
+| Run agensi lain tidak terlihat; run tak dikenal dilaporkan, bukan dibuat | `test_run_of_another_agency_is_invisible`, `test_unknown_run_is_reported_not_created_on_the_fly` |
+
+Lima temuan saat T2.3 dikerjakan:
+
+1. **`workforce_payslips` tidak punya kolom `lock_hash`.** Kolom itu milik
+   `workforce_timesheets`. Alih-alih menambah kolom/migrasi baru, segel memakai
+   `PayrollCalculation.digest()` yang ditulis ke `audit_events.evidence_ref` (rantai
+   hash append-only yang sudah ada). Nol perubahan skema, nol risiko ke jalur booking;
+   `verify_seal()` menghitung ulang digest dari baris tersimpan dan menolak slip yang
+   berubah, kehilangan baris, atau tanpa segel.
+2. **Slip adalah pembayaran kedua kalau dipaksa.** `uq_workforce_payslips_once`
+   (run, staff) sudah ada di DDL, tetapi kode tetap harus menolak dengan pesan yang
+   bisa dibaca operator (`PayslipExists`) sebelum menabrak constraint — constraint
+   menjadi jaring terakhir, bukan pesan kesalahan pertama.
+3. **Payload hitung tidak boleh dipercaya.** Bruto/potongan/bersih selalu dijumlah
+   ulang dari baris yang akan disimpan; selisih sekecil satu minor unit menolak slip.
+   Kalau tidak, dua angka benar bisa hidup berdampingan di satu slip.
+4. **Membuka run yang sudah ada bukan peristiwa baru.** `open_run` idempoten dan
+   hanya menulis satu `WORKFORCE_PAYROLL_RUN_OPENED`; run yang dipakai bersama tidak
+   membanjiri rantai audit dengan event duplikat.
+5. **ADR-0011 berlaku untuk modul baru.** Pesan galat T2.1–T2.3 semula berbahasa
+   Indonesia dan ditolak `tests/test_language_standard.py`; seluruh pesan produksi
+   diterjemahkan ke en-US (docstring tetap Bahasa Indonesia untuk pembaca manusia).
+
 ### Minggu 2 — upah deterministik (H2) + tampilan (H3)
 
 | ID | Hari | Tugas | Artefak | DoD (bisa diuji) | Bukti |
 |---|---|---|---|---|---|
 | T2.1 | 6 | `src/workforce/payroll_policy.py` — muat `workforce_policy_versions` + `workforce_pay_rates` berversi; **tidak ada** angka pajak/BPJS di kode | modul + uji | ubah policy = versi baru; slip lama **tidak** berubah | uji: hitung dua kali dengan policy v1, lalu v2 |
 | T2.2 | 6–7 | `src/workforce/payroll_calc.py` — Decimal penuh, `sanity` fail-closed (upah bersih ≥0, lembur ≤18 j/minggu, lembur ≤4 j/hari) | modul + uji | lembur 4,5 j/hari atau 19 j/minggu → ditolak, bukan dibulatkan | uji batas (4/4,5/18/19) |
-| T2.3 | 7 | `src/workforce/payslip.py` — tulis `workforce_payslips` + `workforce_payslip_lines`, segel `lock_hash` (sha256 kanonik) | modul + uji | mengubah 1 baris setelah segel → terdeteksi | uji: ubah `gross`, hitung ulang hash, bandingkan |
+| T2.3 | 7 | `src/workforce/payslip.py` — tulis `workforce_payslips` + `workforce_payslip_lines`, segel `PayrollCalculation.digest()` (sha256 kanonik) ke `audit_events.evidence_ref`; `workforce_payslips` tidak punya kolom `lock_hash`, jadi segel tidak mengarang kolom baru | modul + uji | mengubah 1 baris setelah segel → terdeteksi | uji: ubah `gross`/hapus baris, `verify_seal()` menolak |
 | T2.4 | 7–8 | Alur status `DRAFT → CALCULATED → APPROVED → PAID → (VOID)`; `PAID` wajib `calculated_at` + `approved_at` | uji alur | lompat status ditolak; `VOID` tanpa alasan ditolak (regresi §1.1) | uji tabel transisi |
 | T2.5 | 8 | **Gate G2**: rekonsiliasi 0 selisih pada dataset uji 30 hari × 12 staf sintetis | laporan angka | setiap slip punya jejak rate+policy+timesheet; 0 slip tanpa jejak | skrip `scripts/workforce_reconcile.py` (dibuat hari itu) |
 | T2.6 | 8–9 | `src/workforce/views.py` — layar per peran (supervisor/finance/owner), uang IDR + USD dari `money_display` | templat + uji render | 0 istilah teknis di layar supervisor; 0 nilai uang tanpa USD | uji render + grep templat |

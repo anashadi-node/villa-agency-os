@@ -119,12 +119,12 @@ class PolicyVersion:
         value = self.payload.get(key, default)
         if value is None:
             raise PolicyPayloadInvalid(
-                f"policy {self.policy_code} v{self.version} tidak memuat '{key}'",
+                f"policy {self.policy_code} v{self.version} does not carry '{key}'",
                 {"policy_code": self.policy_code, "key": key},
             )
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise PolicyPayloadInvalid(
-                f"policy {self.policy_code}: '{key}' harus bilangan bulat >= 0",
+                f"policy {self.policy_code}: '{key}' must be an integer >= 0",
                 {"policy_code": self.policy_code, "key": key, "value": value},
             )
         return value
@@ -159,7 +159,7 @@ class PolicyBundle:
             return self.policies[code]
         except KeyError:
             raise PolicyNotFound(
-                f"policy '{code}' tidak berlaku pada {to_iso_date(self.on_date)}",
+                f"policy '{code}' is not in force on {to_iso_date(self.on_date)}",
                 {"policy_code": code, "on_date": to_iso_date(self.on_date)},
             ) from None
 
@@ -168,7 +168,7 @@ class PolicyBundle:
             rate = self.rates[component_code]
         except KeyError:
             raise PayRateNotFound(
-                f"tarif '{component_code}' tidak berlaku pada {to_iso_date(self.on_date)}",
+                f"pay rate '{component_code}' is not in force on {to_iso_date(self.on_date)}",
                 {"component_code": component_code, "on_date": to_iso_date(self.on_date)},
             ) from None
         if rate.unit != unit:
@@ -183,7 +183,7 @@ class PolicyBundle:
         currencies = {rate.currency for rate in self.rates.values()}
         if len(currencies) != 1:
             raise PayRateCurrencyMismatch(
-                "satu slip hanya boleh satu mata uang",
+                "one payslip can only carry one currency",
                 {"currencies": sorted(currencies)},
             )
         return currencies.pop()
@@ -203,7 +203,7 @@ def _parse_payload(policy_code: str, raw: str) -> dict[str, Any]:
         ) from exc
     if not isinstance(payload, dict):
         raise PolicyPayloadInvalid(
-            f"payload policy {policy_code} harus objek JSON",
+            f"policy payload {policy_code} must be a JSON object",
             {"policy_code": policy_code},
         )
     return payload
@@ -222,7 +222,7 @@ def _verify_checksum(policy_code: str, raw: str, payload: Mapping[str, Any],
     literal = sha256_hex(raw)
     if stored not in (canonical, literal):
         raise PolicyChecksumMismatch(
-            f"checksum policy {policy_code} tidak cocok dengan isinya",
+            f"policy {policy_code} checksum does not match its content",
             {"policy_code": policy_code, "stored": stored[:12], "computed": canonical[:12]},
         )
 
@@ -248,14 +248,14 @@ def load_policy_version(conn: sqlite3.Connection, policy_code: str, on_date: dat
     rows = _load_policy_rows(conn, policy_code, agency_id, on_date)
     if not rows:
         raise PolicyNotFound(
-            f"policy '{policy_code}' tidak berlaku pada {to_iso_date(on_date)}",
+            f"policy '{policy_code}' is not in force on {to_iso_date(on_date)}",
             {"policy_code": policy_code, "agency_id": agency_id,
              "on_date": to_iso_date(on_date)},
         )
     if len(rows) > 1:
         raise PolicyAmbiguous(
-            f"policy '{policy_code}' punya {len(rows)} versi berlaku pada "
-            f"{to_iso_date(on_date)}; jendela harus tidak bertumpang",
+            f"policy '{policy_code}' has {len(rows)} versions in force on "
+            f"{to_iso_date(on_date)}; effective windows must not overlap",
             {"policy_code": policy_code,
              "versions": [row["policy_version_id"] for row in rows]},
         )
@@ -293,7 +293,7 @@ def load_pay_rates(conn: sqlite3.Connection, staff_id: str, on_date: date, *,
         component = str(row["component_code"])
         if component in rates:
             raise PayRateAmbiguous(
-                f"tarif '{component}' punya lebih dari satu baris berlaku pada "
+                f"pay rate '{component}' has more than one row in force on "
                 f"{to_iso_date(on_date)}",
                 {"component_code": component,
                  "pay_rate_ids": [rates[component].pay_rate_id, str(row["pay_rate_id"])]},
@@ -333,7 +333,7 @@ def load_bundle(conn: sqlite3.Connection, staff_id: str, on_date: date, *,
     rates = load_pay_rates(conn, staff_id, on_date, agency_id=agency_id)
     if not rates:
         raise PayRateNotFound(
-            f"tidak ada tarif berlaku untuk {staff_id} pada {to_iso_date(on_date)}",
+            f"no pay rate is in force for {staff_id} on {to_iso_date(on_date)}",
             {"staff_id": staff_id, "on_date": to_iso_date(on_date)},
         )
     return PolicyBundle(staff_id=staff_id, on_date=on_date, policies=policies, rates=rates)
