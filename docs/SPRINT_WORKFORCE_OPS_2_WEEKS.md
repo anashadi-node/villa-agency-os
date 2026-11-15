@@ -93,7 +93,7 @@ Setiap tugas punya **pemilik peran**, **artefak**, **DoD**, dan **perintah bukti
 | T1.4 | **Selesai** | `src/workforce/timesheet.py` + `tests/test_workforce_timesheet.py` (19 uji): menit dihitung dari event kehadiran, istirahat memotong, lembur hanya di luar shift terbit, punch menggantung menolak penutupan, `APPROVED` membekukan isi lewat `lock_hash` |
 | T1.5 | **Selesai** | `src/workforce/tasks.py` + `tests/test_workforce_tasks.py` (28 uji): penugasan terikat identitas staf aktif, staf nonaktif/asing properti ditolak, `DROPPED` wajib alasan ≥3 karakter, penugasan `DONE` tidak bisa dibuka lagi |
 | T1.6 | Selesai (sudah ada) | `tests/test_workforce_null_semantics.py` |
-| T1.7 | Menunggu | gate G1 dijalankan setelah seluruh jalur tulis T1.1–T1.6 selesai |
+| T1.7 | **Selesai** (2026-11-15) | `tests/test_workforce_gate_g1.py` (13 uji: 10 di SQLite, 3 di PostgreSQL sungguhan) — lihat §4.1 |
 
 Dua temuan saat T1.1–T1.2 dikerjakan, keduanya masuk ke kode dan tes:
 
@@ -112,6 +112,46 @@ Empat temuan saat T1.4 dikerjakan:
 2. **`break_minutes` belum ada di skema.** Kolom ini dibutuhkan untuk memotong istirahat dari menit kerja, jadi ditambahkan ke `001_initial.sql` dan `018_workforce_ops.sql` (CHECK 0–1440) dan kembaran Postgres diregenerasi. Tanpa kolom ini, istirahat 30 menit akan tampil sebagai upah.
 3. **`submitted_by`/`rejected_by` belum punya kolom.** Nilainya tetap divalidasi (tidak kosong, ≤64 karakter) tetapi tidak disimpan — menambah kolom audit baru harus lewat ADR, bukan lewat kode yang sedang ditulis. Dicatat sebagai utang Sprint 2 bila audit identitas pengaju dibutuhkan.
 4. **Ambiguitas "lembur" diselesaikan dengan jadwal, bukan dengan tebakan.** Menit di luar shift terbit = lembur; menit tanpa shift sama sekali = reguler dan tetap dihitung di `unrostered_minutes` supaya terlihat, bukan disembunyikan. Periode ≥2400 menit (40 jam) ditolak dan naik ke manusia — bukan dipotong otomatis.
+
+### 4.1 T1.7 — gerbang G1 dijalankan (2026-11-15)
+
+T1.1–T1.5 menguji tiap modul sendiri-sendiri. Gerbang G1 menguji klaim gabungannya:
+**empat penulis berbeda, di satu basis data, tidak pernah menghasilkan dua baris untuk
+satu kunci.** Yang dijalankan:
+
+| Bukti | Perintah | Hasil |
+|---|---|---|
+| Suite penuh + PII gate + twin `--check` | `make check` | `4297 passed, 7 skipped, 4176 subtests`, `PRE-DEPLOY GATE: PASS`, RC=0 |
+| Gerbang G1 di SQLite | `.venv/bin/python -m pytest tests/test_workforce_gate_g1.py` | `10 passed` |
+| Gerbang G1 di PostgreSQL sungguhan (kontainer `villa-pg-parity`) | `VILLA_PG_DSN=... pytest tests/test_workforce_gate_g1.py` | `13 passed` |
+| Paritas + gerbang di satu sesi (persis perintah CI) | `pytest tests/test_schema.py tests/test_workforce_gate_g1.py` | `88 passed, 796 subtests passed` |
+
+Tiga temuan saat gerbang dijalankan:
+
+1. **Kunci yang dipakai ulang untuk isi berbeda ditelan sebagai "replay".** Kiriman
+   ulang dengan `idempotency_key` sama tetapi `event_type`/`occurred_at_utc` berbeda
+   mengembalikan baris lama seolah sukses — bukti yang sebenarnya dilaporkan perangkat
+   hilang tanpa jejak. Kini `attendance.record()` membandingkan isi baris tersimpan
+   dengan kiriman; beda isi → `WORKFORCE_ATTENDANCE_IDEMPOTENCY_MISMATCH` dengan daftar
+   `differing_fields`. Kunci yang sama dengan isi yang sama tetap replay yang sah.
+2. **Bukti idempotensi di SQLite bukan bukti untuk PostgreSQL.** `ON CONFLICT`, tipe,
+   dan trigger `PL/pgSQL` adalah kode yang berbeda dari SQLite; menguji di satu dialek
+   membuktikan mesin yang tidak dipakai produksi. Sisi PostgreSQL kini menerapkan twin
+   ke *schema* privat `gate_g1`, lalu membuktikan di server: kunci ganda ditolak
+   (`UniqueViolation`), bukti absensi menolak `UPDATE`/`DELETE`, dan lima kunci unik
+   penulis ada di katalog. Job CI `postgres-parity` menjalankan **kedua** berkas tes.
+3. **`make check` memakai `/usr/bin/python3`, yang tidak punya driver PostgreSQL.**
+   Tanpa penanganan eksplisit, tes PG gagal di `import` — atau lebih buruk, dilewati
+   diam-diam sehingga gerbang "hijau" tanpa pernah menyentuh server. Driver kini
+   diselesaikan seperti `schema_loader.open_pg` (`psycopg` → `psycopg2`), dan bila
+   tidak ada: **dilewati dengan alasan tercetak** (`-rs`), bukan lulus. Dengan
+   `VILLA_PG_REQUIRED=1` ketiadaan DSN/driver = gagal keras, bukan lewat.
+
+Sisa celah yang dicatat jujur (utang Sprint 2, bukan klaim selesai): penulis
+(`attendance`, `timesheet`, `tasks`, `roster`) masih berjalan di SQLite; sisi
+PostgreSQL membuktikan **jaminan basis data**-nya (kunci + trigger), bukan eksekusi
+modul Python-nya. Menutup celah ini berarti adaptor dialek untuk lapisan SQL — ADR
+tersendiri, bukan tambahan senyap di sprint ini.
 
 ### Minggu 2 — upah deterministik (H2) + tampilan (H3)
 

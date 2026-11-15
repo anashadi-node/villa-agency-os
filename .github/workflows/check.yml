@@ -114,10 +114,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-dev.txt
 
-      - name: Apply the twin and compare catalogues
+      # Dua gerbang di server sungguhan: paritas katalog (skema) dan gerbang G1
+      # (kunci idempoten + bukti append-only benar-benar ditegakkan PostgreSQL).
+      - name: Apply the twin, compare catalogues, run gate G1 on PostgreSQL
         run: |
           set -o pipefail
-          python -m pytest tests/test_schema.py -rs 2>&1 | tee pg-parity.log
+          python -m pytest tests/test_schema.py tests/test_workforce_gate_g1.py -rs 2>&1 | tee pg-parity.log
 
       - name: Upload parity log
         if: always()
