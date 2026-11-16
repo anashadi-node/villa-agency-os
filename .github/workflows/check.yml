@@ -30,7 +30,12 @@ jobs:
         # klaim "stdlib-only" tetap benar di kedua sisinya (audit 2026-11-13, S4).
         python: ["3.11", "3.12", "3.13"]
     steps:
+      # Riwayat penuh, bukan clone dangkal: gerbang T2.8 memeriksa bahwa setiap commit yang
+      # dikutip dokumen benar-benar ada di riwayat (tests/test_sprint_doc_claims.py). Di clone
+      # `fetch-depth: 1` objeknya tidak ada, dan "tidak terlihat" bukan "tidak ada".
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v7
         with:
@@ -102,7 +107,12 @@ jobs:
       VILLA_PG_DSN: postgresql://postgres:postgres@localhost:5432/postgres
       VILLA_PG_REQUIRED: "1"
     steps:
+      # Riwayat penuh, bukan clone dangkal: gerbang T2.8 memeriksa bahwa setiap commit yang
+      # dikutip dokumen benar-benar ada di riwayat (tests/test_sprint_doc_claims.py). Di clone
+      # `fetch-depth: 1` objeknya tidak ada, dan "tidak terlihat" bukan "tidak ada".
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v7
         with:

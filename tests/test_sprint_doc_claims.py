@@ -81,6 +81,31 @@ def test_every_claimed_test_count_matches_reality(collected: dict[str, int]) -> 
     assert not wrong, "angka uji di dokumen tidak sama dengan kenyataan:\n" + "\n".join(wrong)
 
 
+def commit_is_present(sha: str) -> bool:
+    """Ada di objek lokal? Clone dangkal tidak bisa menjawab, dan itu bukan "tidak ada".
+
+    CI memakai `fetch-depth: 0` sejak T2.8, jadi di sana riwayatnya lengkap dan pertanyaan ini
+    benar-benar terjawab. Di clone dangkal, menjawab "tidak ada" akan menuduh dokumen yang jujur
+    (dan `git fetch origin <sha>` tidak bisa dipakai sebagai bukti: server boleh menolak sha yang
+    valid sekalipun), jadi keadaannya dinyatakan apa adanya, bukan disimpulkan.
+    """
+    present = subprocess.run(
+        ["git", "-C", str(REPO), "cat-file", "-e", f"{sha}^{{commit}}"], capture_output=True
+    )
+    if present.returncode == 0:
+        return True
+    shallow = subprocess.run(
+        ["git", "-C", str(REPO), "rev-parse", "--is-shallow-repository"],
+        capture_output=True, text=True,
+    ).stdout.strip()
+    if shallow == "true":
+        pytest.skip(
+            f"clone dangkal: {sha} tidak ada di objek lokal, dan 'tidak terlihat dari sini' "
+            "bukan 'tidak ada di riwayat' — jalankan di clone beriwayat penuh untuk memeriksanya"
+        )
+    return False
+
+
 def test_every_claimed_total_names_the_commit_it_was_measured_at() -> None:
     """Total "N passed" tanpa commit adalah angka yang tidak bisa diperiksa siapa pun."""
     lines = DOC.read_text(encoding="utf-8").splitlines()
@@ -94,8 +119,6 @@ def test_every_claimed_total_names_the_commit_it_was_measured_at() -> None:
     for lineno, line in totals:
         sha = re.search(r"`([0-9a-f]{7,40})`", line)
         assert sha, lineno
-        exists = subprocess.run(
-            ["git", "-C", str(REPO), "cat-file", "-e", f"{sha.group(1)}^{{commit}}"],
-            capture_output=True,
+        assert commit_is_present(sha.group(1)), (
+            f"baris {lineno}: commit {sha.group(1)} tidak ada di riwayat"
         )
-        assert exists.returncode == 0, f"baris {lineno}: commit {sha.group(1)} tidak ada di riwayat"

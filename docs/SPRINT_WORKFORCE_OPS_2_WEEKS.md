@@ -637,7 +637,20 @@ ulang supaya tidak berbentuk klaim. Pengunci yang diperketat diuji ulang dengan 
 ketiganya membuatnya gagal: angka uji dirusak (`20` → `99`) · total tanpa commit · commit
 pengukuran yang tidak ada (`deadbee`). Dokumen dipulihkan dengan sha256 identik.
 
-**3. Cacat susunan yang ikut terbawa: §4.5 terlempar ke akhir berkas**, sesudah §12 Riwayat
+**CI menemukan cacat ketiga — pada pengunci itu sendiri.** Tiga job gate gagal dengan pesan
+`commit 6b08a9b tidak ada di riwayat`. Penyebabnya bukan dokumennya: `actions/checkout@v7` di
+workflow memakai clone **dangkal** (`fetch-depth: 1`), jadi commit yang dikutip dokumen memang tidak
+ada di objek lokal — dan penguncinya menyimpulkan "tidak ada" dari "tidak terlihat dari sini". Itu
+tuduhan palsu kepada dokumen yang jujur.
+
+Dua hal diperbaiki: (a) workflow kini memakai **riwayat penuh** (`fetch-depth: 0`) sehingga
+pertanyaan itu benar-benar terjawab di CI; (b) penguncinya membedakan kedua keadaan — di clone
+dangkal ia **skip dengan alasan tertulis**, tidak pernah menuduh, dan `git fetch origin <sha>`
+sengaja **tidak** dipakai sebagai bukti karena server boleh menolak sha yang valid sekalipun.
+Dibuktikan dengan tiga kontrol: clone dangkal → `skip` beralasan; clone penuh → periksa sungguhan;
+clone penuh + commit palsu (`deadbee`) → RC=1.
+
+**4. Cacat susunan yang ikut terbawa: §4.5 terlempar ke akhir berkas**, sesudah §12 Riwayat
 perubahan. Dipindahkan ke tempatnya (sebelum §4.6). Isi tidak berubah — diverifikasi dengan
 membandingkan jumlah baris berisi sebelum/sesudah.
 
@@ -652,7 +665,7 @@ membandingkan jumlah baris berisi sebelum/sesudah.
 
 **Keadaan gerbang G4 (rilis):** suite penuh hijau dan PII gate lulus lewat `make check` (angka
 per-commit di `reports/gate-g3-g4-workforce.md`), dokumen status selaras (butir 2 dan 3 di atas,
-kini dikunci uji), PR dibuka dengan CI 4/4.
+kini dikunci uji), PR dibuka — dan CI pertamanya **gagal**, yang justru memunculkan cacat ketiga di atas; sesudah diperbaiki, keempat job gate plus job twin PostgreSQL hijau (lihat cek PR #34).
 
 **Batas yang diakui.** Tidak ada uji visual: kontras dihitung dari rumus WCAG yang sama dengan CSS,
 bukan dari piksel hasil render. Gate PII hanya memindai berkas teks — berkas biner, nama, dan

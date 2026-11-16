@@ -97,6 +97,22 @@ arah), bukan dokumennya. Setelah diperketat, tiga sabotase membuktikan penguncin
 
 Dokumen dipulihkan dengan **sha256 identik** sesudah ketiga sabotase; sesudah dipulihkan RC=0, 0 gagal.
 
+**Cacat ketiga, ditemukan CI — pada pengunci itu sendiri.** Ketiga job gate gagal dengan
+`commit 6b08a9b tidak ada di riwayat`. Sebabnya bukan dokumen: `actions/checkout@v7` memakai clone
+dangkal (`fetch-depth: 1`), jadi commit yang dikutip tidak ada di objek lokal — dan penguncinya
+membaca "tidak terlihat dari sini" sebagai "tidak ada di riwayat". Itu tuduhan palsu kepada dokumen
+yang jujur. Perbaikan: workflow memakai `fetch-depth: 0`; penguncinya membedakan dua keadaan dan
+**skip dengan alasan** di clone dangkal (tanpa pernah menuduh). `git fetch origin <sha>` sengaja tidak
+dipakai sebagai bukti: server boleh menolak sha yang valid.
+
+| Kontrol | Hasil |
+|---|---|
+| clone dangkal (`--depth=1`) | `1 skipped` dengan alasan tertulis, **bukan** gagal |
+| clone penuh (bersih, setara CI) | `2 passed` |
+| clone penuh + commit palsu (`deadbee`) | RC=1, `1 failed` |
+| dokumen dipulihkan | sha256 identik, RC=0 |
+
+
 ### 3.4 Cacat susunan dokumen
 
 §4.5 (T2.5) berada **setelah §12 Riwayat perubahan**, bukan di antara §4.4 dan §4.6. Dipindahkan ke
