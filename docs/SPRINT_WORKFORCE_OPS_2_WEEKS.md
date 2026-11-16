@@ -688,8 +688,10 @@ membandingkan jumlah baris berisi sebelum/sesudah.
 | tanpa data nyata | staf bernama `Ops Staff 01..12`; `scan_stored_pii.py --db data/villa.db` → **7 kolom diperiksa, 0 baris** membawa P3/P4; `pii_scan.py` → **0 temuan atas 423 berkas teks**; gerbang bahasa → **0 istilah Indonesia di 10 berkas** `src/workforce/` + katalog 9 label; layar supervisor → 0 istilah mesin | `scripts/scan_stored_pii.py`, `scripts/check_workforce_language.py`, `test_the_supervisor_screen_shows_no_machine_words` |
 
 **Angka T2.8 sendiri, dan kenapa dua lingkungan berbeda.**
-- Lokal: **4455 passed, 7 skipped** (+4176 subtests, 408,10 s), `PRE-DEPLOY GATE: PASS` — diukur pada run CI `43797100871`.
-- CI, tiga interpreter, run yang sama: **4454 passed, 8 skipped** — provenance run CI `43797100871`.
+- Lokal: **4457 passed, 7 skipped** (+4176 subtests, 408,32 s), `PRE-DEPLOY GATE: PASS` — diukur pada run CI `43804340984`.
+- CI, tiga interpreter, run yang sama: **4456 passed, 8 skipped** — provenance run CI `43804340984`.
+- Angka ini dari head terakhir PR #34 (+2 uji dari kunci baru: rujukan tahan-squash dan rujukan seluruh
+  dokumentasi); commit dokumen sesudahnya tidak mengubahnya, karena dokumen bukan uji.
 - Selisih satu uji bukan kegagalan: uji pembaca store butuh `data/villa.db`, dan clone bersih CI tidak
   punya berkas itu — persis alasan skip yang sudah dicatat dokumen A-Z. Keduanya ditulis supaya tidak
   ada pembaca yang mengira salah satunya salah. Repo ini tidak mengizinkan commit merge (squash/rebase

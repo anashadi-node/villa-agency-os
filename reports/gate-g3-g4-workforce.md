@@ -1,6 +1,6 @@
 # Gerbang G3 + G4 — Workforce Ops (T2.8)
 
-**Tanggal:** 2026-11-15 · **Provenance:** run CI `43797100871` (cabang `gate/t2-8`, sebelum squash-merge)
+**Tanggal:** 2026-11-15 · **Provenance:** run CI `43804340984` (head terakhir cabang `gate/t2-8`, sebelum squash-merge)
 · **Catatan provenance:** repo ini tidak mengizinkan commit merge (squash/rebase saja), jadi commit cabang tidak dipertahankan di riwayat; provenance yang tahan adalah run CI + laporan lokal — karena itu angka di sini diatribusikan ke run CI, bukan ke sha commit cabang yang akan hilang
 
 Laporan ini mencatat apa yang **diukur**, bukan apa yang diharapkan. Setiap angka di bawah berasal
@@ -160,16 +160,16 @@ tampak seperti sha adalah nomor run CI `43558380150`, bukan commit).
 
 | Langkah | Perintah | Hasil nyata |
 |---|---|---|
-| Suite penuh + semua pemindai (lokal) | `make check` | **4455 passed, 7 skipped, 4176 subtests**, 408,10 s, `MAKE_RC=0`, **PRE-DEPLOY GATE: PASS** |
-| Suite penuh di CI (3 interpreter) | `make check` di CI | **4454 passed, 8 skipped** — selisih 1 uji = pembaca store yang butuh `data/villa.db`, di-skip di clone bersih (bukan kegagalan) |
+| Suite penuh + semua pemindai (lokal) | `make check` | **4457 passed, 7 skipped, 4176 subtests**, 408,32 s, `MAKE_RC=0`, **PRE-DEPLOY GATE: PASS** |
+| Suite penuh di CI (3 interpreter) | `make check` di CI | **4456 passed, 8 skipped** (run CI `43804340984`) — selisih 1 uji = pembaca store yang butuh `data/villa.db`, di-skip di clone bersih (bukan kegagalan) |
 | Pemindai rahasia | `bash scripts/secret_scan.sh` | `PASS (0 findings, 450 files scanned)` |
 | Pemindai konfigurasi tidak aman | `bash scripts/unsafe_config_scan.sh` | `PASS (0 findings, 450 files scanned)` |
 | Gerbang PII | `/usr/bin/python3 scripts/pii_scan.py` | `PASS (0 findings, 424 text files scanned)` |
 | PII tersimpan di DB | `/usr/bin/python3 scripts/scan_stored_pii.py --db data/villa.db` | **0 baris** membawa P3/P4 (7 kolom) |
 | Uji baru | `pytest tests/test_pii_gate.py tests/test_sprint_doc_claims.py` | **10 passed** |
 
-Perbandingan dengan baseline pra-T2.8 (`6b08a9b`, T2.7): 4445 → **4455** uji (+10: 8 gerbang PII +
-2 pengunci dokumen), waktu 410,38 → 408,10 s.
+Perbandingan dengan baseline pra-T2.8 (`6b08a9b`, T2.7): 4445 → **4457** uji (+12: 8 gerbang PII + 4
+pengunci dokumen/rujukan), waktu 410,38 → 408,32 s.
 
 ---
 
