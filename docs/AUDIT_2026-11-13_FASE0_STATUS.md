@@ -5,7 +5,10 @@ Agency OS". Kolom **Bukti** hanya berisi hal yang benar-benar dijalankan di repo
 klaim. Kolom **Status** hanya punya tiga nilai: `TERKIRIM` (kode + tes ada dan lulus),
 `SEBAGIAN` (ada tetapi ada yang belum), `TERBUKA` (belum dikerjakan).
 
-Basis: `23a0a0d` → tujuh commit patch (`f2abe79`…`c488222`) → commit kerja sesudahnya.
+Basis: `23a0a0d` → tujuh commit patch (`ee1bb5b`…`08c5453`) → commit kerja sesudahnya.
+Ketujuh commit itu di-rebase sesudah audit, jadi sha aslinya (mis. yang diawali `f2abe`), sudah tidak ada
+di riwayat dan tidak bisa diperiksa lagi; yang dikutip di atas adalah sha versi yang bertahan,
+dengan subjek yang sama.
 
 ## Ringkasan
 

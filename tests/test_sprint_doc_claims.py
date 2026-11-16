@@ -81,19 +81,36 @@ def test_every_claimed_test_count_matches_reality(collected: dict[str, int]) -> 
     assert not wrong, "angka uji di dokumen tidak sama dengan kenyataan:\n" + "\n".join(wrong)
 
 
+def reachable_commits() -> set[str]:
+    """Commit yang bisa diperiksa orang lain: yang terjangkau dari ref mana pun.
+
+    `git cat-file -e` tidak cukup. Di clone yang pernah rebase/amend, commit lama masih ada sebagai
+    objek tak terjangkau — jadi pemeriksaan berbasis objek LOLOS di mesin pengembang dan GAGAL di
+    clone bersih: hijau lokal, merah di CI, dan rujukan menggantung lolos sampai ada yang mengkloning
+    ulang. Persis itu yang terjadi pada `docs/AUDIT_2026-11-13_FASE0_STATUS.md`.
+    """
+    out = subprocess.run(
+        ["git", "-C", str(REPO), "rev-list", "--all"], capture_output=True, text=True
+    ).stdout
+    return {line.strip() for line in out.splitlines() if line.strip()}
+
+
 def commit_is_present(sha: str) -> bool:
-    """Ada di objek lokal? Clone dangkal tidak bisa menjawab, dan itu bukan "tidak ada".
+    """Ada DAN terjangkau? Clone dangkal tidak bisa menjawab, dan itu bukan "tidak ada".
 
     CI memakai `fetch-depth: 0` sejak T2.8, jadi di sana riwayatnya lengkap dan pertanyaan ini
     benar-benar terjawab. Di clone dangkal, menjawab "tidak ada" akan menuduh dokumen yang jujur
     (dan `git fetch origin <sha>` tidak bisa dipakai sebagai bukti: server boleh menolak sha yang
     valid sekalipun), jadi keadaannya dinyatakan apa adanya, bukan disimpulkan.
     """
-    present = subprocess.run(
-        ["git", "-C", str(REPO), "cat-file", "-e", f"{sha}^{{commit}}"], capture_output=True
+    resolved = subprocess.run(
+        ["git", "-C", str(REPO), "rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}"],
+        capture_output=True, text=True,
     )
-    if present.returncode == 0:
-        return True
+    if resolved.returncode == 0:
+        # rev-parse menerima singkatan 7 huruf dan mengembalikan sha penuh; rev-list selalu penuh,
+        # jadi keduanya harus disamakan dulu sebelum dibandingkan.
+        return resolved.stdout.strip() in reachable_commits()
     shallow = subprocess.run(
         ["git", "-C", str(REPO), "rev-parse", "--is-shallow-repository"],
         capture_output=True, text=True,
