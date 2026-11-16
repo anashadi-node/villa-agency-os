@@ -25,10 +25,16 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 DOC = REPO / "docs" / "SPRINT_WORKFORCE_OPS_2_WEEKS.md"
 
-# "tests/test_x.py (17 uji)" dan "20 uji pada tests/test_x.py" — dua arah yang dipakai dokumen.
+# Klaim harus MENEMPEL pada berkasnya — jarak maksimal 12 karakter, dua arah:
+#   "`tests/test_x.py` (17 uji)"      dan   "35 uji di `tests/test_x.py`"
+# Jendela lebar (60 karakter) pernah dipakai dan menghasilkan empat positif palsu: angka
+# lama yang dikutip dalam kalimat ("T2.6 menulis 14 uji pada ...") terbaca sebagai klaim
+# status hari ini, dan angka milik berkas lain terbaca sebagai milik berkas berikutnya.
+# Konvensi ini yang membuat pemeriksa bisa dipercaya: kalau sebuah angka menyebut suatu
+# berkas, ia harus berdiri tepat di sebelahnya.
 CLAIM_PATTERNS = (
-    re.compile(r"tests/(test_[A-Za-z0-9_]+\.py)[^0-9\n]{0,60}?(\d+)\s*uji"),
-    re.compile(r"(\d+)\s*uji[^0-9\n]{0,60}?tests/(test_[A-Za-z0-9_]+\.py)"),
+    re.compile(r"tests/(test_[A-Za-z0-9_]+\.py)`?\s*\(?\s*(\d+)\s*uji"),
+    re.compile(r"(\d+)\s*uji[^0-9\n]{0,12}?tests/(test_[A-Za-z0-9_]+\.py)"),
 )
 TOTAL = re.compile(r"(\d{3,5})\s+passed")
 

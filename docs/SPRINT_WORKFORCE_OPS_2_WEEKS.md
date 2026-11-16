@@ -288,11 +288,121 @@ Empat keputusan saat T2.4 dikerjakan:
 | T2.6 | **Selesai** (2026-11-15) | `src/workforce/views.py` + 3 templat (`workforce_supervisor/finance/owner.html`) + katalog label `src/workforce/screen_labels.json` + 20 uji pada `tests/test_workforce_views.py` (14 saat T2.6 selesai; T2.6b menambah 6): tiga layar per peran, uang selalu lewat `money_display` (IDR dulu, referensi USD hanya bila policy menerbitkan kurs yang masih segar), layar read-only, gerbang peran *deny by default*, dan 0 istilah mesin di layar supervisor — lihat §4.6 | templat + uji render | 0 istilah teknis di layar supervisor; 0 nilai uang tanpa USD | uji render + grep templat |
 | T2.6b | **Selesai** (2026-11-15) | **Penyaluran rute** tiga layar workforce ke `dashboard.py` (tidak ada di rencana awal §4 hari 10): `/workforce/today`, `/workforce/payroll`, `/workforce/cost` → page key, `PAGE_ROLES` satu peran per layar, judul halaman, entri `NAV` + grup `Workforce`, dan `WorkforceViews` **kehilangan kerangka halamannya sendiri** supaya hanya ada satu kerangka. Dua gerbang (rute dan isi) dikunci setara oleh uji; 20 uji `tests/test_workforce_views.py` + 40 kombinasi (halaman × peran) di matriks HTTP `tests/test_dashboard.py` — lihat §4.7 | rute + `PAGE_ROLES` + uji HTTP | 200 hanya untuk peran pemiliknya; 403 untuk lainnya; 401 tanpa identitas; 404 menyebut pilihan | matriks rute × peran lewat HTTP nyata |
 | T2.7 | **Selesai** (2026-11-15) | Tema premium: token warna, tipografi, motif etnik-alam, kontras AA, `prefers-reduced-motion` | **Lapisan tema di `templates/base.html`** (CSS inline) + uji kontras — bukan `src/static/theme.css`: CSP dashboard `default-src 'none'; style-src 'unsafe-inline'` menolak berkas gaya eksternal, dan tidak ada rute `/static`. Alasan + angka di §4.8 | ≥8 pasangan warna lulus AA → **80 pasangan diukur, 80 lulus**; animasi mati saat reduced-motion → **dikunci uji**, termasuk kontrol negatif | `tests/test_ui_contrast.py` (rumus WCAG) + `tests/test_dashboard_bale_ui.py` |
-| T2.8 | 10 | **Gate G3 + G4**: suite penuh hijau, `make check`, audit PII, dokumen status diperbarui | log + PR | 0 gagal; 0 PII; angka status cocok kenyataan | `pytest -q`, `make check`, `git diff --stat` |
+| T2.8 | **Selesai** (2026-11-15) | **Gate G3 + G4**: suite penuh hijau, `make check`, audit PII, dokumen status diperbarui. Dua cacat ditemukan saat menjalankan gerbangnya sendiri: `scripts/pii_scan.py` mencetak PASS atas pohon yang tidak pernah dibaca (kini fail-closed, dikunci `tests/test_pii_gate.py` 8 uji), dan empat angka dokumen salah (kini dikunci `tests/test_sprint_doc_claims.py`). Butir G3 diperiksa satu per satu — lihat §4.9 | log + PR + `reports/gate-g3-g4-workforce.md` | 0 gagal; 0 PII; angka status cocok kenyataan (dikunci uji, bukan disiplin manual) | `make check`, `scripts/pii_scan.py`, `scripts/scan_stored_pii.py`, `git diff --stat` |
 
 **Beban:** ±6,5 hari untuk jalur kerja, ±3 hari untuk upah, ±2 hari untuk tampilan, ±1 hari buffer. Buffer **tidak** dipakai untuk menambah fitur.
 
 ---
+
+### 4.5 T2.5 — gerbang G2: 1.000 pemeriksaan, 0 selisih, dan bukti gerbangnya bisa gagal (2026-11-15)
+
+Klaim "rekonsiliasi nol selisih" gampang diucapkan dan sulit dipercaya. Karena itu
+gerbangnya dibuat dengan satu aturan: **yang menghitung ulang tidak boleh kode yang
+menulis**. `scripts/workforce_reconcile.py` membaca `workforce_roster_entries`,
+`workforce_attendance_events`, `workforce_timesheets`, `workforce_pay_rates`,
+`workforce_policy_versions`, `workforce_payslips`, `workforce_payslip_lines`, dan
+`audit_events`, lalu menghitung menit dan uangnya sendiri. Kalau penulis dan pemeriksa
+memakai fungsi yang sama, keduanya bisa sama-sama salah dan gerbangnya tetap hijau.
+
+**Dataset sintetis (bukan data orang nyata).** 12 staf (`Ops Staff 01..12`) di 2 properti,
+30 hari (2026-11-01…2026-11-30), 5 jendela timesheet pekanan, 859 punch, 214 baris roster.
+Dua bentuk run diuji sekaligus karena bisnis punya keduanya: 1 run bulanan (6 staf bergaji
+bulanan) dan 5 run pekanan (6 staf bertarif harian). Angka policy disemai sebagai payload
+berversi (`PAYROLL_TAX` bertanda `synthetic: true`, 5 %) supaya **tidak ada tarif yang
+di-hard-code**; angka itu contoh dan wajib disahkan Finance + counsel sebelum dipakai uang
+sungguhan (§7). Tidak ada satu pun run berstatus `PAID` di dataset — aturan sprint berhenti
+di `APPROVED`.
+
+| Tahap | Yang diperiksa | Jumlah | Selisih |
+|---|---|---|---|
+| R1 | punch mentah → baris `workforce_timesheets` (menit reguler, lembur, istirahat) | 180 | 0 |
+| R2 | jumlah timesheet periode → `worked_minutes`/`overtime_minutes` slip | 72 | 0 |
+| R3 | tarif + payload policy bertanggal → bruto/potongan/bersih **dan** baris slip | 144 | 0 |
+| R4 | baris slip → tajuk slip (bruto, potongan, bersih) | 108 | 0 |
+| R5 | tajuk slip → total run | 18 | 0 |
+| R6 | jejak: policy berversi di tiap baris, tarif per komponen, timesheet `APPROVED`, segel, event audit | 427 | 0 |
+| R8 | policy & tarif utuh dan disahkan: checksum payload dihitung ulang, tiap tarif punya penanggung jawab | 50 | 0 |
+| R7 | rantai hash audit utuh (`verify_chain`) | 1 | 0 |
+| | **total** | **1.000** | **0** |
+
+Angka yang keluar di dataset ini: 60 timesheet, 36 slip, 180 baris slip, 6 run, 98.580 menit
+dibayar, bruto 695.400 IDR, potongan 34.770 IDR, bersih 660.630 IDR — dan setiap angka di
+kolom "bersih" adalah hasil penjumlahan ulang, bukan nilai yang dipercaya dari penulisnya.
+
+**Kontrol negatif (20 uji, `tests/test_workforce_reconcile.py`; 11 di antaranya merusak data
+lebih dulu atau mengunci batas).** Tiap kelas cacat disimulasikan lebih dulu, lalu gerbangnya
+harus menandai tahap yang tepat; kalau tidak, uji itu gagal. Empat di antaranya membuktikan
+pertahanan berlapis di luar skrip:
+
+1. `UPDATE workforce_payslips SET net_minor = net_minor + 500000` **ditolak database**
+   (`ck_workforce_payslip_arithmetic`). Penyerang yang tetap ingin lolos harus menaikkan bruto
+   dan bersih bersama — versi itulah yang kemudian ditangkap R4 dan R5, karena barisnya
+   dijumlahkan ulang dari bukti.
+2. `UPDATE`/`DELETE` pada `audit_events` ditolak trigger append-only. Uji yang menyerupai
+   penyerang ber-hak-DDL menjatuhkan trigger itu lebih dulu, membuktikan **lapis kedua**
+   (rantai hash) tetap menangkap: satu baris disunting → R7; satu event issu dihapus → R6.
+3. Payload policy disunting di tempat (menaikkan `tax_percent` tanpa versi baru) sudah ditolak
+   **penulisnya sendiri**: `load_bundle` melempar `PolicyChecksumMismatch` saat slip disusun
+   (dibuktikan lewat CLI, lihat di bawah). Bila penyuntingan terjadi setelah slip terbit, R8
+   yang menangkap dan R3 menolak menghitung ulang memakai policy yang tidak bisa dipercaya.
+4. Tarif dengan penanggung jawab kosong ditolak constraint skema (`length(approved_by) >= 3`).
+   Uji mematikan constraint itu lebih dulu untuk membuktikan **lapis kedua**, R8, tetap melihat
+   tarif yang kehilangan penanggung jawab.
+
+**Empat hal nyata yang ditemukan gerbang ini saat pertama dijalankan** — inilah nilainya,
+bukan angka 1.000-nya:
+
+1. **Slip bisa lolos tanpa segel, dan skripnya mati.** `verify_seal()` melempar
+   `EntityNotFound` bila event segelnya hilang, sehingga rekonsiliasi berhenti dengan
+   traceback alih-alih melaporkan. Sekarang segel yang gagal diverifikasi dicatat sebagai
+   temuan R6 (`gagal diverifikasi: EntityNotFound`) — gerbang fail-closed tapi tetap
+   melapor.
+2. **Koreksi manusia hilang di hitungan ulang.** Satu `MANUAL_ADJUST` (jam device meleset,
+   dikoreksi +15 menit) membuat R1 melaporkan 1.830 vs 1.350 menit pada `stf_11`, karena
+   perhitungan ulang membuang baris koreksi sebagai "bukan punch". Aturan sistemnya benar
+   (koreksi mewarisi peran baris induknya, rantai, dan baris asli tidak dihapus); yang salah
+   implementasi pemeriksa. Ini contoh tepat mengapa pemeriksa harus ditulis terpisah: tanpa
+   itu, koreksi manusia menjadi selisih yang tak terlihat.
+3. **Run tidak bisa dipindah ke `CALCULATED` dengan tangan.** `issue()` sudah memarkir run di
+   `CALCULATED` saat slip terakhir ditulis, jadi transisi `CALCULATED` (dan sebelumnya juga
+   `PAID`) ditolak `IllegalRunTransition` — perilaku yang benar, dan skripnya sekarang
+   mengikuti alur nyata: tutup dengan `APPROVED`, `PAID` tetap keputusan Owner per run.
+4. **Gerbangnya sendiri pernah hijau di atas tarif yang salah.** Saat mencoba membuktikan
+   fail-closed lewat CLI, tarif dinaikkan **sebelum** slip terbit; slipnya jadi konsisten
+   dengan tarif yang salah itu, dan R1–R7 tidak punya alasan mengeluh. Itu batas nyata, bukan
+   bug yang bisa ditutup dengan kode: rekonsiliasi membuktikan kecocokan slip dengan tarif dan
+   policy *yang ada di basis data*, bukan kewajaran tarifnya terhadap kontrak. Karena itu R8
+   ditambahkan (checksum payload + penanggung jawab tiap tarif), dan batas ini **dikunci
+   sebagai uji** — `test_internal_consistency_cannot_vouch_for_a_wrong_but_signed_rate` — supaya
+   tidak ada yang lupa dan mengira gerbang ini memvalidasi tarif.
+
+**Batas yang harus dibaca sebelum mempercayai angka ini.** (a) Membandingkan tarif dengan rate
+card yang disetujui owner adalah kontrol manusia, di luar lingkup rekonsiliasi: yang bisa
+dikatakan R8 adalah "tarif ini utuh dan ditandatangani", bukan "tarif ini benar". (b) Detektor
+bahasa `scripts/check_workforce_language.py` memakai daftar penanda kata, jadi kata Indonesia di
+luar daftar itu masih bisa lolos — batas ini dicatat di docstring skripnya. (c) Angka pajak di
+dataset bertanda `synthetic: true`; kebijakan pajak sungguhan belum ada dan wajib disahkan
+Finance + counsel (§7).
+
+
+**Cara mereproduksi angkanya** (tanpa mengubah basis data apa pun — jalannya di basis data in-memory): `make workforce-reconcile` mencetak tabel yang sama seperti di atas; `python3 scripts/workforce_reconcile.py --json <berkas>` menyimpan versi mesin-baca (verdict, jumlah pemeriksaan per tahap, tiap selisih berikut diff-nya). Keluar 1 bila ada satu selisih, jadi CI tidak mungkin hijau di atas jumlah yang salah.
+
+**Bukti fail-closed pada jalur CLI (bukan hanya di pytest)** — `main()` yang sama seperti
+`make workforce-reconcile`, dijalankan tiga kali dengan data berbeda:
+
+| Data yang direkonsiliasi | Temuan | Kode keluar |
+|---|---|---|
+| policy disunting di tempat setelah slip terbit | 37 | **1** |
+| tarif dinaikkan setelah slip terbit | 120 | **1** |
+| dataset bersih | 0 | 0 |
+
+**Kedua gerbang masuk `make check`.** Target `workforce-language` dan `workforce-reconcile`
+dijalankan setiap kali gerbang pra-deploy berjalan, supaya angka "0 selisih" selalu berasal
+dari eksekusi nyata, bukan dari ingatan sesi sebelumnya. Ratchet bahasa khusus
+`src/workforce/` dibuat karena tes global memakai daftar penanda terbatas + pin berkas
+legacy: kata Indonesia di luar daftar itu (mis. `"issue() hanya menerima
+PayrollCalculation"`) lolos tanpa jejak, dan berkas workforce baru tidak punya pin apa pun.
+
 
 ### 4.6 T2.6 — tiga layar, satu kebenaran uang (2026-11-15)
 
@@ -473,6 +583,83 @@ membuat separuh pembaca kehilangan motifnya tanpa satu pun uji lain gagal.
 angka kontras dari rumus WCAG yang sama dengan CSS — bukan piksel hasil render. Kesamaan rumus
 dipaku `test_formula_matches_css`, jadi angka kontras tidak bisa benar sementara warna CSS berbeda.
 
+### 4.9 T2.8 — gerbang G3 + G4: satu gerbang yang berbohong, dan empat angka yang salah (2026-11-15)
+
+Menjalankan gerbang tidak sama dengan mempercayainya. Dua hal ditemukan saat menjalankannya,
+dan keduanya adalah jenis kegagalan yang tidak bisa dilihat dari hasil "hijau".
+
+**1. Gerbang PII mencetak PASS atas pohon yang tidak pernah dibaca.** `scripts/pii_scan.py`
+diarahkan ke direktori yang **tidak ada** — keluaran nyatanya:
+
+```
+PII-SCAN: PASS (0 findings, 0 text files scanned)      RC=0
+```
+
+Nol berkas dibaca, nol temuan, hijau. Direktori kosong, berkas biner, atau root yang salah tulis
+semuanya menghasilkan "bersih" yang sama. Ini kelas kegagalan yang paling berbahaya untuk sebuah
+gerbang: satu-satunya bukti yang bisa dihasilkan gate PII yang hijau adalah "tidak ada temuan",
+dan gate ini bisa menghasilkan kalimat itu tanpa membaca apa pun. Keluaran jalur normal sekarang
+menyebut jumlah berkas yang benar-benar dibaca (423 berkas saat baris ini ditulis), sehingga
+"0 findings" tidak bisa lagi berarti "0 dibaca".
+
+Diperbaiki **fail-closed**: root yang bukan direktori → `FAIL`, RC=1; pohon tanpa satu pun berkas
+teks terbaca → `FAIL`, RC=1. Dikunci `tests/test_pii_gate.py` (8 uji), termasuk kontrol positif
+yang menanam surel, nomor seluler, dan nomor kartu Luhn-valid yang **sengaja bukan** salah satu
+nomor uji di allowlist — menanam `4111…` hanya membuktikan allowlist bekerja, bukan bahwa
+pemindainya bekerja. Kontrol arah sebaliknya juga ada: pohon yang hanya memuat nilai sintetis
+tetap lulus, supaya gerbang ini tidak jadi penghalang yang semua orang akali.
+
+Gate ini juga menangkap berkas ujinya sendiri: nomor seluler literal di draf pertama membuat
+pemindaian repo gagal. Nilai tanamnya sekarang dibangun saat runtime.
+
+**2. Empat angka dokumen tidak benar.** `tests/test_sprint_doc_claims.py` mengukur ulang setiap
+berkas uji yang disebut dokumen dan menuntut angka di dokumen sama dengan kenyataan:
+
+| Klaim dokumen | Kenyataan |
+|---|---|
+| T2.1 menulis "15" untuk berkas yang sebenarnya **35 uji** (`tests/test_workforce_payroll_calc.py`: 15 kebijakan + 20 kalkulasi) | angka 15 menempel pada berkas yang salah |
+| T2.6 menulis "14" di dua tempat; berkas itu kini **20 uji** (`tests/test_workforce_views.py`) | T2.6b menambah 6 uji, angka lama tertinggal |
+| §6: `make check` → "4297 passed" | **4445 passed** pada `6b08a9b` |
+
+Keempatnya diperbaiki, dan dua aturan sekarang dikunci uji: (a) setiap angka "N uji" harus sama
+dengan hasil collection nyata, (b) setiap klaim total "N passed" harus menyebut commit tempat ia
+diukur, dan commit itu harus ada di riwayat — total tanpa atribusi adalah klaim yang tidak bisa
+diperiksa siapa pun. Uji pengunci ini juga menolak lulus secara hampa: ia gagal kalau jumlah klaim
+yang ditemukan turun di bawah 8, jadi menulis ulang dokumen agar klaimnya "menghilang" bukan jalan
+keluar.
+
+**Versi pertama pengunci itu sendiri salah, dan itu ditemukan dengan menjalankannya.** Jendela
+pencocokan 60 karakter membuatnya membaca **kutipan angka lama** sebagai klaim status hari ini —
+termasuk angka yang sedang ia keluhkan di tabel di atas. Empat positif palsu, semuanya dari
+kalimat yang jujur. Yang diperbaiki adalah detektornya, bukan dokumennya: klaim sekarang harus
+**menempel** pada berkasnya (jarak ≤12 karakter, dua arah), dan dua kutipan angka lama ditulis
+ulang supaya tidak berbentuk klaim. Pengunci yang diperketat diuji ulang dengan tiga sabotase, dan
+ketiganya membuatnya gagal: angka uji dirusak (`20` → `99`) · total tanpa commit · commit
+pengukuran yang tidak ada (`deadbee`). Dokumen dipulihkan dengan sha256 identik.
+
+**3. Cacat susunan yang ikut terbawa: §4.5 terlempar ke akhir berkas**, sesudah §12 Riwayat
+perubahan. Dipindahkan ke tempatnya (sebelum §4.6). Isi tidak berubah — diverifikasi dengan
+membandingkan jumlah baris berisi sebelum/sesudah.
+
+**Keadaan gerbang G3 (tampilan)** — semuanya dikunci uji, angka diambil dari eksekusi:
+
+| Syarat G3 | Angka nyata | Pengunci |
+|---|---|---|
+| kontras AA | **80 pasangan diukur, 80 lulus**; terlemah **4,59:1**; kontrol negatif **1,83:1** | `tests/test_dashboard_bale_ui.py`, `tests/test_ui_contrast.py` |
+| uang IDR + USD 100% | setiap angka rupiah membawa referensi dolar; kurs basi/tak terbit → dolar hilang dan layar mengatakannya | `test_every_rupiah_figure_carries_a_dollar_reference`, `test_without_a_published_rate_the_rupiah_stays_and_the_dollar_goes`, `test_a_stale_rate_drops_the_dollar_figure_and_says_so` |
+| peran terpisah | `/workforce/today` → `operations`, `/workforce/payroll` → `finance`, `/workforce/cost` → `owner`; 200 hanya pemiliknya, 403 lainnya, 401 tanpa identitas, 404 menyebut pilihan | `tests/test_workforce_views.py` (20 uji) + matriks HTTP `tests/test_dashboard.py` (+40 kombinasi) |
+| tanpa data nyata | staf bernama `Ops Staff 01..12`; `scan_stored_pii.py --db data/villa.db` → **7 kolom diperiksa, 0 baris** membawa P3/P4; `pii_scan.py` → **0 temuan atas 423 berkas teks**; gerbang bahasa → **0 istilah Indonesia di 10 berkas** `src/workforce/` + katalog 9 label; layar supervisor → 0 istilah mesin | `scripts/scan_stored_pii.py`, `scripts/check_workforce_language.py`, `test_the_supervisor_screen_shows_no_machine_words` |
+
+**Keadaan gerbang G4 (rilis):** suite penuh hijau dan PII gate lulus lewat `make check` (angka
+per-commit di `reports/gate-g3-g4-workforce.md`), dokumen status selaras (butir 2 dan 3 di atas,
+kini dikunci uji), PR dibuka dengan CI 4/4.
+
+**Batas yang diakui.** Tidak ada uji visual: kontras dihitung dari rumus WCAG yang sama dengan CSS,
+bukan dari piksel hasil render. Gate PII hanya memindai berkas teks — berkas biner, nama, dan
+alamat bukan cakupannya (dinyatakan sendiri oleh skripnya, bukan disimpulkan). Uji pengunci angka
+dokumen mengaudit **atribusi** klaim total, bukan menjalankan ulang suite penuh untuk membuktikan
+totalnya.
+
 ## 5. Gerbang (tidak boleh dilewati, tidak boleh "nanti")
 
 | Gerbang | Syarat lulus | Bila gagal |
@@ -578,116 +765,8 @@ Sprint **gagal** — dan harus ditulis begitu dalam laporan — bila salah satu 
 
 | Tanggal | Perubahan |
 |---|---|
+| 2026-11-15 | T2.8 gerbang G3+G4: gate PII ternyata mencetak PASS atas 0 berkas yang dibaca → diperbaiki fail-closed + dikunci 8 uji; empat angka dokumen salah (15→35 uji, 14→20 uji ×2, 4297→4445) → diperbaiki + dikunci `tests/test_sprint_doc_claims.py`; §4.5 yang terlempar ke akhir berkas dikembalikan ke urutannya — §4.9 |
 | 2026-11-15 | T2.7 diverifikasi butir-per-butir: 80 pasangan warna diukur (80 lulus, terlemah 4,59:1), gerakan/motif/tipografi kini dikunci uji dengan kontrol negatif yang dijalankan; deliverable berbentuk inline `templates/base.html` karena CSP menolak berkas gaya eksternal — §4.8 |
 | 2026-11-15 | T2.6b: tiga layar workforce disalurkan ke `dashboard.py` (rute + peran + nav); kerangka halaman kedua di `workforce/views.py` dihapus; pin bahasa `dashboard.py` 156 → 159 dengan alasan |
 | 2026-11-14 | Dokumen dibuat; baseline §1 diukur; cacat "NULL lolos CHECK" ditemukan & diperbaiki; kontrak uji 32 hijau; paritas skema OK |
 
-
-### 4.5 T2.5 — gerbang G2: 1.000 pemeriksaan, 0 selisih, dan bukti gerbangnya bisa gagal (2026-11-15)
-
-Klaim "rekonsiliasi nol selisih" gampang diucapkan dan sulit dipercaya. Karena itu
-gerbangnya dibuat dengan satu aturan: **yang menghitung ulang tidak boleh kode yang
-menulis**. `scripts/workforce_reconcile.py` membaca `workforce_roster_entries`,
-`workforce_attendance_events`, `workforce_timesheets`, `workforce_pay_rates`,
-`workforce_policy_versions`, `workforce_payslips`, `workforce_payslip_lines`, dan
-`audit_events`, lalu menghitung menit dan uangnya sendiri. Kalau penulis dan pemeriksa
-memakai fungsi yang sama, keduanya bisa sama-sama salah dan gerbangnya tetap hijau.
-
-**Dataset sintetis (bukan data orang nyata).** 12 staf (`Ops Staff 01..12`) di 2 properti,
-30 hari (2026-11-01…2026-11-30), 5 jendela timesheet pekanan, 859 punch, 214 baris roster.
-Dua bentuk run diuji sekaligus karena bisnis punya keduanya: 1 run bulanan (6 staf bergaji
-bulanan) dan 5 run pekanan (6 staf bertarif harian). Angka policy disemai sebagai payload
-berversi (`PAYROLL_TAX` bertanda `synthetic: true`, 5 %) supaya **tidak ada tarif yang
-di-hard-code**; angka itu contoh dan wajib disahkan Finance + counsel sebelum dipakai uang
-sungguhan (§7). Tidak ada satu pun run berstatus `PAID` di dataset — aturan sprint berhenti
-di `APPROVED`.
-
-| Tahap | Yang diperiksa | Jumlah | Selisih |
-|---|---|---|---|
-| R1 | punch mentah → baris `workforce_timesheets` (menit reguler, lembur, istirahat) | 180 | 0 |
-| R2 | jumlah timesheet periode → `worked_minutes`/`overtime_minutes` slip | 72 | 0 |
-| R3 | tarif + payload policy bertanggal → bruto/potongan/bersih **dan** baris slip | 144 | 0 |
-| R4 | baris slip → tajuk slip (bruto, potongan, bersih) | 108 | 0 |
-| R5 | tajuk slip → total run | 18 | 0 |
-| R6 | jejak: policy berversi di tiap baris, tarif per komponen, timesheet `APPROVED`, segel, event audit | 427 | 0 |
-| R8 | policy & tarif utuh dan disahkan: checksum payload dihitung ulang, tiap tarif punya penanggung jawab | 50 | 0 |
-| R7 | rantai hash audit utuh (`verify_chain`) | 1 | 0 |
-| | **total** | **1.000** | **0** |
-
-Angka yang keluar di dataset ini: 60 timesheet, 36 slip, 180 baris slip, 6 run, 98.580 menit
-dibayar, bruto 695.400 IDR, potongan 34.770 IDR, bersih 660.630 IDR — dan setiap angka di
-kolom "bersih" adalah hasil penjumlahan ulang, bukan nilai yang dipercaya dari penulisnya.
-
-**Kontrol negatif (20 uji, `tests/test_workforce_reconcile.py`; 11 di antaranya merusak data
-lebih dulu atau mengunci batas).** Tiap kelas cacat disimulasikan lebih dulu, lalu gerbangnya
-harus menandai tahap yang tepat; kalau tidak, uji itu gagal. Empat di antaranya membuktikan
-pertahanan berlapis di luar skrip:
-
-1. `UPDATE workforce_payslips SET net_minor = net_minor + 500000` **ditolak database**
-   (`ck_workforce_payslip_arithmetic`). Penyerang yang tetap ingin lolos harus menaikkan bruto
-   dan bersih bersama — versi itulah yang kemudian ditangkap R4 dan R5, karena barisnya
-   dijumlahkan ulang dari bukti.
-2. `UPDATE`/`DELETE` pada `audit_events` ditolak trigger append-only. Uji yang menyerupai
-   penyerang ber-hak-DDL menjatuhkan trigger itu lebih dulu, membuktikan **lapis kedua**
-   (rantai hash) tetap menangkap: satu baris disunting → R7; satu event issu dihapus → R6.
-3. Payload policy disunting di tempat (menaikkan `tax_percent` tanpa versi baru) sudah ditolak
-   **penulisnya sendiri**: `load_bundle` melempar `PolicyChecksumMismatch` saat slip disusun
-   (dibuktikan lewat CLI, lihat di bawah). Bila penyuntingan terjadi setelah slip terbit, R8
-   yang menangkap dan R3 menolak menghitung ulang memakai policy yang tidak bisa dipercaya.
-4. Tarif dengan penanggung jawab kosong ditolak constraint skema (`length(approved_by) >= 3`).
-   Uji mematikan constraint itu lebih dulu untuk membuktikan **lapis kedua**, R8, tetap melihat
-   tarif yang kehilangan penanggung jawab.
-
-**Empat hal nyata yang ditemukan gerbang ini saat pertama dijalankan** — inilah nilainya,
-bukan angka 1.000-nya:
-
-1. **Slip bisa lolos tanpa segel, dan skripnya mati.** `verify_seal()` melempar
-   `EntityNotFound` bila event segelnya hilang, sehingga rekonsiliasi berhenti dengan
-   traceback alih-alih melaporkan. Sekarang segel yang gagal diverifikasi dicatat sebagai
-   temuan R6 (`gagal diverifikasi: EntityNotFound`) — gerbang fail-closed tapi tetap
-   melapor.
-2. **Koreksi manusia hilang di hitungan ulang.** Satu `MANUAL_ADJUST` (jam device meleset,
-   dikoreksi +15 menit) membuat R1 melaporkan 1.830 vs 1.350 menit pada `stf_11`, karena
-   perhitungan ulang membuang baris koreksi sebagai "bukan punch". Aturan sistemnya benar
-   (koreksi mewarisi peran baris induknya, rantai, dan baris asli tidak dihapus); yang salah
-   implementasi pemeriksa. Ini contoh tepat mengapa pemeriksa harus ditulis terpisah: tanpa
-   itu, koreksi manusia menjadi selisih yang tak terlihat.
-3. **Run tidak bisa dipindah ke `CALCULATED` dengan tangan.** `issue()` sudah memarkir run di
-   `CALCULATED` saat slip terakhir ditulis, jadi transisi `CALCULATED` (dan sebelumnya juga
-   `PAID`) ditolak `IllegalRunTransition` — perilaku yang benar, dan skripnya sekarang
-   mengikuti alur nyata: tutup dengan `APPROVED`, `PAID` tetap keputusan Owner per run.
-4. **Gerbangnya sendiri pernah hijau di atas tarif yang salah.** Saat mencoba membuktikan
-   fail-closed lewat CLI, tarif dinaikkan **sebelum** slip terbit; slipnya jadi konsisten
-   dengan tarif yang salah itu, dan R1–R7 tidak punya alasan mengeluh. Itu batas nyata, bukan
-   bug yang bisa ditutup dengan kode: rekonsiliasi membuktikan kecocokan slip dengan tarif dan
-   policy *yang ada di basis data*, bukan kewajaran tarifnya terhadap kontrak. Karena itu R8
-   ditambahkan (checksum payload + penanggung jawab tiap tarif), dan batas ini **dikunci
-   sebagai uji** — `test_internal_consistency_cannot_vouch_for_a_wrong_but_signed_rate` — supaya
-   tidak ada yang lupa dan mengira gerbang ini memvalidasi tarif.
-
-**Batas yang harus dibaca sebelum mempercayai angka ini.** (a) Membandingkan tarif dengan rate
-card yang disetujui owner adalah kontrol manusia, di luar lingkup rekonsiliasi: yang bisa
-dikatakan R8 adalah "tarif ini utuh dan ditandatangani", bukan "tarif ini benar". (b) Detektor
-bahasa `scripts/check_workforce_language.py` memakai daftar penanda kata, jadi kata Indonesia di
-luar daftar itu masih bisa lolos — batas ini dicatat di docstring skripnya. (c) Angka pajak di
-dataset bertanda `synthetic: true`; kebijakan pajak sungguhan belum ada dan wajib disahkan
-Finance + counsel (§7).
-
-
-**Cara mereproduksi angkanya** (tanpa mengubah basis data apa pun — jalannya di basis data in-memory): `make workforce-reconcile` mencetak tabel yang sama seperti di atas; `python3 scripts/workforce_reconcile.py --json <berkas>` menyimpan versi mesin-baca (verdict, jumlah pemeriksaan per tahap, tiap selisih berikut diff-nya). Keluar 1 bila ada satu selisih, jadi CI tidak mungkin hijau di atas jumlah yang salah.
-
-**Bukti fail-closed pada jalur CLI (bukan hanya di pytest)** — `main()` yang sama seperti
-`make workforce-reconcile`, dijalankan tiga kali dengan data berbeda:
-
-| Data yang direkonsiliasi | Temuan | Kode keluar |
-|---|---|---|
-| policy disunting di tempat setelah slip terbit | 37 | **1** |
-| tarif dinaikkan setelah slip terbit | 120 | **1** |
-| dataset bersih | 0 | 0 |
-
-**Kedua gerbang masuk `make check`.** Target `workforce-language` dan `workforce-reconcile`
-dijalankan setiap kali gerbang pra-deploy berjalan, supaya angka "0 selisih" selalu berasal
-dari eksekusi nyata, bukan dari ingatan sesi sebelumnya. Ratchet bahasa khusus
-`src/workforce/` dibuat karena tes global memakai daftar penanda terbatas + pin berkas
-legacy: kata Indonesia di luar daftar itu (mis. `"issue() hanya menerima
-PayrollCalculation"`) lolos tanpa jejak, dan berkas workforce baru tidak punya pin apa pun.
