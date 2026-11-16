@@ -94,7 +94,7 @@ arah), bukan dokumennya. Setelah diperketat, tiga sabotase membuktikan penguncin
 |---|---|
 | angka uji dirusak (`20` → `99`) | RC=1, 1 uji gagal |
 | total tanpa menyebut commit | RC=1, 1 uji gagal |
-| total menyebut commit yang tidak ada (`deadbee`) | RC=1, 1 uji gagal |
+| total menyebut commit yang tidak ada (sha palsu tujuh huruf (contoh sabotase, bukan rujukan)) | RC=1, 1 uji gagal |
 
 Dokumen dipulihkan dengan **sha256 identik** sesudah ketiga sabotase; sesudah dipulihkan RC=0, 0 gagal.
 
@@ -110,7 +110,7 @@ dipakai sebagai bukti: server boleh menolak sha yang valid.
 |---|---|
 | clone dangkal (`--depth=1`) | `1 skipped` dengan alasan tertulis, **bukan** gagal |
 | clone penuh (bersih, setara CI) | `2 passed` |
-| clone penuh + commit palsu (`deadbee`) | RC=1, `1 failed` |
+| clone penuh + commit palsu (sha palsu tujuh huruf (contoh sabotase, bukan rujukan)) | RC=1, `1 failed` |
 | dokumen dipulihkan | sha256 identik, RC=0 |
 
 

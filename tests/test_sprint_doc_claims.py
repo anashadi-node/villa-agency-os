@@ -135,6 +135,31 @@ def attribution(line: str):
     return ("commit", token)
 
 
+DOC_ROOTS = ("docs", "reports")
+
+
+def test_no_documentation_cites_a_commit_that_does_not_exist() -> None:
+    """Rujukan yang menggantung di dokumen mana pun adalah rujukan yang tidak bisa diperiksa.
+
+    Berlaku untuk seluruh dokumentasi + laporan, bukan hanya dokumen sprint: sha cabang hilang
+    saat squash merge, dan pembaca yang mencoba memeriksanya akan menemukan halaman kosong.
+    """
+    files = [Path("README.md")] if Path("README.md").exists() else []
+    for root in DOC_ROOTS:
+        files += sorted(Path(root).rglob("*.md"))
+    assert files, "tidak ada berkas dokumentasi yang ditemukan — cek jalurnya"
+    checked, bad = 0, []
+    for f in files:
+        for token in sorted(set(re.findall(r"`([0-9a-f]{7,40})`", f.read_text(encoding="utf-8")))):
+            checked += 1
+            if token.isdigit() and len(token) >= 9:
+                continue  # id run CI: bertahan di luar riwayat git
+            if not commit_is_present(token):
+                bad.append(f"{f}: `{token}`")
+    assert checked >= 20, f"hanya {checked} token diperiksa: penguncinya kehilangan gigi"
+    assert not bad, f"rujukan menggantung (tidak ada di riwayat): {bad}"
+
+
 def test_every_claimed_total_names_the_commit_it_was_measured_at() -> None:
     """Total "N passed" tanpa provenance adalah angka yang tidak bisa diperiksa siapa pun."""
     lines = DOC.read_text(encoding="utf-8").splitlines()
