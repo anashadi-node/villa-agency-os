@@ -656,7 +656,7 @@ yang dipakai sebagai provenance angka **hilang saat squash** — dan atribusi ke
 bertahan adalah atribusi yang tidak bisa diperiksa orang lain. Jadi dokumen tidak lagi mengutip sha
 cabang: angka T2.8 diatribusikan ke **run CI**, dan pengunci baru memastikan **setiap token sha yang
 dikutip dokumen sprint ada di riwayat** (id run CI dikecualikan karena ia bertahan di luar git).
-Tiga sabotase membuktikannya masih bergigi: sha hantu (`aaaaaaa`) → RC=1 · angka uji `20` → `99` →
+Tiga sabotase membuktikannya masih bergigi: sha hantu tujuh huruf → RC=1 · angka uji `20` → `99` →
 RC=1 · provenance dilepas dari baris klaim total → RC=1; dokumen dipulihkan dengan sha256 identik.
 
 **4. Cacat susunan yang ikut terbawa: §4.5 terlempar ke akhir berkas**, sesudah §12 Riwayat
