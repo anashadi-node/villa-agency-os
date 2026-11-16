@@ -186,6 +186,13 @@ PAGE_ROLES: Mapping[str, tuple[str, ...]] = MappingProxyType(
         "shadow_eval": ("operations", "owner", "auditor"),
         "outbox": ("operations", "owner", "auditor"),
         "audit": ("owner", "auditor", "gm"),
+        # Workforce Ops screens (T2.6/T2.7). This table mirrors
+        # ``workforce.views.SCREEN_ROLES`` one-for-one — one role per screen,
+        # deny by default — and ``tests/test_workforce_views.py`` fails the build
+        # if the two maps ever disagree.
+        "workforce_supervisor": ("operations",),
+        "workforce_finance": ("finance",),
+        "workforce_owner": ("owner",),
         "error": ALL_ROLES,
     }
 )
@@ -368,6 +375,9 @@ NAV: tuple[tuple[str, str], ...] = (
     ("inventory", "/inventory"),
     ("finance", "/finance"),
     ("operations", "/operations"),
+    ("workforce_supervisor", "/workforce/today"),
+    ("workforce_finance", "/workforce/payroll"),
+    ("workforce_owner", "/workforce/cost"),
     ("approvals", "/approvals"),
     ("properties", "/properties"),
     ("marketing", "/marketing"),
@@ -391,6 +401,9 @@ PAGE_TITLES: Mapping[str, str] = MappingProxyType(
         "shadow_eval": "AI Quality (Shadow)",
         "outbox": "Outbox & Integrations",
         "audit": "Rantai Audit",
+        "workforce_supervisor": "Tenaga Kerja — Hari Ini",
+        "workforce_finance": "Tenaga Kerja — Jalankan Upah",
+        "workforce_owner": "Tenaga Kerja — Biaya per Properti",
         "error": "Galat",
     }
 )
@@ -411,11 +424,23 @@ NAV_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Ringkasan", ("command_center",)),
     ("Reservations & Guests", ("cases", "inventory")),
     ("Operations", ("operations",)),
+    ("Workforce", ("workforce_supervisor", "workforce_finance", "workforce_owner")),
     ("Finance", ("finance",)),
     ("Approvals & Compliance", ("approvals", "audit")),
     ("Property & Partnerships", ("properties",)),
     ("Commercial & Marketing", ("marketing",)),
     ("Technology & Channels", ("channels", "outbox", "shadow_eval")),
+)
+
+#: ``/workforce/<slug>`` -> page key. The slug is what a person types and bookmarks; the
+#: page key is what ``PAGE_ROLES`` and ``templates/`` speak. One map instead of three
+#: ``if`` branches, and a wrong slug is a 404 that names the options rather than a blank page.
+WORKFORCE_ROUTES: Mapping[str, str] = MappingProxyType(
+    {
+        "today": "workforce_supervisor",
+        "payroll": "workforce_finance",
+        "cost": "workforce_owner",
+    }
 )
 
 # --------------------------------------------------------------------------- #
@@ -2934,6 +2959,32 @@ class Dashboard:
     # ------------------------------------------------------------------ #
     # Routing
     # ------------------------------------------------------------------ #
+    # -- workforce screens (T2.7) -------------------------------------------- #
+    def workforce_screen(self, page: str, principal: Principal) -> dict[str, Any]:
+        """Build one workforce screen body, read fresh from the database.
+
+        ``workforce.views`` imports this module for its markup helpers, so the import
+        lives inside the method: a module-scope import would be a cycle.
+
+        Two gates run on purpose. ``PAGE_ROLES`` decides whether the *route* is reachable
+        and this file answers a 403; the screen's own ``SCREEN_ROLES`` decides whether the
+        *body* may be drawn and refuses even a caller that skipped the first gate. Either
+        one alone is enough to stop a wrong role, so neither has to be trusted alone.
+        """
+        from workforce.views import WorkforceViews
+
+        views = WorkforceViews(self.conn, clock=self.clock, agency_id=self.agency_id)
+        return views.context(page, role=principal.role)
+
+    def view_workforce_supervisor(self, principal: Principal) -> dict[str, Any]:
+        return self.workforce_screen("workforce_supervisor", principal)
+
+    def view_workforce_finance(self, principal: Principal) -> dict[str, Any]:
+        return self.workforce_screen("workforce_finance", principal)
+
+    def view_workforce_owner(self, principal: Principal) -> dict[str, Any]:
+        return self.workforce_screen("workforce_owner", principal)
+
     def _resolve_get(self, segments: Sequence[str]) -> tuple[str, Optional[str]]:
         if not segments:
             return "command_center", None
@@ -2948,6 +2999,17 @@ class Dashboard:
                      "shadow_eval", "outbox", "audit"):
             if head == page and len(segments) == 1:
                 return page, None
+        if head == "workforce":
+            # ``/workforce`` alone is not a page: say which slugs exist instead of
+            # guessing one, because guessing would show a supervisor the payroll screen.
+            page = WORKFORCE_ROUTES.get(segments[1] if len(segments) == 2 else "")
+            if page is None:
+                raise NotFound(
+                    "rute workforce tidak dikenal",
+                    path="/" + "/".join(segments),
+                    known=[f"/workforce/{slug}" for slug in WORKFORCE_ROUTES],
+                )
+            return page, None
         raise NotFound("rute tidak dikenal", path="/" + "/".join(segments))
 
     def dispatch(self, request: _Request) -> _Response:

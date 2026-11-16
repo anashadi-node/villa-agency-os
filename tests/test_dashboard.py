@@ -44,6 +44,11 @@ ROUTES = {
     "shadow_eval": "/shadow_eval",
     "outbox": "/outbox",
     "audit": "/audit",
+    # The workforce screens live under one head with a short slug each: /workforce/today is
+    # what a supervisor types, "workforce_supervisor" is what the code calls it.
+    "workforce_supervisor": "/workforce/today",
+    "workforce_finance": "/workforce/payroll",
+    "workforce_owner": "/workforce/cost",
 }
 
 #: Mirror of PAGE_ROLES as an independent expectation: if the module loosens a
@@ -61,6 +66,9 @@ ENTITLED = {
     "shadow_eval": {"operations", "owner", "auditor"},
     "outbox": {"operations", "owner", "auditor"},
     "audit": {"owner", "auditor", "gm"},
+    "workforce_supervisor": {"operations"},
+    "workforce_finance": {"finance"},
+    "workforce_owner": {"owner"},
 }
 PAGE_ROLE_MATRIX = [(page, role) for page in ROUTES for role in D.ROLES]
 
