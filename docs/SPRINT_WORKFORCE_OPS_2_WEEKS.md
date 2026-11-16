@@ -287,7 +287,7 @@ Empat keputusan saat T2.4 dikerjakan:
 | T2.5 | 8 | **Gate G2**: rekonsiliasi 0 selisih pada dataset uji 30 hari × 12 staf sintetis | laporan angka | setiap slip punya jejak rate+policy+timesheet; 0 slip tanpa jejak | skrip `scripts/workforce_reconcile.py` — **selesai 2026-11-15: 1.000 pemeriksaan, 0 selisih (30 hari x 12 staf x 2 properti), 20 uji + 11 kontrol/batas, keluar 1 saat data dirusak, masuk `make check`** (lihat §4.5) |
 | T2.6 | **Selesai** (2026-11-15) | `src/workforce/views.py` + 3 templat (`workforce_supervisor/finance/owner.html`) + katalog label `src/workforce/screen_labels.json` + 14 uji pada `tests/test_workforce_views.py`: tiga layar per peran, uang selalu lewat `money_display` (IDR dulu, referensi USD hanya bila policy menerbitkan kurs yang masih segar), layar read-only, gerbang peran *deny by default*, dan 0 istilah mesin di layar supervisor — lihat §4.6 | templat + uji render | 0 istilah teknis di layar supervisor; 0 nilai uang tanpa USD | uji render + grep templat |
 | T2.6b | **Selesai** (2026-11-15) | **Penyaluran rute** tiga layar workforce ke `dashboard.py` (tidak ada di rencana awal §4 hari 10): `/workforce/today`, `/workforce/payroll`, `/workforce/cost` → page key, `PAGE_ROLES` satu peran per layar, judul halaman, entri `NAV` + grup `Workforce`, dan `WorkforceViews` **kehilangan kerangka halamannya sendiri** supaya hanya ada satu kerangka. Dua gerbang (rute dan isi) dikunci setara oleh uji; 20 uji `tests/test_workforce_views.py` + 40 kombinasi (halaman × peran) di matriks HTTP `tests/test_dashboard.py` — lihat §4.7 | rute + `PAGE_ROLES` + uji HTTP | 200 hanya untuk peran pemiliknya; 403 untuk lainnya; 401 tanpa identitas; 404 menyebut pilihan | matriks rute × peran lewat HTTP nyata |
-| T2.7 | 9 | Tema premium: token warna, tipografi, motif etnik-alam, kontras AA, `prefers-reduced-motion` | `src/static/theme.css` + uji kontras | ≥8 pasangan warna lulus AA; animasi mati saat reduced-motion | skrip uji kontras (dibuat hari itu) |
+| T2.7 | **Selesai** (2026-11-15) | Tema premium: token warna, tipografi, motif etnik-alam, kontras AA, `prefers-reduced-motion` | **Lapisan tema di `templates/base.html`** (CSS inline) + uji kontras — bukan `src/static/theme.css`: CSP dashboard `default-src 'none'; style-src 'unsafe-inline'` menolak berkas gaya eksternal, dan tidak ada rute `/static`. Alasan + angka di §4.8 | ≥8 pasangan warna lulus AA → **80 pasangan diukur, 80 lulus**; animasi mati saat reduced-motion → **dikunci uji**, termasuk kontrol negatif | `tests/test_ui_contrast.py` (rumus WCAG) + `tests/test_dashboard_bale_ui.py` |
 | T2.8 | 10 | **Gate G3 + G4**: suite penuh hijau, `make check`, audit PII, dokumen status diperbarui | log + PR | 0 gagal; 0 PII; angka status cocok kenyataan | `pytest -q`, `make check`, `git diff --stat` |
 
 **Beban:** ±6,5 hari untuk jalur kerja, ±3 hari untuk upah, ±2 hari untuk tampilan, ±1 hari buffer. Buffer **tidak** dipakai untuk menambah fitur.
@@ -429,6 +429,50 @@ berbunyi `identitas agent-operations-1 peran Operations / Reservation Manager (o
    berbahasa Indonesia (`Kasus`, `Keuangan`, `Rantai Audit`); ADR-0011 §55 mengatur pesan
    produksi dan teks tamu, bukan kerangka internal.
 
+### 4.8 T2.7 — tema premium: diukur, bukan diklaim (2026-11-15)
+
+Baris WBS T2.7 menuntut lima hal dan menyebut dua angka. Diperiksa satu per satu terhadap kode
+dan uji — bukan terhadap niat:
+
+| Butir WBS | Keadaan nyata | Bukti |
+|---|---|---|
+| token warna | `:root` token + `--h` per halaman (17 rona, semuanya berbeda) dan `--acc-s/--acc-l` per mode | `test_every_page_has_its_own_hue_and_kicker` |
+| tipografi | dua tumpukan **lokal** (`ui-serif` untuk judul, `ui-monospace` untuk angka), 0 `@font-face`; angka uang tabular & rata kanan di `th.num`, `td.num`, `dd`, nilai KPI | `test_figures_line_up_because_the_type_is_local_and_tabular` (**uji baru**) |
+| motif etnik-alam | tenun dua arah benang (`repeating-linear-gradient` 45°/-45°) + butir (data-URI SVG `feTurbulence`) — 0 berkas, 0 URL jaringan | `test_the_motif_is_woven_in_css_with_no_file_behind_it` (**uji baru**) |
+| kontras AA | **80 pasangan diukur** (68 aksen halaman × 2 permukaan × 2 mode, + 12 nada status), **80 lulus**; terlemah **4,59:1** (`workforce_finance` h=240 di kartu gelap `#101917`); kontrol negatif kuning-terang di putih = **1,83:1** (ambangnya hidup) | `test_page_hues_meet_wcag_aa_on_canvas_and_card`, `test_state_tones_meet_aa_on_tiles`, `tests/test_ui_contrast.py` |
+| `prefers-reduced-motion` | blok reduce mematikan `animation`/`transition`/`scroll-behavior` untuk `*, *::before, *::after` dan menetralkan gerakan hover; **sebelumnya tidak dikunci uji mana pun** | `test_motion_stops_when_the_reader_asks_for_no_motion` (**uji baru**) |
+
+**Penyimpangan bentuk yang harus dicatat.** WBS menyebut deliverable `src/static/theme.css`;
+berkas itu **tidak ada** dan tidak akan bisa bekerja: dashboard mengirim CSP
+`default-src 'none'; style-src 'unsafe-inline'` dan tidak melayani rute `/static`, sehingga
+berkas gaya eksternal akan diblokir browser. Lapisan tema karena itu **inline di
+`templates/base.html`** (1.015 baris CSS, 256 aturan) dan dijaga
+`test_layer_adds_no_script_or_external_asset`. Kriteria lulusnya terpenuhi; nama berkasnya di
+rencana yang tidak. Itu ditulis di sini, bukan dibiarkan sebagai selisih senyap.
+
+**Tiga kunci baru, masing-masing dengan kontrol negatif yang dijalankan.** Uji yang tidak bisa
+gagal tidak membuktikan apa pun, jadi tiap kunci disabotase satu per satu dan harus gagal:
+
+| Sabotase | Akibat nyata |
+|---|---|
+| `animation: none !important` dihapus dari blok reduce | **RC=1**, 1 uji gagal |
+| butir berubah jadi URL jaringan (`https://cdn.example.com/grain.svg`) | **RC=1**, 2 uji gagal (motif + larangan aset eksternal) |
+| `tabular-nums` dihapus dari `th.num` | **RC=1**, 1 uji gagal |
+
+`templates/base.html` dipulihkan dan diverifikasi **sha256 sama** sebelum/sesudah sabotase.
+
+**Dua jebakan yang tertangkap saat menguji.** (1) Kontrol negatif gerakan saya semula menuntut
+"tidak ada `animation: none` di luar blok reduce" — ternyata blok `@media print` **juga** beku,
+dan itu benar: kertas bukan pembaca yang bergerak. Kontrolnya kini mengecualikan blok cetak
+*setelah membuktikan* blok itu memang beku. (2) Motif ternyata punya **empat** deklarasi, bukan
+dua: dua mode (gelap/terang) × dua cara memilih mode (`prefers-color-scheme` mengikuti mesin, dan
+sakelar `:target` di halaman). Ujinya sekarang menuntut keempatnya, karena satu jalur yang hilang
+membuat separuh pembaca kehilangan motifnya tanpa satu pun uji lain gagal.
+
+**Batas yang diakui:** tidak ada uji visual. Yang dikunci adalah kontrak (CSS ↔ templat ↔ kode) dan
+angka kontras dari rumus WCAG yang sama dengan CSS — bukan piksel hasil render. Kesamaan rumus
+dipaku `test_formula_matches_css`, jadi angka kontras tidak bisa benar sementara warna CSS berbeda.
+
 ## 5. Gerbang (tidak boleh dilewati, tidak boleh "nanti")
 
 | Gerbang | Syarat lulus | Bila gagal |
@@ -534,6 +578,7 @@ Sprint **gagal** — dan harus ditulis begitu dalam laporan — bila salah satu 
 
 | Tanggal | Perubahan |
 |---|---|
+| 2026-11-15 | T2.7 diverifikasi butir-per-butir: 80 pasangan warna diukur (80 lulus, terlemah 4,59:1), gerakan/motif/tipografi kini dikunci uji dengan kontrol negatif yang dijalankan; deliverable berbentuk inline `templates/base.html` karena CSP menolak berkas gaya eksternal — §4.8 |
 | 2026-11-15 | T2.6b: tiga layar workforce disalurkan ke `dashboard.py` (rute + peran + nav); kerangka halaman kedua di `workforce/views.py` dihapus; pin bahasa `dashboard.py` 156 → 159 dengan alasan |
 | 2026-11-14 | Dokumen dibuat; baseline §1 diukur; cacat "NULL lolos CHECK" ditemukan & diperbaiki; kontrak uji 32 hijau; paritas skema OK |
 
