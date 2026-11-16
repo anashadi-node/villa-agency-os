@@ -115,13 +115,13 @@ Ini bukan kontradiksi — ADR-0012 sendiri menyatakan *"It is a design acceptanc
 | Security (IDOR/tenant, prompt injection, tool abuse) | 🟡 **sebagian**: tenant/IDOR 5 berkas / 11 uji · penolakan tool 7 / 15 · injeksi-sebagai-data 2 / 6 | klasifikasi regex per `def test_`; cakupan belum sistematis, tidak ada uji serangan terarah menyeluruh |
 | Finance | ✅ sebagian | tes payment/reconciliation |
 | AI Grounding | 🟡 16 berkas / 86 uji menyebut `grounding`/`evidence_ref` — **batas atas** (token longgar), bukan bukti kualitas | klasifikasi regex |
-| Resilience (outage, crash, failover) | 🟡 `retry`/`idempoten`/`replay` 42 berkas / 302 uji — **batas atas**; tidak ada uji failover/outage terarah | klasifikasi regex |
-| Human Handoff | 🟡 10 berkas / 43 uji (`handoff`/`escalat`) — permukaan ada, alur §13 belum utuh | klasifikasi regex |
+| Resilience (outage, crash, failover) | 🟡 **sebagian, kini ada uji crash terarah (2026-11-16)**: `tests/test_outbox_crash_resilience.py` — 7 uji: pekerja mati di dalam `publish` tidak menghilangkan event, pengiriman ulang membawa identitas yang sama (at-least-once yang aman), crash di tengah pencatatan sukses di-rollback utuh, run ulang tidak mengirim ulang event yang sudah terkonfirmasi. **Terbukti bisa gagal**: 3 kontrol negatif + 2 mutasi di `src/outbox.py` (tanpa ROLLBACK → 2 uji gagal; `pending()` abaikan status → 1 uji gagal; sumber dipulihkan, diff 0). **Belum**: failover database, outage provider pembayaran, dan crash di jalur webhook→ledger | uji terarah; sisa baris = klasifikasi regex `retry`/`idempoten`/`replay` 42 berkas / 302 uji (**batas atas**) |
+| Human Handoff | 🟡 10 berkas / 43 uji (`handoff`/`escalat`) — **batas atas**. Uji terarah yang teridentifikasi dari nama (`tests/test_reservation_service.py`): handoff ke peran tanpa pemegang ditolak, digest paket mengikuti rekaman yang dirujuk, handoff diumumkan sekali. **Belum terbukti**: alur §13 lintas-peran dari awal sampai manusia menerima | klasifikasi regex + pemeriksaan nama uji |
 | Audit | ✅ 1 berkas | `tests/` audit |
 
 **Kesimpulan jujur:** dari 8 kategori §19, **1 tertutup penuh** (concurrency, dengan bukti bisa
-gagal), **3 tertutup sebagian** (security, finance, audit), **3 punya permukaan tapi belum
-terbukti** (grounding, resilience, handoff). Tidak ada kategori yang boleh disebut "selesai"
+gagal), **3 tertutup sebagian** (security, finance, audit), **3 punya permukaan** (grounding, resilience, handoff) —
+resilience sejak 2026-11-16 punya uji crash terarah yang terbukti bisa gagal, tetapi cakupannya baru outbox, jadi tetap sebagian, bukan tertutup. Tidak ada kategori yang boleh disebut "selesai"
 tanpa uji terarah yang bisa gagal.
 
 ### 3.5 Dokumen AI Workforce belum tersambung ke traceability repo — **USANG sejak 2026-09-28**
