@@ -17,6 +17,10 @@ What it cannot prove — stated so nobody reads a PASS as more than it is:
   * a value that is real but also matches the placeholder allowlist below is
     invisible to it.
 
+Fail closed: a root that is not a directory, or a tree where not one text file was
+read, exits 1. "0 findings" over an unread tree is not a clean tree, and this gate
+once printed PASS over a directory that did not exist.
+
 A placeholder allowlist is unavoidable: the test suite legitimately contains
 synthetic values. Each entry is listed with its reason, so adding a real value
 to it is a visible, reviewable act rather than a silent regex tweak.
@@ -208,6 +212,10 @@ def scan(root: Path) -> tuple[dict[str, list[str]], int]:
 
 def main(argv: list[str]) -> int:
     root = Path(argv[1] if len(argv) > 1 else ".").resolve()
+    if not root.is_dir():
+        print(f"PII-SCAN: FAIL — root is not a directory: {root}")
+        print("PII-SCAN: FAIL — refusing to PASS a tree that was never read.")
+        return 1
     findings, scanned = scan(root)
     total = sum(len(v) for k, v in findings.items() if k != "_scanned")
     for kind in ("e-mail", "phone", "16-digit id", "card number"):
@@ -218,6 +226,12 @@ def main(argv: list[str]) -> int:
                 print(f"  {row}")
     if total:
         print(f"PII-SCAN: FAIL ({total} finding(s)) — replace with synthetic values.")
+        return 1
+    if not scanned:
+        # Found by pointing the gate at a directory that did not exist: it printed
+        # PASS over zero files. A gate that read nothing is not a clean tree, it is
+        # an unmeasured one, and "0 findings" from it means nothing.
+        print("PII-SCAN: FAIL — 0 text files scanned; cannot certify an unread tree.")
         return 1
     print(f"PII-SCAN: PASS (0 findings, {scanned} text files scanned)")
     print("PII-SCAN: scope — text files only; names/addresses/binaries are not covered.")
