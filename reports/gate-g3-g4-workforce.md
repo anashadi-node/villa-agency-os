@@ -114,7 +114,27 @@ dipakai sebagai bukti: server boleh menolak sha yang valid.
 | dokumen dipulihkan | sha256 identik, RC=0 |
 
 
-### 3.4 Cacat susunan dokumen
+### 3.4 Rujukan menggantung, dan kunci yang buta di mesin penulisnya
+
+Aturan rujukan diperluas ke seluruh dokumentasi + laporan, dan menemukan rujukan nyata yang
+menggantung: `docs/AUDIT_2026-11-13_FASE0_STATUS.md` mengutip rentang commit dari audit 2026-11-13
+yang **tidak bisa dilihat clone bersih** (ketujuh patch di-rebase, mendarat ulang dengan subjek sama: f2abe79 -> ee1bb5b,
+c488222 -> 08c5453 — sha mati ditulis sebagai prosa, bukan token, karena token adalah klaim). Dokumen kini mengutip rentang yang bertahan.
+
+Kuncinya sendiri punya cacat yang lebih halus: ia memeriksa **keberadaan objek**, bukan
+**keterjangkauan dari ref**. Di clone yang pernah rebase, objek lama masih ada — jadi pemeriksaan itu
+lolos di mesin penulis dan gagal di clone bersih: hijau lokal, merah di CI, rujukan menggantung tetap
+terkirim. Kini kuncinya menuntut reachability, dengan kontrol berikut:
+
+| Kontrol | Hasil |
+|---|---|
+| commit audit yang dimaksud ada sebagai objek lokal? | ya |
+| commit audit yang dimaksud terjangkau dari ref? | tidak |
+| dokumen bersih | RC=0 |
+| dokumen menyisipkan rujukan tak terjangkau | RC=1, 1 uji gagal |
+| dipulihkan | sha256 identik, RC=0 |
+
+### 3.5 Cacat susunan dokumen
 
 §4.5 (T2.5) berada **setelah §12 Riwayat perubahan**, bukan di antara §4.4 dan §4.6. Dipindahkan ke
 tempatnya; urutan §4.1–§4.8 sekarang benar dan isi tidak hilang (jumlah baris berisi sebelum/sesudah
@@ -183,6 +203,9 @@ pytest tests/test_sprint_doc_claims.py -q
 6. **Angka total bergantung lingkungan.** 4455/7 di lokal (ada `data/villa.db`) vs 4454/8 di CI
    (uji store di-skip). Tidak ada "satu angka benar" untuk keduanya; setiap angka di laporan ini
    menyebut lingkungannya.
+7. **Keberadaan objek bukan keterjangkauan.** Rujukan diperiksa dengan `rev-list --all`, bukan
+   `cat-file -e`: objek dari rebase masih ada di clone penulis dan tidak ada di clone bersih,
+   jadi pemeriksaan berbasis objek memberi hijau lokal yang tidak bisa dipercaya.
 7. **Repo ini tidak mengizinkan commit merge.** Karena itu commit cabang tidak dipertahankan dan
    provenance angka di sini adalah run CI, bukan sha yang hanya hidup di cabang. Ini keterbatasan
    nyata, bukan pilihan: atribusi ke commit yang tidak bertahan adalah atribusi yang tidak bisa

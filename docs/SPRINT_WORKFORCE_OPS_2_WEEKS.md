@@ -288,7 +288,7 @@ Empat keputusan saat T2.4 dikerjakan:
 | T2.6 | **Selesai** (2026-11-15) | `src/workforce/views.py` + 3 templat (`workforce_supervisor/finance/owner.html`) + katalog label `src/workforce/screen_labels.json` + 20 uji pada `tests/test_workforce_views.py` (14 saat T2.6 selesai; T2.6b menambah 6): tiga layar per peran, uang selalu lewat `money_display` (IDR dulu, referensi USD hanya bila policy menerbitkan kurs yang masih segar), layar read-only, gerbang peran *deny by default*, dan 0 istilah mesin di layar supervisor — lihat §4.6 | templat + uji render | 0 istilah teknis di layar supervisor; 0 nilai uang tanpa USD | uji render + grep templat |
 | T2.6b | **Selesai** (2026-11-15) | **Penyaluran rute** tiga layar workforce ke `dashboard.py` (tidak ada di rencana awal §4 hari 10): `/workforce/today`, `/workforce/payroll`, `/workforce/cost` → page key, `PAGE_ROLES` satu peran per layar, judul halaman, entri `NAV` + grup `Workforce`, dan `WorkforceViews` **kehilangan kerangka halamannya sendiri** supaya hanya ada satu kerangka. Dua gerbang (rute dan isi) dikunci setara oleh uji; 20 uji `tests/test_workforce_views.py` + 40 kombinasi (halaman × peran) di matriks HTTP `tests/test_dashboard.py` — lihat §4.7 | rute + `PAGE_ROLES` + uji HTTP | 200 hanya untuk peran pemiliknya; 403 untuk lainnya; 401 tanpa identitas; 404 menyebut pilihan | matriks rute × peran lewat HTTP nyata |
 | T2.7 | **Selesai** (2026-11-15) | Tema premium: token warna, tipografi, motif etnik-alam, kontras AA, `prefers-reduced-motion` | **Lapisan tema di `templates/base.html`** (CSS inline) + uji kontras — bukan `src/static/theme.css`: CSP dashboard `default-src 'none'; style-src 'unsafe-inline'` menolak berkas gaya eksternal, dan tidak ada rute `/static`. Alasan + angka di §4.8 | ≥8 pasangan warna lulus AA → **80 pasangan diukur, 80 lulus**; animasi mati saat reduced-motion → **dikunci uji**, termasuk kontrol negatif | `tests/test_ui_contrast.py` (rumus WCAG) + `tests/test_dashboard_bale_ui.py` |
-| T2.8 | **Selesai** (2026-11-15) | **Gate G3 + G4**: suite penuh hijau, `make check`, audit PII, dokumen status diperbarui. Tiga cacat ditemukan saat menjalankan gerbangnya sendiri: `scripts/pii_scan.py` mencetak PASS atas pohon yang tidak pernah dibaca (kini fail-closed, dikunci `tests/test_pii_gate.py` 8 uji); empat angka dokumen salah (kini dikunci `tests/test_sprint_doc_claims.py`); dan pengunci itu sendiri menuduh dokumen yang jujur di clone dangkal CI (kini `fetch-depth: 0` + skip beralasan). Butir G3 diperiksa satu per satu — lihat §4.9 | log + PR + `reports/gate-g3-g4-workforce.md` | 0 gagal; 0 PII; angka status cocok kenyataan (dikunci uji, bukan disiplin manual) | `make check`, `scripts/pii_scan.py`, `scripts/scan_stored_pii.py`, `git diff --stat` |
+| T2.8 | **Selesai** (2026-11-15) | **Gate G3 + G4**: suite penuh hijau, `make check`, audit PII, dokumen status diperbarui. **Lima** cacat ditemukan saat menjalankan gerbangnya sendiri: `scripts/pii_scan.py` mencetak PASS atas pohon yang tidak pernah dibaca (kini fail-closed, dikunci `tests/test_pii_gate.py` 8 uji); empat angka dokumen salah (kini dikunci `tests/test_sprint_doc_claims.py`); dan pengunci itu sendiri menuduh dokumen yang jujur di clone dangkal CI (kini `fetch-depth: 0` + skip beralasan). Butir G3 diperiksa satu per satu — lihat §4.9 | log + PR + `reports/gate-g3-g4-workforce.md` | 0 gagal; 0 PII; angka status cocok kenyataan (dikunci uji, bukan disiplin manual) | `make check`, `scripts/pii_scan.py`, `scripts/scan_stored_pii.py`, `git diff --stat` |
 
 **Beban:** ±6,5 hari untuk jalur kerja, ±3 hari untuk upah, ±2 hari untuk tampilan, ±1 hari buffer. Buffer **tidak** dipakai untuk menambah fitur.
 
@@ -658,6 +658,21 @@ cabang: angka T2.8 diatribusikan ke **run CI**, dan pengunci baru memastikan **s
 dikutip dokumen sprint ada di riwayat** (id run CI dikecualikan karena ia bertahan di luar git).
 Tiga sabotase membuktikannya masih bergigi: sha hantu tujuh huruf → RC=1 · angka uji `20` → `99` →
 RC=1 · provenance dilepas dari baris klaim total → RC=1; dokumen dipulihkan dengan sha256 identik.
+
+**Cacat kelima: rujukan menggantung, dan kunci yang buta di mesin yang menulisnya.** Aturan
+rujukan diperluas ke seluruh `docs/` + `reports/` + README, dan langsung menemukan rujukan nyata
+yang menggantung: `docs/AUDIT_2026-11-13_FASE0_STATUS.md` mengutip rentang commit patch yang
+**tidak bisa dilihat clone bersih** — ketujuh patch itu di-rebase dan mendarat ulang dengan sha baru
+(subjek sama). Dokumennya kini mengutip rentang yang bertahan, dan menyebut terus terang bahwa sha
+aslinya sudah tidak ada.
+
+Yang lebih penting: kuncinya sendiri buta. Ia bertanya "apakah objeknya ada" (`cat-file -e`), dan di
+clone yang pernah rebase objek lama **masih ada** — hanya tak terjangkau. Jadi pemeriksaan itu
+**lolos di mesin penulis dan gagal di clone bersih**: hijau lokal, merah di CI, rujukan menggantung
+tetap terkirim. Sekarang kuncinya meminta commit **terjangkau dari ref** (dengan resolusi singkatan
+lebih dulu, karena `rev-list` memakai sha 40 huruf sedangkan dokumen mengutip 7 huruf).
+Kontrolnya: objek c488222… di sini justru tidak ditulis sebagai token sha — aturan yang sama berlaku untuk contoh; yang diperiksa adalah commit dari audit itu yang objeknya ADA secara lokal tapi TIDAK terjangkau → dokumen bersih RC=0, sesudah
+menyisipkan rujukan itu RC=1 (1 uji gagal), dipulihkan sha256 identik.
 
 **4. Cacat susunan yang ikut terbawa: §4.5 terlempar ke akhir berkas**, sesudah §12 Riwayat
 perubahan. Dipindahkan ke tempatnya (sebelum §4.6). Isi tidak berubah — diverifikasi dengan
