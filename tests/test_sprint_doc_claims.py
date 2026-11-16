@@ -106,19 +106,49 @@ def commit_is_present(sha: str) -> bool:
     return False
 
 
+def test_every_cited_commit_survives_a_squash_merge() -> None:
+    """Repo ini hanya mengizinkan squash/rebase: sha yang hidup di cabang akan hilang.
+
+    Setiap token heksadesimal yang dikutip dokumen harus bisa diperiksa orang lain di riwayat
+    master, atau berupa id run CI (angka >= 9 digit) yang juga bertahan. Sha cabang yang akan
+    dihapus squash merge adalah janji yang tidak bisa ditepati.
+    """
+    cited = set(re.findall(r"`([0-9a-f]{7,40})`", DOC.read_text(encoding="utf-8")))
+    assert len(cited) >= 2, f"hanya {len(cited)} token dikutip: penguncinya kehilangan gigi"
+    for token in sorted(cited):
+        if token.isdigit() and len(token) >= 9:
+            continue  # id run CI: provenance di luar riwayat git, dan itu disengaja
+        assert commit_is_present(token), (
+            f"dokumen mengutip `{token}` yang tidak ada di riwayat: squash merge akan "
+            "menghapusnya, dan pembaca tidak bisa memeriksanya"
+        )
+
+
+def attribution(line: str):
+    """Token provenance di baris ini: commit yang ada, atau id run CI (angka >= 9 digit)."""
+    found = re.search(r"`([0-9a-f]{7,40})`", line)
+    if not found:
+        return None
+    token = found.group(1)
+    if token.isdigit() and len(token) >= 9:
+        return ("run", token)
+    return ("commit", token)
+
+
 def test_every_claimed_total_names_the_commit_it_was_measured_at() -> None:
-    """Total "N passed" tanpa commit adalah angka yang tidak bisa diperiksa siapa pun."""
+    """Total "N passed" tanpa provenance adalah angka yang tidak bisa diperiksa siapa pun."""
     lines = DOC.read_text(encoding="utf-8").splitlines()
     totals = [(n, line) for n, line in enumerate(lines, 1) if TOTAL.search(line)]
     assert totals, "tidak ada klaim total 'N passed' di dokumen — pola berubah?"
-    unattributed = [n for n, line in totals if not re.search(r"`[0-9a-f]{7,40}`", line)]
+    unattributed = [n for n, line in totals if attribution(line) is None]
     assert not unattributed, (
-        "klaim total tanpa commit pengukuran di baris: "
-        f"{unattributed} — tulis 'diukur pada `<sha>`'"
+        "klaim total tanpa provenance di baris: "
+        f"{unattributed} — tulis 'diukur pada `<sha>`' atau run CI `<id>` di baris yang sama"
     )
     for lineno, line in totals:
-        sha = re.search(r"`([0-9a-f]{7,40})`", line)
-        assert sha, lineno
-        assert commit_is_present(sha.group(1)), (
-            f"baris {lineno}: commit {sha.group(1)} tidak ada di riwayat"
+        kind, token = attribution(line)
+        if kind == "run":
+            continue  # run CI tidak bisa diperiksa luring; id-nya bertahan, sha cabang tidak
+        assert commit_is_present(token), (
+            f"baris {lineno}: commit {token} tidak ada di riwayat"
         )

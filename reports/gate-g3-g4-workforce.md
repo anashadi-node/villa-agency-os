@@ -1,6 +1,7 @@
 # Gerbang G3 + G4 — Workforce Ops (T2.8)
 
-**Tanggal:** 2026-11-15 · **Commit pengukuran:** `e7f8f6d` (T2.8, pra-merge) · **Cabang:** `gate/t2-8`
+**Tanggal:** 2026-11-15 · **Provenance:** run CI `43797100871` (cabang `gate/t2-8`, sebelum squash-merge)
+· **Catatan provenance:** repo ini tidak mengizinkan commit merge (squash/rebase saja), jadi commit cabang tidak dipertahankan di riwayat; provenance yang tahan adalah run CI + laporan lokal — karena itu angka di sini diatribusikan ke run CI, bukan ke sha commit cabang yang akan hilang
 
 Laporan ini mencatat apa yang **diukur**, bukan apa yang diharapkan. Setiap angka di bawah berasal
 dari eksekusi pada commit di atas; perintah untuk mengulanginya ada di §5.
@@ -50,7 +51,7 @@ sesudah:  PII-SCAN: FAIL — root is not a directory: .../tidak-ada
 Kelas kegagalan ini tidak bisa dideteksi oleh gate PII sendiri: satu-satunya kalimat yang bisa
 dikeluarkannya adalah "tidak ada temuan", dan kalimat itu bisa keluar tanpa membaca apa pun.
 Jalur normal kini juga menyebut **berapa berkas yang benar-benar dibaca** (424 berkas teks pada
-`e7f8f6d`), sehingga "0 findings" tidak bisa lagi berarti "0 dibaca".
+run CI `43797100871`), sehingga "0 findings" tidak bisa lagi berarti "0 dibaca".
 
 Perilaku baru, dan hasil ujinya (`tests/test_pii_gate.py`, 8 uji):
 
@@ -125,7 +126,7 @@ sama).
 (4.099 tes lulus, pemindai 344 berkas). Baris itu kini membawa angka terukur terbaru **dengan
 atribusi commit**, sementara snapshot lama tetap ada sebagai riwayat:
 
-- suite: **4.455 passed, 7 skipped, 4.176 subtests** pada `e7f8f6d`;
+- suite: **4.455 passed, 7 skipped, 4.176 subtests** pada run CI `43797100871`;
 - pemindai: `SECRET-SCAN`/`UNSAFE-SCAN` → **450 berkas**, `PII-SCAN` → **424 berkas teks**;
 - jumlah ADR tetap **72 seluruhnya ACCEPTED** — dijaga uji yang sudah ada,
   `tests/test_adr_status.py::test_living_documents_state_the_real_number_of_adrs`.
@@ -135,11 +136,12 @@ tampak seperti sha adalah nomor run CI `43558380150`, bukan commit).
 
 ---
 
-## 4. G4 — bukti gerbang rilis pada commit `e7f8f6d`
+## 4. G4 — bukti gerbang rilis pada commit run CI `43797100871`
 
 | Langkah | Perintah | Hasil nyata |
 |---|---|---|
-| Suite penuh + semua pemindai | `make check` | **4455 passed, 7 skipped, 4176 subtests**, 408,10 s, `MAKE_RC=0`, **PRE-DEPLOY GATE: PASS** |
+| Suite penuh + semua pemindai (lokal) | `make check` | **4455 passed, 7 skipped, 4176 subtests**, 408,10 s, `MAKE_RC=0`, **PRE-DEPLOY GATE: PASS** |
+| Suite penuh di CI (3 interpreter) | `make check` di CI | **4454 passed, 8 skipped** — selisih 1 uji = pembaca store yang butuh `data/villa.db`, di-skip di clone bersih (bukan kegagalan) |
 | Pemindai rahasia | `bash scripts/secret_scan.sh` | `PASS (0 findings, 450 files scanned)` |
 | Pemindai konfigurasi tidak aman | `bash scripts/unsafe_config_scan.sh` | `PASS (0 findings, 450 files scanned)` |
 | Gerbang PII | `/usr/bin/python3 scripts/pii_scan.py` | `PASS (0 findings, 424 text files scanned)` |
@@ -155,7 +157,8 @@ Perbandingan dengan baseline pra-T2.8 (`6b08a9b`, T2.7): 4445 → **4455** uji (
 
 ```bash
 cd ~/villa-agency-os
-git checkout e7f8f6d
+# commit yang memuat gerbang ini ada di master sesudah squash-merge PR #34:
+git checkout master && git log --oneline -3
 make check                                        # 4455 passed, PRE-DEPLOY GATE: PASS
 /usr/bin/python3 scripts/pii_scan.py              # PASS + jumlah berkas dibaca
 /usr/bin/python3 scripts/scan_stored_pii.py --db data/villa.db
@@ -177,6 +180,13 @@ pytest tests/test_sprint_doc_claims.py -q
    4455 uji di dalam uji.
 4. **Angka pemindai berubah setiap berkas ditambah/dihapus.** Yang dikunci adalah perilaku gate
    (fail-closed, mendeteksi, tidak menghalangi nilai sintetis), bukan jumlah berkas.
+6. **Angka total bergantung lingkungan.** 4455/7 di lokal (ada `data/villa.db`) vs 4454/8 di CI
+   (uji store di-skip). Tidak ada "satu angka benar" untuk keduanya; setiap angka di laporan ini
+   menyebut lingkungannya.
+7. **Repo ini tidak mengizinkan commit merge.** Karena itu commit cabang tidak dipertahankan dan
+   provenance angka di sini adalah run CI, bukan sha yang hanya hidup di cabang. Ini keterbatasan
+   nyata, bukan pilihan: atribusi ke commit yang tidak bertahan adalah atribusi yang tidak bisa
+   diperiksa orang lain.
 5. **Verifikasi G3 dilakukan terhadap kode dan uji, bukan terhadap perangkat mata.** Halaman
    dianggap memenuhi butir G3 hanya sejauh uji yang ada menutupnya; butir yang tidak punya uji
    pengunci akan lolos tanpa jejak.

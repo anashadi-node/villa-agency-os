@@ -635,7 +635,7 @@ kalimat yang jujur. Yang diperbaiki adalah detektornya, bukan dokumennya: klaim 
 **menempel** pada berkasnya (jarak ≤12 karakter, dua arah), dan dua kutipan angka lama ditulis
 ulang supaya tidak berbentuk klaim. Pengunci yang diperketat diuji ulang dengan tiga sabotase, dan
 ketiganya membuatnya gagal: angka uji dirusak (`20` → `99`) · total tanpa commit · commit
-pengukuran yang tidak ada (`deadbee`). Dokumen dipulihkan dengan sha256 identik.
+pengukuran yang tidak ada (sha palsu tujuh huruf). Dokumen dipulihkan dengan sha256 identik.
 
 **CI menemukan cacat ketiga — pada pengunci itu sendiri.** Tiga job gate gagal dengan pesan
 `commit 6b08a9b tidak ada di riwayat`. Penyebabnya bukan dokumennya: `actions/checkout@v7` di
@@ -648,7 +648,16 @@ pertanyaan itu benar-benar terjawab di CI; (b) penguncinya membedakan kedua kead
 dangkal ia **skip dengan alasan tertulis**, tidak pernah menuduh, dan `git fetch origin <sha>`
 sengaja **tidak** dipakai sebagai bukti karena server boleh menolak sha yang valid sekalipun.
 Dibuktikan dengan tiga kontrol: clone dangkal → `skip` beralasan; clone penuh → periksa sungguhan;
-clone penuh + commit palsu (`deadbee`) → RC=1.
+clone penuh + commit palsu (sha palsu tujuh huruf) → RC=1.
+
+**Cacat keempat: repo ini tidak mengizinkan commit merge.** Percobaan merge PR #34 ditolak GitHub
+(`Merge commits are not allowed on this repository`; `allow_merge_commit=false`). Akibatnya sha cabang
+yang dipakai sebagai provenance angka **hilang saat squash** — dan atribusi kepada commit yang tidak
+bertahan adalah atribusi yang tidak bisa diperiksa orang lain. Jadi dokumen tidak lagi mengutip sha
+cabang: angka T2.8 diatribusikan ke **run CI**, dan pengunci baru memastikan **setiap token sha yang
+dikutip dokumen sprint ada di riwayat** (id run CI dikecualikan karena ia bertahan di luar git).
+Tiga sabotase membuktikannya masih bergigi: sha hantu (`aaaaaaa`) → RC=1 · angka uji `20` → `99` →
+RC=1 · provenance dilepas dari baris klaim total → RC=1; dokumen dipulihkan dengan sha256 identik.
 
 **4. Cacat susunan yang ikut terbawa: §4.5 terlempar ke akhir berkas**, sesudah §12 Riwayat
 perubahan. Dipindahkan ke tempatnya (sebelum §4.6). Isi tidak berubah — diverifikasi dengan
@@ -662,6 +671,14 @@ membandingkan jumlah baris berisi sebelum/sesudah.
 | uang IDR + USD 100% | setiap angka rupiah membawa referensi dolar; kurs basi/tak terbit → dolar hilang dan layar mengatakannya | `test_every_rupiah_figure_carries_a_dollar_reference`, `test_without_a_published_rate_the_rupiah_stays_and_the_dollar_goes`, `test_a_stale_rate_drops_the_dollar_figure_and_says_so` |
 | peran terpisah | `/workforce/today` → `operations`, `/workforce/payroll` → `finance`, `/workforce/cost` → `owner`; 200 hanya pemiliknya, 403 lainnya, 401 tanpa identitas, 404 menyebut pilihan | `tests/test_workforce_views.py` (20 uji) + matriks HTTP `tests/test_dashboard.py` (+40 kombinasi) |
 | tanpa data nyata | staf bernama `Ops Staff 01..12`; `scan_stored_pii.py --db data/villa.db` → **7 kolom diperiksa, 0 baris** membawa P3/P4; `pii_scan.py` → **0 temuan atas 423 berkas teks**; gerbang bahasa → **0 istilah Indonesia di 10 berkas** `src/workforce/` + katalog 9 label; layar supervisor → 0 istilah mesin | `scripts/scan_stored_pii.py`, `scripts/check_workforce_language.py`, `test_the_supervisor_screen_shows_no_machine_words` |
+
+**Angka T2.8 sendiri, dan kenapa dua lingkungan berbeda.**
+- Lokal: **4455 passed, 7 skipped** (+4176 subtests, 408,10 s), `PRE-DEPLOY GATE: PASS` — diukur pada run CI `43797100871`.
+- CI, tiga interpreter, run yang sama: **4454 passed, 8 skipped** — provenance run CI `43797100871`.
+- Selisih satu uji bukan kegagalan: uji pembaca store butuh `data/villa.db`, dan clone bersih CI tidak
+  punya berkas itu — persis alasan skip yang sudah dicatat dokumen A-Z. Keduanya ditulis supaya tidak
+  ada pembaca yang mengira salah satunya salah. Repo ini tidak mengizinkan commit merge (squash/rebase
+  saja), jadi commit cabang tidak dipertahankan; provenance yang tahan adalah run CI + laporan lokal.
 
 **Keadaan gerbang G4 (rilis):** suite penuh hijau dan PII gate lulus lewat `make check` (angka
 per-commit di `reports/gate-g3-g4-workforce.md`), dokumen status selaras (butir 2 dan 3 di atas,
