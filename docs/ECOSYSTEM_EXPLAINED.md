@@ -2,6 +2,8 @@
 
 **Untuk:** Owner Villa Agency (Bali & Yogyakarta)
 **Tanggal keputusan owner:** 2026-09-28 · **Edisi dokumen:** 2026-10-02 (lihat Bab 14)
+
+> **Catatan 2026-11-16:** angka "0 dari 7 pegawai AI" dan "outbox belum jadi" di edisi ini adalah potret 2026-10-02. Diperiksa ulang: **5 dari 7** pegawai AI sudah ada kodenya (belum: Commercial, Security & Privacy Warden); outbox dan exception engine inti sudah ada (belum: DLP). Rujukan terkini: `docs/STATUS_AND_GAP_MAP.md`.
 **Tujuan dokumen ini:** menjawab kebingungan *"apa yang sedang dibuat, dan bagaimana ini?"* — dari nol, berurutan, tanpa istilah yang tidak dijelaskan.
 
 ---

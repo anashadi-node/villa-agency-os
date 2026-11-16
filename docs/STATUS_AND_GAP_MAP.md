@@ -1,5 +1,5 @@
 # Peta Status & Gap — Villa Agency OS
-**Tanggal periksa: 2026-09-28** · **Pembaruan 2026-10-02**: tahap 4 (AI Reservation Service) — inti selesai · Sumber acuan: Master Spec v1.1 (invariant domain) + **AI Workforce Architecture V1.1** (organisasi & lapisan AI) · Bukti: kode, tes, gerbang, preflight · **Angka tes dan jumlah ADR disegarkan 2026-11-14** pada `master` `f5665c5` (CI run 43558380150); selebihnya tetap potret bertanggal
+**Tanggal periksa: 2026-09-28** · **Pembaruan 2026-10-02**: tahap 4 (AI Reservation Service) — inti selesai · Sumber acuan: Master Spec v1.1 (invariant domain) + **AI Workforce Architecture V1.1** (organisasi & lapisan AI) · Bukti: kode, tes, gerbang, preflight · **Angka tes dan jumlah ADR disegarkan 2026-11-14** pada `master` `f5665c5` (CI run 43558380150); **status go-live, hitungan komponen AI, dan keberadaan outbox disegarkan 2026-11-16** (preflight dan `ls` dijalankan ulang); selebihnya tetap potret bertanggal
 
 > **CATATAN STATUS (2026-10-03) — baca ini dulu.** Dokumen ini adalah **potret bertanggal
 > 2026-09-28/10-02**, bukan status hari ini. Beberapa baris di bawah sudah tidak berlaku:
@@ -32,9 +32,9 @@ Satu hal yang saya tegaskan di depan, karena ini akar semua yang di bawah: **pad
 | Lapisan **AI Workforce** (6 komponen dok Anda + 1 tambahan owner 2026-10-02) | 🟡 **5 dari 7 ada** | Control Tower, Reservation, Finance Admin, Operations, **Revenue & BI (slice 1, 2026-10-07)** ada di kode; belum: Commercial, Security & Privacy Warden |
 | Infrastruktur non-agent | ✅ **6 ada, 1 belum** | Policy/Approval/Identity/Audit ada; **Outbox + Exception Engine ada (2026-10-02)**; sisa: DLP |
 | Organisasi & peran (D3) | ✅ **DECIDED, kosakata sudah satu rumah** | ADR-0035 (§5 "3 kosakata hidup bersamaan") direkonsiliasi 2026-10-02 lewat `src/roles.py` + amendment ADR-0035: `approvals.ROLE_RANK` **adalah** `roles.ROLE_RANK`, nama lama tetap resolvable untuk baris historis, dan `gm` masuk tangga (rank 4). **`gm` juga sudah punya halaman** (Command Center/Approvals/Finance/Cases/Properties) dan **wajib MFA** — policy `security.mfa.required_roles` v2 = owner, finance, gm (keputusan owner 2026-10-02). |
-| Kesiapan bisnis (go-live) | ❌ **1 keputusan OPEN (D17)** | Preflight 2026-10-02 setelah owner menjawab 12 keputusan: `NO-GO — 1 BLOCKING decision(s) still OPEN: D17`. Sisa kerja = fitur Kesiapan Tenant |
+| Kesiapan bisnis (go-live) | ✅ **preflight GO (2026-11-16)** | `VERDICT: GO — all checks passed (3 warning(s))`; `go-live decisions: 15/17 row(s) decided, none blocking OPEN`. Dua keputusan masih OPEN dan NON-BLOCKING: D15 (sumber bukti inventori campuran) dan D16 (unit & tarif yang dipublikasikan). Tiga WARN lingkungan: `VILLA_ANCHOR_DIR` tidak diset, anchor terbit tidak diperiksa, backup tidak diperiksa. Dulu (2026-10-02): `NO-GO … D17`; kini D17 DECIDED. **GO berarti sistem sehat, bukan izin tayang**: preflight tidak memeriksa villa pilot nyata, tarif pajak yang ditinjau counsel, atau backup yang teruji |
 
-**Catatan penting:** `NO-GO` itu **bukan** karena software rusak. Semua pemeriksaan sistem **OK** (preflight 2026-10-02: 12 OK, 3 WARN lingkungan). Yang menahan adalah **keputusan bisnis** — dan itu memang disengaja: *"the system may be ready while the business is not"*.
+**Catatan penting:** verdict `NO-GO` pada 2026-10-02 **bukan** karena software rusak (12 OK, 3 WARN lingkungan); yang menahan adalah satu **keputusan bisnis** (D17). D17 sudah DECIDED dan preflight 2026-11-16 = GO (baris di atas). Prinsipnya tetap: *"the system may be ready while the business is not"* — GO hanya menjawab bagian pertama.
 
 ---
 
@@ -59,9 +59,9 @@ Satu hal yang saya tegaskan di depan, karena ini akar semua yang di bawah: **pad
 
 ## 3. ⚠️ Yang BELUM OK — ini daftar kerjaan sebenarnya
 
-### 3.1 Lapisan AI Workforce: **nol kode** (temuan terbesar)
+### 3.1 Lapisan AI Workforce: **5 dari 7 komponen ada, 2 belum** (temuan terbesar)
 
-Dokumen Anda mendefinisikan **6 komponen AI**, dan owner menambah **1** lagi pada 2026-10-02 (Security & Privacy Warden, ADR-0039). Yang ada di kode hari ini: **0 dari 7**.
+Dokumen Anda mendefinisikan **6 komponen AI**, dan owner menambah **1** lagi pada 2026-10-02 (Security & Privacy Warden, ADR-0039). Yang ada di kode (diperiksa ulang 2026-11-16): **5 dari 7** — potret awal 2026-09-28 menulis 0 dari 7.
 
 | # | Komponen (dok Anda §7–§12) | Berkas kode | Status |
 |---|---|---|---|
@@ -70,12 +70,12 @@ Dokumen Anda mendefinisikan **6 komponen AI**, dan owner menambah **1** lagi pad
 | 3 | AI Reservation Service | `src/reservation_service.py` + `src/schema/012_reservation_service.sql` | 🟡 **inti ada 2026-10-02**: ledger percakapan berisolasi, tangga §13 (8 rung), kosakata eskalasi tertutup, paket handoff berdigest, ambang keyakinan deny-first, handoff hanya ke peran berisi orang. **Ada juga**: 10 worker RES-W01…RES-W10 (inquiry, matching, availability, pricing, versi penawaran, follow-up, hold, status booking, amend/cancel assist, pre-arrival) lewat pintu `ai_gateway` + `src/reservation_workers.py`, pricing di `reservation_kernel.quote_stay` (mengumpulkan aturan yang sudah ada, **tidak menulis**) dan penawaran lewat satu tindakan `quotation.send` (MEDIUM) — keduanya memakai nama §56 yang sudah ada, katalog tidak ditambah. **Belum**: 1 worker sisanya (RES-W11 handoff) + CLI |
 | 4 | Operations AI Agent | `src/operations_agent.py` | 🟡 **inti read-only 2026-10-07**: beban kerja, SLA tugas+insiden, gap dokumen, kesiapan kedatangan, survei eksepsi, KPI §10 (`None` saat kosong), tool LOW `ops.workflow/sla/readiness`. **Belum**: OPS-W04 booking QC, OPS-W09 comm QC, OPS-W10 SOP/compliance store |
 | 5 | Finance Admin AI Agent | `src/finance_admin.py` | 🟡 **inti read-only 2026-10-07**: AR aging, AP, due monitor, eksepsi, kas/eksposur, KPI §11. **Belum**: FIN-W03/05/08/09 |
-| 6 | Revenue & Business Intelligence AI Agent | — | ⚠️ belum ada |
+| 6 | Revenue & Business Intelligence AI Agent | `src/revenue_bi_agent.py` | 🟡 **slice 1 ada 2026-10-07**: 12 worker RBI-W01…W12 terdaftar, `tests/test_revenue_bi_agent.py` 28 tes. **Belum**: M4/M5/M7/M12/M13 · M14/M16 · M15 · M10/M11 |
 
-Bukti: `ls src/control_tower.py src/reservation_service.py src/finance_admin.py src/operations_agent.py` → **4 ada**; sisa `commercial_ai`, `revenue_bi`, `security_warden` belum ada. (Jangan pakai `grep` nama komponen sebagai bukti: `control_tower.py` menyebut COM/RBI di ROUTES meski modulnya belum ada.)
+Bukti: `ls src/control_tower.py src/reservation_service.py src/finance_admin.py src/operations_agent.py` → **4 ada**, ditambah `src/revenue_bi_agent.py` = **5 ada**; sisa `commercial_ai` dan `security_warden` belum ada (`ls` → No such file). (Jangan pakai `grep` nama komponen sebagai bukti: `control_tower.py` menyebut COM/RBI di ROUTES meski modulnya belum ada.)
 Yang **sudah** ada adalah **identitas** AI (`ai_service.py`, ADR-0018) — yaitu *siapa* AI di mata sistem dan apa yang dilarang. Itu fondasi yang benar, bukan agent-nya.
 
-**Artinya: seluruh mandat AI-spesifik di dokumen Anda belum bisa dijalankan** — §13 human handoff, §14 event envelope, §17 kill switch berjenjang, §19 matriks tes AI, §20 guardrail. Bukan karena salah, tapi karena belum dimulai.
+**Artinya (potret 2026-09-28; §13 handoff kini ada di `reservation_service.py`, sisanya belum diperiksa ulang): mandat AI-spesifik di dokumen Anda belum seluruhnya bisa dijalankan** — §13 human handoff, §14 event envelope, §17 kill switch berjenjang, §19 matriks tes AI, §20 guardrail. Bukan karena salah, tapi karena belum dimulai.
 
 ### 3.2 Infrastruktur non-agent (§2A.6)
 
@@ -269,10 +269,10 @@ Yang **tidak** saya usulkan sekarang: membangun Commercial AI sebelum reservatio
 | 72 ADR & statusnya | `for f in docs/adr/*.md; do grep -m1 -iE '^\- ?\*?\*?Status' "$f"; done` |
 | 2 dari 7 komponen AI belum ada (Commercial, Security Warden); Revenue & BI **slice 1 sudah ada** | `ls src/commercial_ai.py src/security_warden.py` → No such file; `ls src/revenue_bi_agent.py` → ada (`tests/test_revenue_bi_agent.py`, 28 tes) |
 | ADR-0012 belum dibangun | `grep -c "method_category" src/payments.py` → 0 |
-| Outbox belum ada | `grep -in outbox src/schema/001_initial.sql` → kosong |
+| Outbox inti ada | `grep -in outbox src/schema/001_initial.sql` → 22 baris; tabel `outbox_events` ada di `001_initial.sql` dan migrasi 006 |
 | Gerbang hijau | `make check` |
 | Kesiapan bisnis | `VILLA_DB=data/villa.db /usr/bin/python3 scripts/preflight.py` |
 
 ---
 
-**Kesimpulan satu paragraf.** Sistem domainnya **sehat dan bisa dipercaya** — 72 ADR, 4.099 tes lulus, katalog policy penuh, invariant ditegakkan kode. Yang **sudah** ada: inti 5 dari 7 komponen AI workforce (Control Tower, Reservation, Finance Admin, Operations, Revenue & BI slice 1 — ADR & baris traceability). Yang **belum** adalah 2 komponen penuh sisanya (Commercial, Security & Privacy Warden), empat slice lanjutan Revenue & BI (M4/M5/M7/M12/M13 · M14/M16 · M15 · M10/M11) dan tiga infrastruktur penopangnya (outbox, exception engine, DLP), plus dua ADR pembayaran yang sudah diterima tapi belum dieksekusi. Yang **menahan go-live** bukan software, tapi 1 keputusan bisnis (kesiapan tenant, D17). Dan **pendapat saya soal dokumen Anda: setuju, dokumen itu memang acuan yang tepat** — ia satu-satunya sumber yang memisahkan *agent*, *worker*, dan *manusia* dengan tegas, dan itu persis pembedaan yang mencegah sistem ini tumbuh jadi kumpulan chatbot yang saling mengklaim wewenang. Yang perlu ditambahkan hanya satu: dokumen itu harus **tersambung ke traceability repo** supaya jadi acuan proyek, bukan acuan percakapan.
+**Kesimpulan satu paragraf.** Sistem domainnya **sehat dan bisa dipercaya** — 72 ADR, 4.456 tes lulus di CI (4.457 lokal), katalog policy penuh, invariant ditegakkan kode. Yang **sudah** ada: inti 5 dari 7 komponen AI workforce (Control Tower, Reservation, Finance Admin, Operations, Revenue & BI slice 1 — ADR & baris traceability). Yang **belum** adalah 2 komponen penuh sisanya (Commercial, Security & Privacy Warden), empat slice lanjutan Revenue & BI (M4/M5/M7/M12/M13 · M14/M16 · M15 · M10/M11) dan satu infrastruktur penopang (DLP; inti outbox dan exception engine sudah ada), plus dua ADR pembayaran yang sudah diterima tapi belum dieksekusi. Yang **menahan go-live** bukan software. Dulu itu 1 keputusan bisnis (kesiapan tenant, D17 — kini DECIDED, preflight GO); yang tersisa dan tidak diperiksa preflight: villa pilot nyata, tarif pajak yang ditinjau counsel, backup teruji, dan pemasangan produksi. Dan **pendapat saya soal dokumen Anda: setuju, dokumen itu memang acuan yang tepat** — ia satu-satunya sumber yang memisahkan *agent*, *worker*, dan *manusia* dengan tegas, dan itu persis pembedaan yang mencegah sistem ini tumbuh jadi kumpulan chatbot yang saling mengklaim wewenang. Yang perlu ditambahkan hanya satu: dokumen itu harus **tersambung ke traceability repo** supaya jadi acuan proyek, bukan acuan percakapan.
