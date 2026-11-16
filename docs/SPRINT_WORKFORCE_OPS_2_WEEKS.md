@@ -286,6 +286,7 @@ Empat keputusan saat T2.4 dikerjakan:
 | T2.4 | 7–8 | Alur status `DRAFT → CALCULATED → APPROVED → PAID → (VOID)`; `PAID` wajib `calculated_at` + `approved_at` | uji alur | lompat status ditolak; `VOID` tanpa alasan ditolak (regresi §1.1) | uji tabel transisi |
 | T2.5 | 8 | **Gate G2**: rekonsiliasi 0 selisih pada dataset uji 30 hari × 12 staf sintetis | laporan angka | setiap slip punya jejak rate+policy+timesheet; 0 slip tanpa jejak | skrip `scripts/workforce_reconcile.py` — **selesai 2026-11-15: 1.000 pemeriksaan, 0 selisih (30 hari x 12 staf x 2 properti), 20 uji + 11 kontrol/batas, keluar 1 saat data dirusak, masuk `make check`** (lihat §4.5) |
 | T2.6 | **Selesai** (2026-11-15) | `src/workforce/views.py` + 3 templat (`workforce_supervisor/finance/owner.html`) + katalog label `src/workforce/screen_labels.json` + 14 uji pada `tests/test_workforce_views.py`: tiga layar per peran, uang selalu lewat `money_display` (IDR dulu, referensi USD hanya bila policy menerbitkan kurs yang masih segar), layar read-only, gerbang peran *deny by default*, dan 0 istilah mesin di layar supervisor — lihat §4.6 | templat + uji render | 0 istilah teknis di layar supervisor; 0 nilai uang tanpa USD | uji render + grep templat |
+| T2.6b | **Selesai** (2026-11-15) | **Penyaluran rute** tiga layar workforce ke `dashboard.py` (tidak ada di rencana awal §4 hari 10): `/workforce/today`, `/workforce/payroll`, `/workforce/cost` → page key, `PAGE_ROLES` satu peran per layar, judul halaman, entri `NAV` + grup `Workforce`, dan `WorkforceViews` **kehilangan kerangka halamannya sendiri** supaya hanya ada satu kerangka. Dua gerbang (rute dan isi) dikunci setara oleh uji; 20 uji `tests/test_workforce_views.py` + 40 kombinasi (halaman × peran) di matriks HTTP `tests/test_dashboard.py` — lihat §4.7 | rute + `PAGE_ROLES` + uji HTTP | 200 hanya untuk peran pemiliknya; 403 untuk lainnya; 401 tanpa identitas; 404 menyebut pilihan | matriks rute × peran lewat HTTP nyata |
 | T2.7 | 9 | Tema premium: token warna, tipografi, motif etnik-alam, kontras AA, `prefers-reduced-motion` | `src/static/theme.css` + uji kontras | ≥8 pasangan warna lulus AA; animasi mati saat reduced-motion | skrip uji kontras (dibuat hari itu) |
 | T2.8 | 10 | **Gate G3 + G4**: suite penuh hijau, `make check`, audit PII, dokumen status diperbarui | log + PR | 0 gagal; 0 PII; angka status cocok kenyataan | `pytest -q`, `make check`, `git diff --stat` |
 
@@ -369,6 +370,64 @@ yang tidak saya ingat.
    bisa keliru untuk pola run yang tidak biasa — dan itu tertulis di sini supaya tidak jadi klaim.
 4. Keempat berkas baru (`views.py`, 3 templat, 1 katalog) hanya diuji lewat jalur render; belum ada
    uji HTTP karena rutenya memang belum ada.
+
+### 4.7 T2.6b — layar workforce akhirnya bisa dibuka (2026-11-15)
+
+T2.6 membuat tiga layar, tetapi belum ada yang bisa membukanya: `views.render()` adalah
+pintasan uji, `nav` sengaja kosong, dan kepala halaman menampilkan `peran ()` karena belum
+ada principal. Layar yang tidak bisa dibuka tidak bisa dinilai manusia — jadi T2.6 belum
+selesai sebelum rutenya ada. Pekerjaan ini tidak ada di WBS §4 (hari 9–10 sudah terisi tema
+dan gerbang G3), maka barisnya ditambahkan sebagai **T2.6b**, bukan disembunyikan di dalam
+baris T2.6.
+
+**Rute.** `WORKFORCE_ROUTES` memetakan slug yang diketik orang ke page key yang dipakai kode:
+
+| Yang diketik | Page key | Peran | Judul halaman |
+|---|---|---|---|
+| `/workforce/today` | `workforce_supervisor` | `operations` | Tenaga Kerja — Hari Ini |
+| `/workforce/payroll` | `workforce_finance` | `finance` | Tenaga Kerja — Jalankan Upah |
+| `/workforce/cost` | `workforce_owner` | `owner` | Tenaga Kerja — Biaya per Properti |
+
+`/workforce` sendiri dan slug yang salah adalah **404 yang menyebut pilihan** (`known=[…]`),
+bukan tebakan satu layar: menebak akan menampilkan layar payroll kepada supervisor.
+
+**Dua gerbang, satu keputusan.** `dashboard.PAGE_ROLES` memutuskan apakah *rute* boleh
+dibuka (menjawab 403) dan `workforce.views.SCREEN_ROLES` memutuskan apakah *isi* boleh
+digambar (menolak walau pemanggil lupa memeriksa peran). Keduanya harus sama; uji
+`test_the_dashboard_role_map_is_the_screen_map` gagal kalau salah satu dilonggarkan tanpa
+yang lain, dan masing-masing gerbang punya ujinya sendiri.
+
+**Satu kerangka halaman.** `WorkforceViews.render()`, `shell_context()`, dan `_clock_slot()`
+**dihapus**: kerangka kedua adalah cara cacat label peran (§4.6) lahir — modul itu sempat
+punya daftar sendiri untuk jam, judul peran, dan nav. Sekarang hanya `dashboard.py` yang
+menggambar kerangka, dan `test_the_module_keeps_no_shell_of_its_own` gagal kalau kerangka
+kedua tumbuh lagi. Halaman diuji lewat `Dashboard.dispatch` — jalur yang sama dengan
+permintaan HTTP — bukan lewat fungsi render.
+
+**Bukti (dijalankan, bukan disimulasikan).** Dashboard dijalankan di atas salinan berkas
+dunia G2 dan disapa dengan token seperti browser (skrip probe, keluaran nyata):
+
+| Rute | operations | finance | owner | auditor | guest | tanpa token |
+|---|---|---|---|---|---|---|
+| `/workforce/today` | **200** | 403 | 403 | 403 | 401 | 401 |
+| `/workforce/payroll` | 403 | **200** | 403 | 403 | 401 | 401 |
+| `/workforce/cost` | 403 | 403 | **200** | 403 | 401 | 401 |
+
+Halaman 200 memuat `IDR` **dan** `≈ USD`, 0 istilah mesin; slug salah → 404. Kepala halaman
+berbunyi `identitas agent-operations-1 peran Operations / Reservation Manager (operations)`
+— label peran dari bagan organisasi, bukan nama orang.
+
+**Tiga jebakan yang ditemukan saat menguji, bukan setelah rilis.**
+1. Penanda `data-page="…"` **tidak** membuktikan halaman yang benar: blok `<style>` di kepala
+   memuat penanda **semua** halaman, jadi halaman 403 pun lulus. Bukti sekarang tiga lapis:
+   penanda `<section data-page=…>` harus muncul *setelah* `<body>`, judul `<h2>` layar harus
+   ada, dan tautan antar layar harus menunjuk rute nyata.
+2. Tautan "Layar lain" masih jangkar dalam halaman (`#workforce_finance`) — tidak membawa
+   siapa pun ke mana. Sekarang rute nyata, dan diuji.
+3. `RECORDED_SRC["dashboard.py"]` naik 156 → 159 (tiga judul halaman). Kenaikan itu
+   **disengaja dan diberi alasan** di berkas pin, karena judul halaman dashboard memang
+   berbahasa Indonesia (`Kasus`, `Keuangan`, `Rantai Audit`); ADR-0011 §55 mengatur pesan
+   produksi dan teks tamu, bukan kerangka internal.
 
 ## 5. Gerbang (tidak boleh dilewati, tidak boleh "nanti")
 
@@ -475,6 +534,7 @@ Sprint **gagal** — dan harus ditulis begitu dalam laporan — bila salah satu 
 
 | Tanggal | Perubahan |
 |---|---|
+| 2026-11-15 | T2.6b: tiga layar workforce disalurkan ke `dashboard.py` (rute + peran + nav); kerangka halaman kedua di `workforce/views.py` dihapus; pin bahasa `dashboard.py` 156 → 159 dengan alasan |
 | 2026-11-14 | Dokumen dibuat; baseline §1 diukur; cacat "NULL lolos CHECK" ditemukan & diperbaiki; kontrak uji 32 hijau; paritas skema OK |
 
 

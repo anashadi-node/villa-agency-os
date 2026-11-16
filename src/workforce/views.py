@@ -39,23 +39,17 @@ from typing import Any, Mapping, Optional, Sequence
 if __package__ in (None, ""):  # pragma: no cover - direct import from scripts/
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from primitives import DomainError, to_iso  # noqa: E402
-from schema_loader import applied_version  # noqa: E402
+from primitives import DomainError  # noqa: E402
 
 import money_display as money_display_module  # noqa: E402
 import policy_engine as policy_engine_module  # noqa: E402
-import time_display as time_display_module  # noqa: E402
 
-# The dashboard owns the one HTML renderer in this codebase; importing it keeps the
-# escaping rules, the page shell and the read-only badge shared instead of copied.
-from dashboard import (  # noqa: E402
-    READ_ONLY_BADGE,
-    Markup,
-    escape_value,
-    render_page,
-    ROLE_DISPLAY_LABEL,
-    rows_markup,
-)
+# The dashboard owns the one HTML renderer in this codebase, so the escaping rules and
+# the table markup are shared rather than copied. Only the helpers this module still
+# *uses* are imported: it no longer draws a page shell of its own, because a second
+# shell (a second place that decides the clock, the role title and the nav) is exactly
+# how the role label drifted from the org chart once already.
+from dashboard import Markup, escape_value, rows_markup  # noqa: E402
 
 #: Screens this module can draw. The name is the template name and the page key.
 SCREENS: tuple[str, ...] = ("workforce_supervisor", "workforce_finance", "workforce_owner")
@@ -584,8 +578,13 @@ class WorkforceViews:
         }
 
     # -- rendering --------------------------------------------------------------- #
-    def context(self, screen: str) -> dict[str, Any]:
-        """The page values for ``screen``, ready for :func:`dashboard.render_page`."""
+    def context(self, screen: str, *, role: Optional[str] = None) -> dict[str, Any]:
+        """The body values for ``screen``, ready for :func:`dashboard.render_page`.
+
+        The dashboard draws the shell (clock, role title, nav); this module fills the body.
+        Passing ``role`` applies the screen's own entitlement map a second time, so a caller
+        that never consulted :func:`screens_for_role` still cannot draw the wrong screen.
+        """
         builders = {
             "workforce_supervisor": self.view_supervisor,
             "workforce_finance": self.view_finance,
@@ -593,56 +592,6 @@ class WorkforceViews:
         }
         if screen not in builders:
             raise UnknownScreen("unknown workforce screen", screen=screen, known=SCREENS)
-        return builders[screen]()
-
-    def shell_context(self, *, role: str = "", actor: str = "", title: str = "") -> dict[str, Any]:
-        """The values ``templates/base.html`` asks for.
-
-        The rail is left empty on purpose: these screens are not yet routed by the HTTP
-        dashboard, so there is no page list to advertise — each screen carries its own
-        line of links. A caller that has a human title (and an actor name) passes them in;
-        nothing here invents a page name, and the schema version is left blank rather than
-        described in words this module would have to own.
-        """
-        return {
-            "title": title,
-            "actor": actor,
-            # The role title comes from dashboard's ADR-0035 blueprint map, the same one
-            # every other page shows, so this module never grows a second source of role
-            # names that could drift from the org chart.
-            "actor_role": role,
-            "actor_role_label": ROLE_DISPLAY_LABEL.get(role, role),
-            # The shell substitutes this slot directly, so a plain string here would show
-            # the reader the ``<time>`` element as text. ``humanize`` returns markup-or-None;
-            # falling back to the escaped raw stamp keeps the slot honest when it declines.
-            "now": self._clock_slot(),
-            "schema_version": applied_version(self.conn) or "",
-            "nav": Markup(""),
-            "read_only_banner": READ_ONLY_BADGE,
-        }
-
-    def _clock_slot(self) -> Any:
-        """The ``waktu`` slot of the shell: time element, or the escaped stamp as a fallback."""
-        stamp = to_iso(self.clock.now())
-        rendered = time_display_module.humanize(stamp)
-        return Markup(rendered) if rendered is not None else escape_value(stamp)
-
-    def render(
-        self,
-        screen: str,
-        *,
-        role: str = "",
-        actor: str = "",
-        title: str = "",
-    ) -> str:
-        """Render ``screen`` inside the shared page shell.
-
-        ``role`` is checked first so that a screen cannot be drawn for a role that is
-        not entitled to it, even if a caller forgets to consult
-        :func:`screens_for_role`.
-        """
-        if role and screen not in screens_for_role(role):
+        if role is not None and screen not in screens_for_role(role):
             raise UnknownScreen("this role may not open that screen", screen=screen, role=role)
-        context = self.shell_context(role=role, actor=actor, title=title)
-        context.update(self.context(screen))
-        return render_page(screen, context, templates_dir=self.templates_dir)
+        return builders[screen]()

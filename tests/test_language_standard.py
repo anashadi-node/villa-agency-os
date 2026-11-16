@@ -48,7 +48,12 @@ MARKERS = re.compile(
 RECORDED_SRC = {
     "cases.py": 42,
     "connectors.py": 90,
-    "dashboard.py": 156,
+    # 156 → 159 on 2026-11-15: three workforce page titles. A page title is read by the
+    # owner inside the internal dashboard, where every title is already Indonesian
+    # ("Kasus", "Keuangan", "Rantai Audit"); ADR-0011 §55 governs production error and
+    # guest-facing text, not the dashboard's own chrome. Deliberate, like every other
+    # raise of this number — the three literals are ``PAGE_TITLES["workforce_*"]``.
+    "dashboard.py": 159,
     "documents.py": 7,
     "identity.py": 26,
     "incidents.py": 74,
