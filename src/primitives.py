@@ -819,6 +819,61 @@ def mask_sensitive_numbers(text: str) -> str:
     return out
 
 
+#: Credential shapes, matched on a single string value (never on serialized JSON, so a key named
+#: "token" is not mistaken for a secret). High precision on purpose: a detector that cries wolf
+#: gets switched off. Opaque ids and hex digests do not match any of these.
+_SECRET_PATTERNS: tuple[tuple[str, "re.Pattern[str]"], ...] = (
+    ("private_key", re.compile(r"-----BEGIN [A-Z ]{0,24}PRIVATE KEY-----")),
+    ("cloud_access_key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
+    ("api_key", re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}")),
+    ("bearer_token", re.compile(r"\bBearer\s+[A-Za-z0-9._~+/\-]{16,}=*", re.IGNORECASE)),
+    (
+        "assigned_secret",
+        re.compile(r"\b(?:password|passwd|pwd|secret|api[_-]?key|token)\b\s*[=:]\s*\S{6,}", re.IGNORECASE),
+    ),
+)
+
+
+def sensitive_kinds(text: Any) -> tuple[str, ...]:
+    """Names (never values) of the P4 data a string carries: card, security code, passport,
+    or a credential. Empty tuple = nothing found.
+
+    Unlike :func:`redact` this does not look for emails or phone numbers: a notification
+    legitimately addresses a guest. It looks only for what must never leave the system.
+    """
+    if not isinstance(text, str) or not text:
+        return ()
+    found: list[str] = []
+    if any(
+        len(set(digits)) >= 2 and _luhn_valid(digits)
+        for digits in (re.sub(r"[ -]", "", m.group(0)) for m in _CARD_RUN_RE.finditer(text))
+    ):
+        found.append("card_number")
+    if _CVV_RE.search(text):
+        found.append("security_code")
+    if _PASSPORT_RE.search(text):
+        found.append("passport_number")
+    found.extend(name for name, pattern in _SECRET_PATTERNS if pattern.search(text))
+    return tuple(found)
+
+
+def find_forbidden(value: Any, path: str = "payload") -> tuple[tuple[str, str], ...]:
+    """Walk a JSON-like value; return ``(path, kind)`` for every string leaf that carries P4 data.
+
+    The result names *where* and *what*, never the value, so it is safe to put in an error.
+    """
+    if isinstance(value, str):
+        return tuple((path, kind) for kind in sensitive_kinds(value))
+    hits: list[tuple[str, str]] = []
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            hits.extend(find_forbidden(item, f"{path}.{key}"))
+    elif isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            hits.extend(find_forbidden(item, f"{path}[{index}]"))
+    return tuple(hits)
+
+
 def _mask_identifiers(text: str) -> str:
     out = _EMAIL_RE.sub("[EMAIL]", text)
     out = mask_sensitive_numbers(out)

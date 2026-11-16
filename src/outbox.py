@@ -45,6 +45,7 @@ from primitives import (
     IdFactory,
     SystemClock,
     canonical_json,
+    find_forbidden,
     require_ref,
     require_text,
     sha256_hex,
@@ -304,6 +305,16 @@ class OutboxService:
             )
         if not isinstance(payload, Mapping):
             raise InvalidEvent("payload must be a mapping", field="payload", got=type(payload).__name__)
+        forbidden = find_forbidden(payload)
+        if forbidden:
+            # Fail closed, and never echo the value: the stored payload is immutable and is
+            # handed to an external transport, so a card or a credential must not get in.
+            raise InvalidEvent(
+                "payload carries data that must never leave the system: "
+                + ", ".join(f"{where} ({kind})" for where, kind in forbidden),
+                field="payload",
+                code="SENSITIVE_PAYLOAD",
+            )
         text = canonical_json(dict(payload))
         if len(text.encode("utf-8")) > MAX_PAYLOAD_BYTES:
             raise InvalidEvent("payload is too large to be a control message", field="payload")
