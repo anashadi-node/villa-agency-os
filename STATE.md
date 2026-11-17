@@ -44,3 +44,15 @@ Lihat bagian "PROTOKOL HEMAT & CEPAT" di SOUL.md profil villa-agency.
 - Tidak berubah: `data/villa.db` (stat sebelum=sesudah), kernel, money ledger, policy, approval, konfigurasi produksi. Tidak ada migrasi dijalankan.
 - Backup pekerjaan lama (di luar repo): `~/villa-agency-os-backups/pack02-2026-11-17/` (MANIFEST.sha256 terverifikasi).
 - Belum dibuktikan: full suite; anti-overlap PostgreSQL (`VILLA_PG_DSN` kosong, 4 tes PG di-skip); `data/villa.db` asli masih kurang 018 dan akan NO-GO sampai Owner menyetujui migrasi.
+
+## PACK-03 — FR-918 Restore Proof (2026-11-17)
+- Status: kode + tes selesai; satu commit lokal atas izin Owner (hash: `git log -1`), **belum push**. **Bukan klaim production readiness.**
+- Implementasi: `src/restore_proof.py` (baru) memulihkan backup lewat `sqlite3.backup()` ke direktori sementara privat, lalu memeriksa salinan read-only (`mode=ro`): integrity_check, foreign_key_check, migration ledger (FR-917), audit chain, `verify_published_anchors`. Tidak memanggil `connect_sqlite`/`apply_schema`. `scripts/preflight.py`: cek `restore proof` setelah cek `backup`; tanpa `--backup`/`--anchor-dir` = "not checked" -> FAIL di `--production`.
+- Sumber dibuka `mode=ro&immutable=1` hanya bila tidak ada `-wal`/`-journal` tertunda; sha256 + isi direktori dibandingkan sebelum/sesudah, berbeda = FAIL. Backup dari DB hidup wajib lewat `.backup`, bukan `cp`.
+- Bukti tes (eksekusi nyata, DB sintetis di tmp_path): `tests/test_restore_proof.py` 25 tes lulus; suite relevan (restore_proof, preflight, schema, migrations, preflight_host_check, tenant_onboarding_path, anchors, audit, marketing_site) RC=0, 4 skip PG-live. `stat` `data/villa.db*` tidak berubah.
+- Negative control: `test_negative_control_a_weakened_checker_lets_the_same_files_through` (checker dilemahkan meloloskan berkas yang sama). Tolak: berkas sampah 8192 B, SQLite kosong tanpa skema, ledger kurang/tanpa 018, audit chain rusak (termasuk varian trigger dipasang ulang), DB korup, backup tidak ada, -wal/-journal tertunda, anchor hilang/kosong, backup lebih tua dari anchor, backup berubah saat dibaca, anggaran waktu terlampaui.
+- Perubahan perilaku disengaja: fixture backup di tes GO `tests/test_preflight.py` diganti backup SQLite sungguhan (berkas sampah 8 KiB tadinya lolos).
+- Keterbatasan: durasi restore diukur pada data sintetis = bukti mekanisme, BUKAN bukti RTO 4 jam produksi (D10 tidak diubah).
+- NOT_VERIFIED: PostgreSQL live (`VILLA_PG_DSN` kosong). NOT_RUN: full suite. Lint: gerbang pyflakes (F,E9) bersih; ruff dengan aturan gaya tambahan menandai berkas baru (I001/UP045/RUF100) dan tidak dirapikan agar sesuai gaya repo.
+- OPEN reconciliation: `BACKUP_MAX_AGE_HOURS=26` (preflight) vs RPO 24 jam (D10). Perilaku 26 jam dipertahankan; butuh keputusan Owner.
+- OPEN: kadensi uji restore, `DEPLOYMENT.md §5` (bulanan) vs D10 (3 bulanan).

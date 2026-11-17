@@ -13,6 +13,7 @@ regardless of their name.
 from __future__ import annotations
 
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -347,13 +348,17 @@ def test_go_when_everyhing_checks_out(tmp_path):
             clock=SystemClock(),
             directory=anchors, actor="ops.anchor", actor_role="operations",
         )
+        # FR-918: the gate now restores the backup, so a real one is taken (Online Backup
+        # API) after the anchor; 8 KiB of junk used to pass and no longer may.
+        backup = tmp_path / "villa-backup.sqlite"
+        target = sqlite3.connect(backup)
+        conn.backup(target)
+        target.close()
     finally:
         conn.close()
 
     decisions = tmp_path / "decisions.md"
     decisions.write_text(ALL_DECIDED, encoding="utf-8")
-    backup = tmp_path / "villa-backup.sqlite"
-    backup.write_bytes(b"x" * 8192)
 
     result = TestCli()._run(
         "--db", str(db), "--anchor-dir", str(anchors), "--decisions", str(decisions),
@@ -361,6 +366,7 @@ def test_go_when_everyhing_checks_out(tmp_path):
     )
     assert result.returncode == 0, result.stdout
     assert "VERDICT: GO" in result.stdout
+    assert "OK    restore proof" in result.stdout
 
 
 def test_a_stale_anchor_stops_the_deploy(tmp_path, monkeypatch):

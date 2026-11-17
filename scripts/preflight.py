@@ -60,6 +60,7 @@ from anchors import AnchorError, verify_published_anchors  # noqa: E402
 from audit import AuditLog  # noqa: E402
 from observability import collect_metrics, health_checks  # noqa: E402
 from primitives import DomainError, SystemClock, parse_iso  # noqa: E402
+from restore_proof import NOT_VERIFIED, prove_restore  # noqa: E402
 from schema_loader import (  # noqa: E402
     SCHEMA_VERSION,
     SchemaError,
@@ -488,6 +489,24 @@ def check_backup(path: Optional[Path]) -> Check:
     return _check("backup", OK, f"{size // 1024} KiB, {age_hours:.1f}h old")
 
 
+def check_restore_proof(path: Optional[Path], anchor_dir: Optional[Path]) -> Check:
+    """FR-918: a backup is proven only by restoring it and checking the restored copy.
+
+    ``check_backup`` looks at the file (exists, size, age), so an 8 KiB file of junk passed.
+    Here the file is restored into a private temp dir and verified read-only (integrity,
+    foreign keys, migration ledger, audit chain, published anchor). The duration is a
+    figure for this file, not a proof of the production RTO. An anchor that could not be
+    checked reports "not checked", which ``--production`` turns into a refusal.
+    """
+    name = "restore proof"
+    if path is None:
+        return _check(name, WARN, "not checked (--backup not given)")
+    proof = prove_restore(path, anchor_dir=anchor_dir)
+    if proof.verdict == NOT_VERIFIED:
+        return _check(name, WARN, f"not checked (--anchor-dir not given): {proof.detail}")
+    return _check(name, OK if proof.verdict == "OK" else FAIL, proof.detail[:600])
+
+
 # --------------------------------------------------------------------------
 # Served ports (--host-check)
 # --------------------------------------------------------------------------
@@ -752,6 +771,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     backup = Path(args.backup) if args.backup else None
     checks.append(check_backup(backup))
+    checks.append(check_restore_proof(backup, anchor_dir))
 
     decision_checks, open_blocking = parse_decisions(Path(args.decisions))
     checks.extend(decision_checks)
