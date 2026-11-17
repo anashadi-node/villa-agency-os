@@ -385,28 +385,35 @@ def pg_gate():
     if not dsn:
         pytest.skip("VILLA_PG_DSN tidak diset: sisi PostgreSQL gerbang G1 dilewati")
 
+    import os
+
     psycopg = pg_driver()
     if psycopg is None:
+        if os.environ.get("VILLA_PG_REQUIRED") == "1":
+            raise RuntimeError("VILLA_PG_REQUIRED=1 tetapi driver psycopg tidak terpasang.")
         pytest.skip("driver psycopg tidak terpasang: sisi PostgreSQL gerbang G1 dilewati")
 
     from schema_loader import split_statements
+    from test_pg_overlap_concurrency import disposable_database
 
     root = pathlib.Path(__file__).resolve().parents[1]
-    conn = psycopg.connect(dsn, autocommit=True)
-    try:
-        conn.execute(f"DROP SCHEMA IF EXISTS {PG_SCHEMA} CASCADE")
-        conn.execute(f"CREATE SCHEMA {PG_SCHEMA}")
-        conn.execute(f"SET search_path TO {PG_SCHEMA}, public")
-        # Twin PostgreSQL adalah satu berkas gabungan seluruh skema SQLite;
-        # memakai twin (bukan berkas SQLite) memastikan yang diuji adalah DDL
-        # yang benar-benar dipakai server.
-        text = (root / "src" / "schema" / "001_initial.pg.sql").read_text(encoding="utf-8")
-        for statement in split_statements(text):
-            conn.execute(statement)
-        yield conn
-    finally:
-        conn.execute(f"DROP SCHEMA IF EXISTS {PG_SCHEMA} CASCADE")
-        conn.close()
+    # PACK-04A: the schema below is created inside a database this fixture owns, after the
+    # server proved itself a disposable CI service. Nothing on the given DSN is dropped.
+    with disposable_database(dsn) as owned_dsn:
+        conn = psycopg.connect(owned_dsn, autocommit=True)
+        try:
+            conn.execute(f"DROP SCHEMA IF EXISTS {PG_SCHEMA} CASCADE")
+            conn.execute(f"CREATE SCHEMA {PG_SCHEMA}")
+            conn.execute(f"SET search_path TO {PG_SCHEMA}, public")
+            # Twin PostgreSQL adalah satu berkas gabungan seluruh skema SQLite;
+            # memakai twin (bukan berkas SQLite) memastikan yang diuji adalah DDL
+            # yang benar-benar dipakai server.
+            text = (root / "src" / "schema" / "001_initial.pg.sql").read_text(encoding="utf-8")
+            for statement in split_statements(text):
+                conn.execute(statement)
+            yield conn
+        finally:
+            conn.close()
 
 
 AGENCY_ROW = ("agy_g1", "Gate G1 Agency", "ACTIVE", "2026-11-01T00:00:00Z", "2026-11-01T00:00:00Z")

@@ -103,8 +103,10 @@ jobs:
         options: >-
           --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 20
     env:
-      # Basis data pembuangan: tests/test_schema.py menjatuhkan dan membuat ulang `public`.
-      VILLA_PG_DSN: postgresql://postgres:postgres@localhost:5432/postgres
+      # PACK-04A: VILLA_PG_DSN tidak lagi ditulis di sini. Langkah "Provision a
+      # least-privilege test role" membuatnya (role NOSUPERUSER, sandi acak sekali pakai)
+      # dan mengekspornya bersama VILLA_PG_DISPOSABLE_RUN lewat GITHUB_ENV. Tes
+      # menolak berjalan tanpa token run itu: tests/test_pg_overlap_concurrency.py.
       VILLA_PG_REQUIRED: "1"
     steps:
       # Riwayat penuh, bukan clone dangkal: gerbang T2.8 memeriksa bahwa setiap commit yang
@@ -124,12 +126,36 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-dev.txt
 
-      # Dua gerbang di server sungguhan: paritas katalog (skema) dan gerbang G1
-      # (kunci idempoten + bukti append-only benar-benar ditegakkan PostgreSQL).
-      - name: Apply the twin, compare catalogues, run gate G1 on PostgreSQL
+      # Service container ini dibuat khusus untuk run ini dan dibuang sesudahnya. Superuser
+      # `postgres` hanya dipakai di sini untuk membuat role tes; tes sendiri berjalan
+      # sebagai role tanpa hak superuser dan hanya boleh membuat/menjatuhkan database
+      # buatannya sendiri (villa_t_<hex>).
+      - name: Provision a least-privilege test role
+        env:
+          PGPASSWORD: postgres
+        run: |
+          ROLE_PASSWORD="$(openssl rand -hex 24)"
+          echo "::add-mask::${ROLE_PASSWORD}"
+          psql "host=localhost port=5432 user=postgres dbname=postgres" -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE villa_ci LOGIN NOSUPERUSER CREATEDB NOCREATEROLE PASSWORD '${ROLE_PASSWORD}'"
+          echo "VILLA_PG_DSN=postgresql://villa_ci:${ROLE_PASSWORD}@localhost:5432/postgres" >> "$GITHUB_ENV"
+          echo "VILLA_PG_DISPOSABLE_RUN=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+
+      # Tiga berkas di server sungguhan: paritas katalog (skema), gerbang G1 (kunci idempoten
+      # + bukti append-only), dan bukti konkurensi constraint (FR-904, lapisan DB saja).
+      # `-rs` mencetak setiap SKIP; langkah berikutnya menolak SKIP di berkas wajib.
+      - name: Apply the twin, compare catalogues, run gate G1 and the concurrency proof
         run: |
           set -o pipefail
-          python -m pytest tests/test_schema.py tests/test_workforce_gate_g1.py -rs 2>&1 | tee pg-parity.log
+          python -m pytest tests/test_schema.py tests/test_workforce_gate_g1.py tests/test_pg_overlap_concurrency.py -rs 2>&1 | tee pg-parity.log
+
+      # Skip diam-diam = bukti palsu. Dengan VILLA_PG_REQUIRED=1 tidak satu tes PG pun boleh SKIP.
+      - name: Refuse skipped PostgreSQL tests
+        run: |
+          if grep -Eq "[0-9]+ skipped" pg-parity.log; then
+            echo "postgres-parity reported skipped tests" >&2
+            exit 1
+          fi
 
       - name: Upload parity log
         if: always()

@@ -95,3 +95,27 @@ def test_ci_proves_the_postgresql_twin_against_a_real_server():
     assert "VILLA_PG_DSN" in job, "the parity job must hand the tests a DSN"
     assert "tests/test_schema.py" in job, "the parity job must run the live-parity tests"
 
+
+def test_parity_job_runs_the_concurrency_proof_with_a_least_privilege_role():
+    """PACK-04A: the destructive PostgreSQL tests may only run as a throw-away, non-superuser role.
+
+    The DSN is no longer a literal in the workflow (it used to hand the tests the
+    ``postgres`` superuser and a database they then dropped and recreated). It is minted
+    per run, and the run token is what the test-side guard checks. Losing any of these
+    lines silently turns the destructive tests back into "trust the environment".
+    """
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    jobs = re.split(r"^  (?=[a-z0-9_-]+:\s*$)", workflow, flags=re.MULTILINE)
+    job = next(j for j in jobs if "postgres" in j and "VILLA_PG_REQUIRED" in j)
+    assert "tests/test_pg_overlap_concurrency.py" in job, "the concurrency proof must run in CI"
+    assert not re.search(r"^\s+VILLA_PG_DSN:\s*postgres", job, flags=re.MULTILINE), (
+        "VILLA_PG_DSN must not be a literal superuser DSN in the job env"
+    )
+    assert "NOSUPERUSER" in job and "CREATEDB" in job, "tests must run as a least-privilege role"
+    assert "GITHUB_ENV" in job and "VILLA_PG_DISPOSABLE_RUN=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" in job, (
+        "the per-run disposable token must be exported by the job, not hard-coded"
+    )
+    assert "add-mask" in job, "the generated role password must be masked in the log"
+    assert re.search(r"grep -Eq .*skipped.*pg-parity\.log", job), (
+        "a skipped PostgreSQL test must fail the job, not pass it"
+    )

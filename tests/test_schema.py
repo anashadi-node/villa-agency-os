@@ -318,10 +318,11 @@ class TestPostgresOnlyHardening(unittest.TestCase):
 class TestLivePostgres(unittest.TestCase):
     """Apply both PostgreSQL files to a real server and compare the catalogue.
 
-    ``VILLA_PG_DSN`` must point to a **disposable** database: ``setUpClass`` drops
-    and recreates ``public`` so every run starts from an empty server, which is the
-    only way to prove the DDL applies from scratch. Never point this at a database
-    that holds real data.
+    ``VILLA_PG_DSN`` names a **server**, never a database this class may wipe. PACK-04A:
+    the class used to ``DROP SCHEMA public CASCADE`` on whatever DSN it was given. It now
+    asks ``test_pg_overlap_concurrency.disposable_database`` for a brand-new database that
+    it owns, after the server has proven itself a disposable GitHub-hosted CI service.
+    An unproven server FAILS here; it is never "assumed fine".
     """
 
     @classmethod
@@ -334,6 +335,10 @@ class TestLivePostgres(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        import contextlib
+
+        from test_pg_overlap_concurrency import disposable_database
+
         psycopg2 = pg_driver()  # import error here is a hard failure, by design
 
         dsn = os.environ.get("VILLA_PG_DSN")
@@ -346,18 +351,21 @@ class TestLivePostgres(unittest.TestCase):
                 "VILLA_PG_REQUIRED=1 but VILLA_PG_DSN is unset: refusing to report a "
                 "passing gate while the PostgreSQL twin is unproven."
             )
-        cls.dsn = dsn
-        cls.conn = psycopg2.connect(cls.dsn)
-        cls.conn.autocommit = True
-        with cls.conn.cursor() as cur:
-            cur.execute("DROP SCHEMA IF EXISTS public CASCADE")
-            cur.execute("CREATE SCHEMA public")
-        cls._apply(PG_ONLY_002.parent / "001_initial.pg.sql")
-        cls._apply(PG_ONLY_002)
+        cls._stack = contextlib.ExitStack()
+        try:
+            cls.dsn = cls._stack.enter_context(disposable_database(dsn))
+            cls.conn = psycopg2.connect(cls.dsn)
+            cls.conn.autocommit = True
+            cls._apply(PG_ONLY_002.parent / "001_initial.pg.sql")
+            cls._apply(PG_ONLY_002)
+        except BaseException:
+            cls._stack.close()
+            raise
 
     @classmethod
     def tearDownClass(cls):
         cls.conn.close()
+        cls._stack.close()  # drops only the database this class created
 
     def test_both_files_apply_and_match_the_sqlite_model(self):
         model = SL.parse_schema_model("sqlite")
