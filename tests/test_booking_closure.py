@@ -26,10 +26,13 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
+from test_reservation_kernel import NOW, KernelTestCase
+
 import booking_closure as CLOSURE
+import deposit_resolutions as DR
 import policy_engine as PE
-from primitives import DomainError, FrozenClock
-from test_reservation_kernel import KernelTestCase, NOW
+import supplier_settlements as SS
+from primitives import DomainError, FrozenClock, IdFactory
 
 AGENCY = "agency_default"
 BOOKING = "book_close_1"
@@ -225,6 +228,19 @@ class BookingClosureTestCase(KernelTestCase):
         )
         return "doc_close_1"
 
+    def publish_documents(self, kinds):
+        """The tenant declares its required document kinds through one policy revision (ADR-0054)."""
+
+        return PE.PolicyResolver(
+            self.kernel.conn, clock=FrozenClock.at(NOW), agency_id=AGENCY
+        ).publish(
+            CLOSURE.REQUIRED_DOCUMENT_KINDS_KEY,
+            list(kinds),
+            effective_from="2026-09-20",
+            source_doc_ref="ADR-0054: tenant declares the documents a closed booking needs",
+            approved_by="owner_anas",
+        )
+
     # -- reads -------------------------------------------------------------- #
 
     def verdict(self, booking_id: str = BOOKING):
@@ -382,19 +398,6 @@ class TestClosureGate(BookingClosureTestCase):
 
     # -- the required-documents policy key (ADR-0054) ------------------------ #
 
-    def publish_documents(self, kinds):
-        """The tenant declares its required document kinds through one policy revision."""
-
-        return PE.PolicyResolver(
-            self.kernel.conn, clock=FrozenClock.at(NOW), agency_id=AGENCY
-        ).publish(
-            CLOSURE.REQUIRED_DOCUMENT_KINDS_KEY,
-            list(kinds),
-            effective_from="2026-09-20",
-            source_doc_ref="ADR-0054: tenant declares the documents a closed booking needs",
-            approved_by="owner_anas",
-        )
-
     def test_a_published_list_the_booking_satisfies_passes_and_names_its_revision(self):
         booking = self.booked()
         self.document(booking_id=booking, kind="CONFIRMATION")
@@ -439,6 +442,52 @@ class TestClosureGate(BookingClosureTestCase):
             self.verdict("book_never_existed")
         self.assertEqual(raised.exception.code, "BOOKING_NOT_FOUND")
         self.assertEqual(raised.exception.details["booking_id"], "book_never_existed")
+
+    def test_facts_recorded_under_another_agency_do_not_satisfy_this_tenants_gate(self):
+        """Tenant isolation (ADR-0037): a fact is read only within its own ``agency_id`` scope.
+        A supplier settlement and a deposit resolution recorded for the same booking under a
+        foreign agency must not satisfy this tenant's closure gate — it must stay blocked.
+        """
+
+        booking = self.booked(deposit_minor=2_000_000)
+        # The foreign agency exists and holds fully-satisfying facts for this booking id.
+        self.kernel.conn.execute(
+            "INSERT INTO agencies (agency_id, name, status, created_at, updated_at)"
+            " VALUES ('agency_other', 'agency_other', 'ACTIVE', ?, ?)",
+            (NOW, NOW),
+        )
+        self.kernel.conn.execute(
+            "INSERT INTO supplier_settlements (supplier_settlement_id, agency_id, booking_id,"
+            " route_id, action, amount_minor, currency, decided_by, actor_role, evidence_ref,"
+            " idempotency_key, created_at)"
+            " VALUES (?, 'agency_other', ?, 'route_default', ?, ?, 'IDR', 'staff_finance_01',"
+            " 'finance_manager', ?, ?, ?)",
+            ("supset_foreign_due", booking, "DUE", 5_000_000, "ev_foreign_1", "idem_foreign_due", NOW),
+        )
+        self.kernel.conn.execute(
+            "INSERT INTO supplier_settlements (supplier_settlement_id, agency_id, booking_id,"
+            " route_id, action, amount_minor, currency, decided_by, actor_role, evidence_ref,"
+            " idempotency_key, created_at)"
+            " VALUES (?, 'agency_other', ?, 'route_default', ?, ?, 'IDR', 'staff_finance_01',"
+            " 'finance_manager', ?, ?, ?)",
+            ("supset_foreign_paid", booking, "PAID", 5_000_000, "ev_foreign_2", "idem_foreign_paid", NOW),
+        )
+        self.kernel.conn.execute(
+            "INSERT INTO deposit_resolutions (deposit_resolution_id, agency_id, booking_id,"
+            " action, amount_minor, currency, decided_by, actor_role, evidence_ref,"
+            " idempotency_key, created_at)"
+            " VALUES (?, 'agency_other', ?, 'RETURNED', ?, 'IDR', 'staff_finance_01',"
+            " 'finance_manager', ?, ?, ?)",
+            ("depres_foreign_1", booking, 2_000_000, "ev_foreign_3", "idem_foreign_dep", NOW),
+        )
+
+        supplier = self.check(booking, CLOSURE.CHECK_SUPPLIER)
+        self.assertFalse(supplier.ok)
+        self.assertEqual(supplier.detail, CLOSURE.SUPPLIER_GAP)
+        deposit = self.check(booking, CLOSURE.CHECK_DEPOSIT)
+        self.assertFalse(deposit.ok)
+        self.assertIn(CLOSURE.DEPOSIT_GAP, deposit.detail)
+        self.assertFalse(self.verdict(booking).ready)
 
 
 class TestClosureWriter(BookingClosureTestCase):
@@ -515,6 +564,87 @@ class TestClosureWriter(BookingClosureTestCase):
         with self.assertRaises(DomainError) as raised:
             self.kernel.close_booking(booking_id="book_never_existed", command_id="cmd_close_ghost")
         self.assertEqual(raised.exception.code, "BOOKING_NOT_FOUND")
+
+    def test_a_booking_closes_for_real_when_all_seven_conditions_hold(self):
+        """The real path, no mock: seven facts seeded through the real writers, then the kernel
+        closes. This is the acceptance case the mocked ``evaluate`` cannot prove — the gate,
+        the fact owners and the writer all agreeing on one booking.
+        """
+
+        booking = self.booked(deposit_minor=2_000_000)
+        # 1. checked out (status COMPLETED), 2. no guest issues, 6. no incidents — seeded by
+        # ``booked``'s defaults. 3. financial: the invoice is settled in full.
+        self.invoiced(booking_id=booking, total_minor=1_000_000, settled_minor=1_000_000)
+        # 4. supplier settlement: DUE then PAID, through the real writer.
+        settlements = SS.SupplierSettlementService(
+            self.kernel.conn, clock=FrozenClock.at(NOW), ids=IdFactory(deterministic=True, seed="e2e-settle"),
+            agency_id=AGENCY,
+        )
+        settlements.record(booking_id=booking, action="DUE", amount_minor=5_000_000, currency="IDR",
+                           decided_by="staff_finance_01", actor_role="finance_manager",
+                           evidence_ref="contract_route_default_v1", idempotency_key="e2e-due")
+        settlements.record(booking_id=booking, action="PAID", amount_minor=5_000_000, currency="IDR",
+                           decided_by="staff_finance_01", actor_role="finance_manager",
+                           evidence_ref="transfer_sup_001", idempotency_key="e2e-paid")
+        # 5. deposit resolved: the amount held is returned, through the real writer.
+        deposits = DR.DepositResolutionService(
+            self.kernel.conn, clock=FrozenClock.at(NOW), ids=IdFactory(deterministic=True, seed="e2e-deposit"),
+            agency_id=AGENCY,
+        )
+        deposits.record(booking_id=booking, action="RETURNED", amount_minor=2_000_000, currency="IDR",
+                        decided_by="staff_finance_01", actor_role="finance_manager",
+                        evidence_ref="transfer_dep_001", idempotency_key="e2e-dep")
+        # 7. required documents: the tenant requires CONFIRMATION, and it is recorded.
+        self.document(booking_id=booking, kind="CONFIRMATION")
+        self.publish_documents(["CONFIRMATION"])
+
+        verdict = self.verdict(booking)
+        self.assertTrue(verdict.ready, verdict.as_dict())
+
+        closed = self.kernel.close_booking(
+            booking_id=booking,
+            command_id="cmd_close_e2e",
+            reason="all seven conditions hold",
+            actor="user:owner-1",
+            actor_role="owner",
+        )
+
+        self.assertEqual(closed, booking)
+        self.assertEqual(self.status_of(booking), "CLOSED")
+        events = self.kernel.conn.execute(
+            "SELECT from_state, to_state, command FROM booking_state_events"
+        ).fetchall()
+        self.assertEqual(
+            [(row["from_state"], row["to_state"], row["command"]) for row in events],
+            [("COMPLETED", "CLOSED", "close_booking")],
+        )
+        actions = {
+            str(row["action"])
+            for row in self.kernel.conn.execute(
+                "SELECT action FROM audit_events WHERE entity_id = ?", (booking,)
+            ).fetchall()
+        }
+        self.assertIn("booking.closed", actions)
+
+    def test_closing_a_booking_that_has_not_completed_its_stay_is_refused_and_writes_nothing(self):
+        """§30 is asked after the stay, not during it: an in-stay booking cannot be closed."""
+
+        booking = self.booked(status="IN_STAY")
+
+        with self.assertRaises(DomainError) as raised:
+            self.kernel.close_booking(booking_id=booking, command_id="cmd_close_during_stay")
+
+        self.assertEqual(raised.exception.code, "BOOKING_NOT_CLOSABLE")
+        self.assertIn(CLOSURE.CHECK_CHECKED_OUT, raised.exception.details["blockers"])
+        self.assertEqual(self.status_of(booking), "IN_STAY")
+        self.assertEqual(self.count("booking_state_events"), 0)
+        self.assertEqual(
+            self.kernel.conn.execute(
+                "SELECT COUNT(*) FROM audit_events WHERE entity_id = ? AND action = 'booking.closed'",
+                (booking,),
+            ).fetchone()[0],
+            0,
+        )
 
 
 if __name__ == "__main__":

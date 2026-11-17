@@ -67,3 +67,21 @@ Lihat bagian "PROTOKOL HEMAT & CEPAT" di SOUL.md profil villa-agency.
 - NOT_RUN: seluruh tes konkurensi terhadap PostgreSQL sungguhan (tidak ada PG yang diizinkan lokal). SQL harness hanya dry-run di twin SQLite (kolom/CHECK/status cocok); perilaku PG (`btree_gist`, `EXCLUDE`, trigger, FK seed) baru terbukti setelah CI.
 - G6 CONTRACT_DRIFT tetap terbuka (blocker PG produksi): `connect_pg(apply=True)` hanya menerapkan 001; `ex_*_no_overlap` ada di 002. Loader tidak diubah; fixture menerapkan 001+002 eksplisit.
 - RISIKO terbuka (bukan hasil lulus): HOLD vs BOOKING lintas tabel tidak dijaga constraint PG; ditandai `xfail(strict)` supaya kemajuan terlihat. Kernel→PG (adapter/ADR) = PACK-04B, belum dimulai.
+
+## PACK-04A — HASIL CI + batas klaim (2026-11-18)
+- Status: **PASS_VERIFIED** (lapisan DB PostgreSQL saja). Commit `28a2bcd` (perbaikan `40P01` transien) di-push ke `feat/fr904-pg-ci`; CI run `44182634091` hijau: **136 PASS, 0 FAIL, 0 SKIP, 1 XFAIL, 0 XPASS**. Master tidak berubah (`c0169ee`).
+- Perbaikan: penulis kalah boleh ditolak `23P01`/`23505`/`40P01` (deadlock victim = transien, BUKAN penolakan bisnis; butuh bounded retry di kernel PG berikutnya), syarat tetap: tepat satu commit, 0 overlap, SQLSTATE spesifik, 0 partial commit.
+- BATAS KLAIM: ini bukti constraint DB PG (EXCLUDE `ex_*_no_overlap` + UNIQUE) di server sungguhan — BUKAN bukti Reservation Kernel berjalan di PG. Kernel tetap SQLite-only. `40P01` = risiko operasional untuk kernel PG berikutnya.
+- Masih terbuka (tidak berubah oleh PACK-04A): G6 CONTRACT_DRIFT (loader PG hanya 001; 002 & 003–018 tak diterapkan jalur produksi); HOLD-vs-BOOKING lintas tabel (XFAIL, unresolved); G4/G5 (rollback/disconnect/READ-COMMITTED belum diuji kernel).
+
+## PACK-05 — Booking Lifecycle Closure, bukti ketujuh kondisi + isolasi tenant (2026-11-18)
+- Keputusan Owner: **SQLite internal pilot** (satu agency, 10–20 vila, data sintetis); PostgreSQL tetap target produksi (ADR). PACK-05 TIDAK membangun adapter PG.
+- TEMUAN UTAMA (anti-confirmation-bias): tiga fakta §30 yang dulu "tak punya owner" **SUDAH punya owner** sebelum PACK-05 — settlement `src/supplier_settlements.py` (ADR-0056), deposit `src/deposit_resolutions.py` (ADR-0055), dokumen `src/documents.py` + policy key `operations.booking.required_document_kinds` (ADR-0054). Gate `booking_closure.evaluate` sudah membaca ketiganya. Jadi PACK-05 = menutup bukti yang belum ada, BUKAN menulis modul baru.
+- Perubahan (TES SAJA, tidak ada kode produksi): `tests/test_booking_closure.py` +3 tes + helper `publish_documents` dipindah ke base class (tanpa mengubah makna).
+  - `test_a_booking_closes_for_real_when_all_seven_conditions_hold` — 7 fakta di-seed lewat writer asli (settlement DUE+PAID, deposit RETURNED, dokumen+policy), lalu `close_booking` NYATA menulis `CLOSED` + state event + audit `booking.closed`. Tanpa mock (tes lama mem-mock `evaluate`).
+  - `test_facts_recorded_under_another_agency_do_not_satisfy_this_tenants_gate` — settlement+deposit milik `agency_other` untuk booking yang sama TIDAK memenuhi gate tenant ini (tetap `SUPPLIER_GAP`/`DEPOSIT_GAP`). Isolasi ADR-0037.
+  - `test_closing_a_booking_that_has_not_completed_its_stay_is_refused_and_writes_nothing` — `IN_STAY` ditolak `BOOKING_NOT_CLOSABLE`, 0 state event, 0 audit `booking.closed`.
+- Tidak berubah: `reservation_kernel.py` (docstring lama yang menyebut "facts no module records yet" dibiarkan, menunggu izin sentuh kernel), money ledger, policy, approval, financial authorization, skema (tanpa migrasi 019).
+- Financial safety dipertahankan: settlement/deposit tetap butuh `decided_by` (manusia), `actor_role`, `evidence_ref`, `idempotency_key`; tidak ada PAID tanpa bukti; tidak ada auto-approval.
+- Bukti: `pytest tests/test_booking_closure.py tests/test_deposit_resolutions.py tests/test_supplier_settlements.py` → 42 passed (sebelumnya 39). Full suite lihat laporan PACK-05.
+- PILOT SAFETY GATE (belum lulus, jangan klaim pilot siap): partial-overlap SQLite belum dibuktikan tes balapan eksplisit; HOLD-vs-BOOKING lintas tabel (XFAIL); G4/G5 (rollback/disconnect/READ-COMMITTED); backup/restore evidence; approval gate finansial. Ini scope gelombang berikutnya, BUKAN PACK-05.
