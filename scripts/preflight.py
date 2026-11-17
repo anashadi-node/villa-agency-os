@@ -6,7 +6,13 @@ Run this on the machine that will serve the system, against the real database:
     python3 scripts/preflight.py --db data/villa.db \
         --anchor-dir /mnt/worm/anchors \
         --decisions docs/GO_LIVE_DECISIONS.md \
-        --backup /backups/villa-2026-09-21.sqlite
+        --backup /backups/villa-2026-09-21.sqlite \
+        --production
+
+``--production`` is the flag that matters on launch night: a check that could
+not run (no ``--anchor-dir``, no ``--backup``) becomes a refusal instead of a
+warning. Without it the report can end in ``GO`` while nobody has looked at the
+anchor or the backup — "not checked" is not "passed".
 
 It checks three different things on purpose (plus the served ports when
 ``--host-check`` is given):
@@ -36,6 +42,7 @@ import json
 import os
 import re
 import socket
+import sqlite3
 import subprocess
 import sys
 import urllib.error
@@ -53,7 +60,13 @@ from anchors import AnchorError, verify_published_anchors  # noqa: E402
 from audit import AuditLog  # noqa: E402
 from observability import collect_metrics, health_checks  # noqa: E402
 from primitives import DomainError, SystemClock, parse_iso  # noqa: E402
-from schema_loader import SCHEMA_VERSION, applied_version, connect_sqlite  # noqa: E402
+from schema_loader import (  # noqa: E402
+    SCHEMA_VERSION,
+    SchemaError,
+    applied_version,
+    connect_sqlite,
+    missing_migrations,
+)
 
 import agency_roles as AGENCY_ROLES  # noqa: E402  (path setup must run first)
 import roles  # noqa: E402  (path setup must run first)
@@ -77,6 +90,26 @@ class Check:
 
 def _check(name: str, verdict: str, detail: str) -> Check:
     return Check(name=name, verdict=verdict, detail=detail)
+
+
+UNCHECKED = "not checked"
+
+
+def escalate_unchecked(check: Check) -> Check:
+    """In production mode a check that never ran is a failure, not a warning.
+
+    ``--anchor-dir`` and ``--backup`` are optional on the command line, so a
+    run that forgets them prints ``WARN not checked`` and still ends in ``GO``.
+    That is the shape of a gate that lets an unanchored, unbacked-up database
+    reach real guests while the report says green. The distinction the report
+    must keep is *passed* vs *not looked at*.
+    """
+    if check.verdict == WARN and check.detail.startswith(UNCHECKED):
+        return _check(
+            check.name, FAIL,
+            f"{check.detail} — required in a production run, so this is a refusal",
+        )
+    return check
 
 
 # --------------------------------------------------------------------------
@@ -173,6 +206,8 @@ def check_database(db: Path, anchor_dir: Optional[Path]) -> list[Check]:
                 f"database reports {version!r}, code expects {SCHEMA_VERSION!r}",
             ))
 
+        checks.append(check_migration_ledger(conn))
+
         try:
             report = AuditLog(conn, clock=SystemClock(), ids=_ids()).verify()
             checks.append(_check(
@@ -220,6 +255,30 @@ def check_database(db: Path, anchor_dir: Optional[Path]) -> list[Check]:
     finally:
         conn.close()
     return checks
+
+
+def check_migration_ledger(conn: Any) -> Check:
+    """FR-917: every migration file must be recorded as applied, or the gate says NO-GO.
+
+    The ``schema version`` check above compares one bootstrap string, so a database that
+    never received a later migration still reported OK. Here the required set comes from
+    the schema directory and the applied set from ``schema_migrations``. No ledger, an
+    unreadable ledger, or any missing entry is a FAIL — never a pass by omission.
+    """
+    name = "migration ledger"
+    try:
+        missing = missing_migrations(conn)
+    except (SchemaError, sqlite3.Error) as exc:
+        return _check(name, FAIL, f"cannot read the ledger: {exc}")
+    if missing is None:
+        return _check(
+            name, FAIL,
+            "no schema_migrations ledger — cannot prove which migrations were applied",
+        )
+    if missing:
+        listed = ", ".join(missing[:10]) + (f" (+{len(missing) - 10} more)" if len(missing) > 10 else "")
+        return _check(name, FAIL, f"{len(missing)} migration(s) not recorded: {listed}")
+    return _check(name, OK, "every migration file is recorded as applied")
 
 
 def _ids():
@@ -659,6 +718,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--decisions", default=str(REPO / "docs/GO_LIVE_DECISIONS.md"))
     parser.add_argument("--backup", default=None)
     parser.add_argument(
+        "--production",
+        action="store_true",
+        help="a check that was not run fails the gate instead of warning",
+    )
+    parser.add_argument(
         "--env", default="VILLA_DB,VILLA_ANCHOR_DIR",
         help="comma separated environment variables that must be set",
     )
@@ -695,10 +759,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.host_check:
         checks.extend(check_served_ports(args.dashboard_port, args.marketing_port))
 
+    if args.production:
+        checks = [escalate_unchecked(check) for check in checks]
+
     print("=== GO-LIVE PREFLIGHT ===")
     print(f"repository : {REPO}")
     print(f"database   : {db}")
     print(f"anchors    : {anchor_dir if anchor_dir else '(not checked)'}")
+    if args.production:
+        print("mode       : production — a check that did not run is a refusal")
     if args.host_check:
         print(f"ports      : dashboard {args.dashboard_port}, marketing {args.marketing_port}")
     print()

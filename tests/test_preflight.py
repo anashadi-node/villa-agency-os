@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import preflight as PF  # noqa: E402
 from primitives import FrozenClock, IdFactory, SystemClock  # noqa: E402
-from schema_loader import connect_sqlite  # noqa: E402
+from schema_loader import connect_sqlite, required_migrations  # noqa: E402
 import agency_roles as AGENCY_ROLES  # noqa: E402
 import settings as SETTINGS  # noqa: E402
 from seed_support import SeedMixin  # noqa: E402
@@ -182,6 +182,16 @@ def test_environment_check_reports_missing_names():
         os.environ.pop("VILLA_PREFLIGHT_TEST", None)
 
 
+def test_escalate_turns_an_unchecked_warning_into_a_refusal():
+    """``--production`` must not let "nobody looked" pass as "nothing wrong"."""
+    check = PF.escalate_unchecked(PF.check_backup(None))
+    assert check.verdict == PF.FAIL
+    assert "required in a production run" in check.detail
+    # A warning that is about the world, not about a skipped check, stays a warning.
+    softer = PF._check("environment", PF.WARN, "not set: VILLA_DB")
+    assert PF.escalate_unchecked(softer).verdict == PF.WARN
+
+
 class TestCli:
     """The CLI is what a human runs at 23:00 before a launch."""
 
@@ -197,8 +207,29 @@ class TestCli:
         )
 
 
+LEDGER_DDL = (
+    "CREATE TABLE IF NOT EXISTS schema_migrations ("
+    "version TEXT PRIMARY KEY, applied_at TEXT NOT NULL, description TEXT)"
+)
+
+
+def _stamp_ledger(conn, names=None) -> None:
+    """Record migrations as applied in a synthetic database (never a real one).
+
+    ``connect_sqlite`` builds the full schema but no ledger, so a fixture that should look
+    like a completely migrated database must say so explicitly (FR-917).
+    """
+    conn.execute(LEDGER_DDL)
+    for name in required_migrations() if names is None else names:
+        conn.execute(
+            "INSERT INTO schema_migrations (version, applied_at, description) VALUES (?, ?, ?)",
+            (name, "2026-11-17T00:00:00+00:00", "synthetic fixture"),
+        )
+
+
 def _make_db(path: Path) -> None:
     conn = connect_sqlite(str(path))
+    _stamp_ledger(conn)
     conn.close()
 
 
@@ -210,6 +241,31 @@ def test_no_go_when_decisions_are_open_and_anchor_is_missing(tmp_path):
     assert "NO-GO" in result.stdout
     assert "published anchor" in result.stdout
     assert "go-live decisions" in result.stdout
+
+
+def test_production_mode_refuses_the_checks_it_could_not_run(tmp_path):
+    """Same database, same day: advisory warns about the skipped check, production refuses it.
+
+    The assertion is on the two lines for one check, not on an overall verdict:
+    an empty database already fails tenant readiness, and a test that needs a
+    fully seeded tenant to prove this wiring would be harder to keep honest.
+    """
+    db = tmp_path / "villa.db"
+    _make_db(db)
+    decisions = tmp_path / "decisions.md"
+    decisions.write_text(ALL_DECIDED, encoding="utf-8")
+
+    advisory = TestCli()._run("--db", str(db), "--decisions", str(decisions))
+    assert "WARN  published anchor" in advisory.stdout, advisory.stdout
+    assert "not checked" in advisory.stdout
+
+    strict = TestCli()._run("--db", str(db), "--decisions", str(decisions), "--production")
+    assert strict.returncode == 1, strict.stdout
+    assert "NO-GO" in strict.stdout
+    assert "FAIL  published anchor" in strict.stdout
+    assert "FAIL  backup" in strict.stdout
+    assert "required in a production run" in strict.stdout
+    assert "mode       : production" in strict.stdout
 
 
 def test_the_policy_ladder_check_is_wired_into_the_run(tmp_path, monkeypatch):
@@ -460,3 +516,95 @@ class TestTenantReadiness:
             conn.close()
         assert check.verdict == PF.OK
         assert "ready" in check.detail
+
+
+class TestMigrationLedger:
+    """FR-917: the gate compares the migration files with what the ledger says was applied.
+
+    Every database here is synthetic, built under ``tmp_path``; ``data/villa.db`` is never
+    opened. ``connect_sqlite`` yields a full schema *without* a ledger, which is exactly the
+    "cannot prove it" case.
+    """
+
+    REQUIRED = "018_workforce_ops"
+
+    def _db(self, tmp_path, names=None, ledger=True):
+        db = tmp_path / "villa.db"
+        conn = connect_sqlite(str(db))
+        if ledger:
+            _stamp_ledger(conn, names)
+        conn.close()
+        return db
+
+    def _verdicts(self, db):
+        return {c.name: c for c in PF.check_database(db, None)}
+
+    def test_a_complete_ledger_passes(self, tmp_path):
+        check = self._verdicts(self._db(tmp_path))["migration ledger"]
+        assert check.verdict == PF.OK, check.detail
+
+    def test_migration_018_not_recorded_is_refused_by_exact_name(self, tmp_path):
+        names = [n for n in required_migrations() if n != self.REQUIRED]
+        assert len(names) == len(required_migrations()) - 1  # the control: 018 really is in the set
+        check = self._verdicts(self._db(tmp_path, names))["migration ledger"]
+        assert check.verdict == PF.FAIL
+        assert self.REQUIRED in check.detail
+        assert "1 migration(s) not recorded" in check.detail
+        assert "017_property_geo" not in check.detail  # recorded ones are not accused
+
+    def test_a_database_without_a_ledger_is_refused(self, tmp_path):
+        check = self._verdicts(self._db(tmp_path, ledger=False))["migration ledger"]
+        assert check.verdict == PF.FAIL
+        assert "no schema_migrations ledger" in check.detail
+
+    def test_deleting_a_required_entry_is_refused(self, tmp_path):
+        db = self._db(tmp_path)
+        conn = connect_sqlite(str(db))
+        conn.execute("DELETE FROM schema_migrations WHERE version = '010_agency_roles'")
+        conn.close()
+        check = self._verdicts(db)["migration ledger"]
+        assert check.verdict == PF.FAIL
+        assert "010_agency_roles" in check.detail
+
+    def test_an_empty_ledger_table_is_refused_not_waved_through(self, tmp_path):
+        check = self._verdicts(self._db(tmp_path, names=[]))["migration ledger"]
+        assert check.verdict == PF.FAIL
+        assert f"{len(required_migrations())} migration(s) not recorded" in check.detail
+
+    def test_a_ledger_of_the_wrong_shape_is_refused(self, tmp_path):
+        db = self._db(tmp_path, ledger=False)
+        conn = connect_sqlite(str(db))
+        conn.execute("CREATE TABLE schema_migrations (id INTEGER)")
+        conn.close()
+        check = self._verdicts(db)["migration ledger"]
+        assert check.verdict == PF.FAIL
+        assert "cannot read the ledger" in check.detail
+
+    def test_the_check_is_wired_into_check_database(self, tmp_path):
+        assert "migration ledger" in self._verdicts(self._db(tmp_path))
+
+    def test_negative_control_a_blind_checker_would_pass_the_same_database(
+        self, tmp_path, monkeypatch
+    ):
+        """The refusal tests are only evidence if a checker that skips validation fails them.
+
+        Same database as the 018 test, but ``missing_migrations`` is replaced by one that
+        always reports nothing missing. It must come out OK (a false green) — which is exactly
+        the verdict the refusal tests above assert against.
+        """
+        names = [n for n in required_migrations() if n != self.REQUIRED]
+        db = self._db(tmp_path, names)
+        assert self._verdicts(db)["migration ledger"].verdict == PF.FAIL
+        monkeypatch.setattr(PF, "missing_migrations", lambda conn: [])
+        assert self._verdicts(db)["migration ledger"].verdict == PF.OK
+
+    def test_cli_production_run_is_no_go_when_018_is_missing(self, tmp_path):
+        names = [n for n in required_migrations() if n != self.REQUIRED]
+        db = self._db(tmp_path, names)
+        decisions = tmp_path / "decisions.md"
+        decisions.write_text(ALL_DECIDED, encoding="utf-8")
+        result = TestCli()._run("--db", str(db), "--decisions", str(decisions), "--production")
+        assert result.returncode == 1, result.stdout
+        assert "NO-GO" in result.stdout
+        assert "FAIL  migration ledger" in result.stdout
+        assert self.REQUIRED in result.stdout

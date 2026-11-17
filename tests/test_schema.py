@@ -1365,5 +1365,58 @@ CREATE TABLE notes (
                          ("boolean", "date", "enum", "integer", "money", "text"))
 
 
+class TestRequiredMigrations(unittest.TestCase):
+    """FR-917: the required-migration set is derived from the schema directory, not kept."""
+
+    @staticmethod
+    def _runner():
+        spec = importlib.util.spec_from_file_location(
+            "apply_migrations_for_parity", REPO_ROOT / "scripts" / "apply_migrations.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        return module
+
+    def test_it_equals_the_runners_own_list_so_the_two_cannot_drift(self):
+        self.assertEqual(
+            SL.required_migrations(), [name for name, _ in self._runner().migrations()]
+        )
+
+    def test_the_real_set_contains_018_and_excludes_initial_and_pg_twins(self):
+        required = SL.required_migrations()
+        self.assertIn("018_workforce_ops", required)
+        self.assertNotIn("001_initial", required)
+        self.assertFalse([n for n in required if n.endswith(".pg") or "pg_range" in n])
+
+    def test_numbering_gaps_are_not_assumed_away(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            for name in ("001_initial.sql", "001_initial.pg.sql", "002_x.pg.sql",
+                         "003_a.sql", "005_b.sql"):
+                (directory / name).write_text("-- t\n", encoding="utf-8")
+            self.assertEqual(SL.required_migrations(directory), ["003_a", "005_b"])
+
+    def test_missing_migrations_distinguishes_no_ledger_gap_and_complete(self):
+        conn = sqlite3.connect(":memory:")
+        self.addCleanup(conn.close)
+        self.assertIsNone(SL.missing_migrations(conn, ["003_a", "005_b"]))  # no ledger: unknown
+        conn.execute("CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, "
+                     "applied_at TEXT NOT NULL, description TEXT)")
+        self.assertEqual(SL.missing_migrations(conn, ["003_a", "005_b"]), ["003_a", "005_b"])
+        conn.execute("INSERT INTO schema_migrations VALUES ('003_a', 't', NULL)")
+        self.assertEqual(SL.missing_migrations(conn, ["003_a", "005_b"]), ["005_b"])
+        conn.execute("INSERT INTO schema_migrations VALUES ('005_b', 't', NULL)")
+        self.assertEqual(SL.missing_migrations(conn, ["003_a", "005_b"]), [])
+
+    def test_an_empty_requirement_is_refused_instead_of_passing_vacuously(self):
+        conn = sqlite3.connect(":memory:")
+        self.addCleanup(conn.close)
+        with self.assertRaises(SL.SchemaNotFound):
+            SL.missing_migrations(conn, [])
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

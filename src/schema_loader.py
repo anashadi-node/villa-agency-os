@@ -350,6 +350,44 @@ def applied_version(conn: sqlite3.Connection) -> Optional[str]:
     return None if cur is None else str(cur[0])
 
 
+def required_migrations(schema_dir: Optional[Path] = None) -> list[str]:
+    """Migration identifiers (file stems) a complete database must have in its ledger.
+
+    Same rule as ``scripts/apply_migrations.py``: every ``*.sql`` in the schema directory
+    except the initial schema and the PostgreSQL twins. Derived from the directory, never a
+    hand-kept list, and never assumed to be gapless (there is no 009).
+    ``tests/test_schema.py`` pins that this stays equal to the runner's own list.
+    """
+    initial = DIALECT_FILES["sqlite"]
+    return [
+        p.stem
+        for p in sorted((schema_dir or SCHEMA_DIR).glob("*.sql"))
+        if p.name != initial and not p.name.endswith(".pg.sql")
+    ]
+
+
+def missing_migrations(
+    conn: sqlite3.Connection, required: Optional[list[str]] = None
+) -> Optional[list[str]]:
+    """Required migrations absent from ``schema_migrations``; ``None`` if there is no ledger.
+
+    ``schema_meta`` only names the initial schema, so it cannot say whether 003..N ran.
+    No ledger means "unknown", and unknown is not a pass: the caller must treat ``None`` as
+    a refusal. An empty requirement list is refused too, so a missing schema directory
+    cannot turn the comparison into a vacuous success.
+    """
+    needed = required_migrations() if required is None else list(required)
+    if not needed:
+        raise SchemaNotFound("no migration files found; cannot judge the ledger")
+    has_ledger = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'"
+    ).fetchone()
+    if has_ledger is None:
+        return None
+    done = {str(row[0]) for row in conn.execute("SELECT version FROM schema_migrations")}
+    return [name for name in needed if name not in done]
+
+
 def apply_schema(conn: sqlite3.Connection, dialect: str = "sqlite") -> str:
     """Apply the schema if not already applied. Idempotent. Returns the version."""
     if dialect.lower() != "sqlite":
