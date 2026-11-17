@@ -302,6 +302,13 @@ class Outcome:
     error: Optional[str] = None
 
 
+#: Deadlocks observed during this run. A deadlock aborts a transaction that PostgreSQL
+#: picked as victim while the other committed; it is a transient, retryable failure — NOT a
+#: business rejection — and the next kernel must map it to a bounded retry, not a 4xx.
+DEADLOCK_SEEN = 0
+LOSER_SQLSTATES = {"23P01", "23505", "40P01"}
+
+
 class Attempt(threading.Thread):
     """One writer on its OWN connection, in its own thread, committing or rolling back."""
 
@@ -362,6 +369,30 @@ def finish(*attempts: Attempt, timeout: float = 20.0) -> list[Outcome]:
         assert not attempt.is_alive(), "writer thread did not finish within its time box"
         assert attempt.outcome is not None and attempt.outcome.error is None, attempt.outcome
     return [a.outcome for a in attempts]  # type: ignore[misc]
+
+
+def assert_single_winner(outcomes: list[Outcome], kind: str) -> None:
+    """Exactly one commit; the loser must fail with a *specific* allowed SQLSTATE.
+
+    Never broad: an unexpected SQLSTATE, zero winners, two winners, or a "winner" whose
+    SQLSTATE is a rejection are all failures. ``40P01`` (deadlock victim) is accepted as a
+    transient failure and counted, never as a business rejection.
+    """
+    global DEADLOCK_SEEN
+    winners = [o for o in outcomes if o.committed]
+    losers = [o for o in outcomes if not o.committed]
+    assert len(winners) == 1 and len(losers) == len(outcomes) - 1, outcomes
+    assert all(o.sqlstate is None and o.constraint is None and o.error is None for o in winners), winners
+    loser = losers[0]
+    assert loser.sqlstate is not None and loser.error is None, loser
+    assert loser.sqlstate in LOSER_SQLSTATES, f"unexpected rejection {loser.sqlstate!r}"
+    if loser.sqlstate == "40P01":
+        DEADLOCK_SEEN += 1
+    elif loser.sqlstate == "23P01":
+        assert loser.constraint == KINDS[kind]["exclusion"], loser
+    else:  # 23505 — either the idempotency key or the active-slot unique index fired
+        allowed = {f"uq_{kind}_idempotency", f"uq_{kind}_active_slot"}
+        assert loser.constraint in allowed, (loser, allowed)
 
 
 def race(dsn: str, statements_per_writer: list[list[tuple[str, Any]]]) -> list[Outcome]:
@@ -516,9 +547,7 @@ class TestOverlapUnderConcurrency:
             a = make_insert(kind, unit, *PARTIAL_A)
             b = make_insert(kind, unit, *PARTIAL_B)
             first, second = race(world, [[(a[0], a[1])], [(b[0], b[1])]])
-            assert [first.committed, second.committed].count(True) == 1, (first, second)
-            loser = second if first.committed else first
-            assert loser.sqlstate == "23P01" and loser.constraint == KINDS[kind]["exclusion"]
+            assert_single_winner([first, second], kind)
             winners += 1
             assert count_rows(observer, kind, unit, only_occupying=True) == 1
         assert winners == 12
@@ -691,9 +720,7 @@ class TestConcurrentStatusChange:
                 assert (outcome_b.committed, outcome_b.sqlstate) == (False, "23P01")
             else:
                 first, second = race(world, [[promote[0]], [promote[1]]])
-                assert [first.committed, second.committed].count(True) == 1
-                loser = second if first.committed else first
-                assert loser.sqlstate == "23P01"
+                assert_single_winner([first, second], kind)
             assert count_rows(observer, kind, unit, only_occupying=True) == 1
             assert overlapping_pairs(observer, kind, [unit]) == 0
 
