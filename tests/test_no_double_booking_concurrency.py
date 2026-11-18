@@ -547,7 +547,7 @@ class Pack06Case(ConcurrencyTestCase):
     def confirm_body(self, booking_id, proof, command_id):
         def body(kernel: RK.ReservationKernel, index: int):
             return kernel.confirm_booking(
-                booking_id=booking_id, block_evidence_id=proof, command_id=command_id,
+                booking_id=booking_id, block_proof_id=proof, command_id=command_id,
                 actor="user:owner-1", actor_role="owner",
             )
 
@@ -622,7 +622,7 @@ class TestHoldVersusBookingRaces(Pack06Case):
         _hold, _quote, reserved = self.reserve_paid(
             check_in="2026-10-01", check_out="2026-10-03", tag="b1"
         )
-        proof = booking_support.block_proof(self.kernel, "unit_1")
+        proof = booking_support.supplier_block_proof(self.kernel, reserved.booking_id)
         outcomes = self.race(
             2,
             [
@@ -648,7 +648,9 @@ class TestHoldVersusBookingRaces(Pack06Case):
         )
         self.kernel.confirm_booking(
             booking_id=reserved.booking_id,
-            block_evidence_id=booking_support.block_proof(self.kernel, "unit_1"),
+            block_proof_id=booking_support.supplier_block_proof(
+                self.kernel, reserved.booking_id
+            ),
             command_id="cmd_confirm_b2", actor="user:owner-1", actor_role="owner",
         )
         holds_before = self.row_count("holds")
@@ -762,7 +764,7 @@ class TestConfirmationVillasAndDuplicates(Pack06Case):
 
     def test_two_writers_confirming_one_booking_confirm_it_once(self):  # C
         _h, _q, reserved = self.reserve_paid(check_in="2026-10-01", check_out="2026-10-03", tag="c1")
-        proof = booking_support.block_proof(self.kernel, "unit_1")
+        proof = booking_support.supplier_block_proof(self.kernel, reserved.booking_id)
         body = self.confirm_body(reserved.booking_id, proof, "cmd_confirm_c1")
         wins, losses = self.split(self.race(2, [body, body]))
         self.assertEqual(losses, [], f"the loser of a double confirm must replay, not fail: {losses}")
@@ -785,8 +787,8 @@ class TestConfirmationVillasAndDuplicates(Pack06Case):
         _h2, _q2, r2 = self.reserve_paid(
             check_in="2026-10-01", check_out="2026-10-03", tag="d2", unit_id="unit_2"
         )
-        p1 = booking_support.block_proof(self.kernel, "unit_1")
-        p2 = booking_support.block_proof(self.kernel, "unit_2")
+        p1 = booking_support.supplier_block_proof(self.kernel, r1.booking_id)
+        p2 = booking_support.supplier_block_proof(self.kernel, r2.booking_id)
         wins, losses = self.split(
             self.race(
                 2,
@@ -803,7 +805,7 @@ class TestConfirmationVillasAndDuplicates(Pack06Case):
 
     def test_back_to_back_booking_and_hold_both_win(self):  # E
         _h, _q, reserved = self.reserve_paid(check_in="2026-10-01", check_out="2026-10-03", tag="e1")
-        proof = booking_support.block_proof(self.kernel, "unit_1")
+        proof = booking_support.supplier_block_proof(self.kernel, reserved.booking_id)
         wins, losses = self.split(
             self.race(
                 2,

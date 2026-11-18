@@ -89,6 +89,8 @@ CHANNEL = "whatsapp_business"
 PROVIDER = "dummy"
 PROPERTY = "prop_nusadua"
 UNIT = "unit_nusadua_1"
+SUPPLIER = "sup_nusadua_manager"
+SUPPLIER_RELATIONSHIP = "vsr_nusadua_manager"
 CHECK_IN = "2026-10-20"
 CHECK_OUT = "2026-10-23"
 ADULTS = 2
@@ -168,6 +170,20 @@ class Smoke:
         self.kernel.upsert_unit(
             unit_id=UNIT, property_id=PROPERTY, name="Villa Nusa Dua 1", base_capacity=2,
             max_guests=4,
+        )
+        # ADR-0073: a booking is closed by a supplier block, so the supplier and the
+        # relationship that authorises it must exist before the block can be recorded.
+        stamp = instant(0)
+        self.conn.execute(
+            "INSERT INTO suppliers (supplier_id, agency_id, name, status, created_at,"
+            " updated_at) VALUES (?, ?, ?, 'ACTIVE', ?, ?)",
+            (SUPPLIER, AGENCY, "Villa Nusa Dua manager", stamp, stamp),
+        )
+        self.conn.execute(
+            "INSERT INTO villa_supplier_relationships"
+            " (villa_supplier_relationship_id, agency_id, supplier_id, property_id, unit_id,"
+            " status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'ACTIVE', ?, ?)",
+            (SUPPLIER_RELATIONSHIP, AGENCY, SUPPLIER, PROPERTY, UNIT, stamp, stamp),
         )
         policy = POLICY.PolicyVersion(
             policy_version_id="policy_nusadua_2026",
@@ -562,27 +578,45 @@ class Smoke:
             source_ref="villa_block_letter_2026_10",
             notes="the villa confirms the unit is blocked for the agency's booking",
         )
+        booking = self.kernel.get_booking(self.facts["booking_id"])
         refused = False
-        try:  # the pre-quote availability check is not a block proof (no can_confirm, too old)
-            self.kernel.confirm_booking(
+        try:  # the pre-quote availability check is not a block proof (no can_confirm)
+            self.kernel.record_supplier_block_proof(
                 booking_id=self.facts["booking_id"],
-                block_evidence_id=self.facts["availability_evidence_id"],
-                command_id="cmd_smoke_confirm_early",
-                actor=MANAGER,
-                actor_role="manager",
+                evidence_id=self.facts["availability_evidence_id"],
+                supplier_id=SUPPLIER,
+                relationship_id=SUPPLIER_RELATIONSHIP,
+                check_in=str(booking["check_in"]),
+                check_out=str(booking["check_out"]),
+                verification_method="MANAGER_WRITTEN",
+                verified_by=MANAGER,
             )
         except DomainError:
             refused = True
         if not refused:
-            raise DomainError("an old proof confirmed the booking", code="SMOKE_STALE_BLOCK_PROOF")
+            raise DomainError(
+                "an old availability answer became a block proof",
+                code="SMOKE_STALE_BLOCK_PROOF",
+            )
+        block_proof_id = self.kernel.record_supplier_block_proof(
+            booking_id=self.facts["booking_id"],
+            evidence_id=proof,
+            supplier_id=SUPPLIER,
+            relationship_id=SUPPLIER_RELATIONSHIP,
+            check_in=str(booking["check_in"]),
+            check_out=str(booking["check_out"]),
+            verification_method="MANAGER_WRITTEN",
+            verified_by=MANAGER,
+        )
         outcome = self.kernel.confirm_booking(
             booking_id=self.facts["booking_id"],
-            block_evidence_id=proof,
+            block_proof_id=block_proof_id,
             command_id="cmd_smoke_confirm_1",
             actor=MANAGER,
             actor_role="manager",
         )
-        self.facts["block_proof"] = str(proof)
+        self.facts["block_proof"] = str(block_proof_id)
+        self.facts["block_evidence"] = str(proof)
         self.facts["confirmed_status"] = str(outcome.status)
 
     # -- 12. the stay ------------------------------------------------------ #

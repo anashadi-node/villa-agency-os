@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import booking_states as BS
 import reservation_kernel as RK
-from booking_support import block_proof, pay_booking
+from booking_support import block_proof, pay_booking, supplier_block_proof
 from primitives import DomainError
 from test_reservation_kernel import KernelTestCase
 
@@ -25,9 +25,9 @@ class TestPaidThenConfirmed(KernelTestCase):
         )
         return quote, hold, booking
 
-    def code(self, call, **kwargs):
+    def code(self, call, *args, **kwargs):
         with self.assertRaises(DomainError) as ctx:
-            call(**kwargs)
+            call(*args, **kwargs)
         return ctx.exception.code
 
     # -- the old door is shut ------------------------------------------------ #
@@ -81,7 +81,7 @@ class TestPaidThenConfirmed(KernelTestCase):
         proof = block_proof(self.kernel, "unit_1")
         self.assertEqual(
             self.code(self.kernel.confirm_booking, booking_id=booking.booking_id,
-                      block_evidence_id=proof, command_id="cmd_k2_conf"),
+                      block_proof_id=proof, command_id="cmd_k2_conf"),
             "PAYMENT_REQUIRED",
         )
 
@@ -139,14 +139,15 @@ class TestPaidThenConfirmed(KernelTestCase):
         payment = pay_booking(self.kernel, booking.booking_id, amount_minor=deposit, key="k2_dep")
         paid = self.kernel.mark_paid(booking_id=booking.booking_id, payment_id=payment, command_id="cmd_k2_paid")
         self.assertEqual(paid.status, "DEPOSIT_PAID")
+        proof = supplier_block_proof(self.kernel, booking.booking_id)
         confirmed = self.kernel.confirm_booking(
-            booking_id=booking.booking_id, block_evidence_id=block_proof(self.kernel, "unit_1"),
+            booking_id=booking.booking_id, block_proof_id=proof,
             command_id="cmd_k2_conf",
         )
         self.assertEqual(confirmed.status, "CONFIRMED")
         self.assertEqual(self.kernel.get_hold(hold.hold_id)["status"], RK.HOLD_CONVERTED)
         again = self.kernel.confirm_booking(
-            booking_id=booking.booking_id, block_evidence_id=block_proof(self.kernel, "unit_1"),
+            booking_id=booking.booking_id, block_proof_id=proof,
             command_id="cmd_k2_conf2",
         )
         self.assertTrue(again.replayed)
@@ -159,12 +160,37 @@ class TestPaidThenConfirmed(KernelTestCase):
         return booking
 
     def test_proof_for_another_unit_is_refused(self):
+        """A unit-level answer for villa B never becomes a proof for villa A's booking."""
         booking = self.paid()
         self.assertEqual(
-            self.code(self.kernel.confirm_booking, booking_id=booking.booking_id,
-                      block_evidence_id=block_proof(self.kernel, "unit_2"), command_id="cmd_k2_conf"),
-            "BLOCK_PROOF_REQUIRED",
+            self.code(supplier_block_proof, self.kernel, booking.booking_id,
+                      evidence_id=block_proof(self.kernel, "unit_2")),
+            "BLOCK_PROOF_WRONG_UNIT",
         )
+
+    def test_proof_for_another_booking_is_refused(self):
+        """A live proof is not a bearer token: another booking cannot spend it."""
+        first = self.paid()
+        proof = supplier_block_proof(self.kernel, first.booking_id)
+        quote = self.persist_quote(
+            unit_id="unit_2", check_in="2026-10-10", check_out="2026-10-12",
+            quote_id="quote_k2_b",
+        )
+        hold = self.hold(unit_id="unit_2", check_in="2026-10-10", check_out="2026-10-12",
+                         key="idem_k2_hold_b", quote_ref=quote.quote_id)
+        second = self.kernel.reserve_from_hold(
+            hold_id=hold.hold_id, quote_id=quote.quote_id, idempotency_key="idem_k2_res_b",
+            command_id="cmd_k2_0002", adults=2,
+        )
+        payment = pay_booking(self.kernel, second.booking_id, key="k2_b")
+        self.kernel.mark_paid(booking_id=second.booking_id, payment_id=payment,
+                              command_id="cmd_k2_paid_b")
+        self.assertEqual(
+            self.code(self.kernel.confirm_booking, booking_id=second.booking_id,
+                      block_proof_id=proof, command_id="cmd_k2_conf_b"),
+            "BLOCK_PROOF_NOT_FOR_BOOKING",
+        )
+        self.assertNotEqual(self.kernel.get_booking(second.booking_id)["status"], "CONFIRMED")
 
     def test_proof_that_does_not_authorise_confirmation_is_refused(self):
         booking = self.paid()
@@ -173,8 +199,7 @@ class TestPaidThenConfirmed(KernelTestCase):
             result="available", can_confirm=False,
         )
         self.assertEqual(
-            self.code(self.kernel.confirm_booking, booking_id=booking.booking_id,
-                      block_evidence_id=weak, command_id="cmd_k2_conf"),
+            self.code(supplier_block_proof, self.kernel, booking.booking_id, evidence_id=weak),
             "BLOCK_PROOF_NOT_AUTHORITATIVE",
         )
 
@@ -183,8 +208,7 @@ class TestPaidThenConfirmed(KernelTestCase):
         self.kernel.clock.set("2026-09-21T01:00:00+00:00")
         booking = self.paid()
         self.assertEqual(
-            self.code(self.kernel.confirm_booking, booking_id=booking.booking_id,
-                      block_evidence_id=early, command_id="cmd_k2_conf"),
+            self.code(supplier_block_proof, self.kernel, booking.booking_id, evidence_id=early),
             "BLOCK_PROOF_PREDATES_BOOKING",
         )
 

@@ -86,7 +86,12 @@ def pay_booking(kernel: Any, booking_id: str, *, amount_minor: Optional[int] = N
 
 
 def block_proof(kernel: Any, unit_id: str, *, level: str = "B") -> str:
-    """The villa's written confirmation that the unit is blocked for the agency."""
+    """The villa's written confirmation that the unit is blocked for the agency.
+
+    This returns an ``availability_evidence`` id — a *unit-level* answer. Since
+    ADR-0073 that is no longer enough to confirm a booking on its own; see
+    :func:`supplier_block_proof`, which binds such an answer to one booking.
+    """
     return kernel.record_evidence(
         unit_id=unit_id,
         source_type="manager_written",
@@ -96,6 +101,81 @@ def block_proof(kernel: Any, unit_id: str, *, level: str = "B") -> str:
         can_hold=True,
         can_confirm=True,
         source_ref="villa_block_letter",
+    )
+
+
+def ensure_supplier(kernel: Any, *, unit_id: str, property_id: str) -> tuple[str, str]:
+    """An ACTIVE supplier and an ACTIVE relationship covering ``unit_id``.
+
+    Deterministic ids per unit, so a test that seeds twice does not trip the
+    primary key. Returns ``(supplier_id, relationship_id)``.
+    """
+    supplier_id = f"sup_{unit_id}"
+    relationship_id = f"vsr_{unit_id}"
+    stamp = "2026-01-01T00:00:00+00:00"
+    kernel.conn.execute(
+        "INSERT OR IGNORE INTO suppliers (supplier_id, agency_id, name, status,"
+        " created_at, updated_at) VALUES (?, ?, ?, 'ACTIVE', ?, ?)",
+        (supplier_id, kernel.agency_id, f"Villa manager for {unit_id}", stamp, stamp),
+    )
+    kernel.conn.execute(
+        "INSERT OR IGNORE INTO villa_supplier_relationships"
+        " (villa_supplier_relationship_id, agency_id, supplier_id, property_id, unit_id,"
+        " status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'ACTIVE', ?, ?)",
+        (relationship_id, kernel.agency_id, supplier_id, property_id, unit_id, stamp, stamp),
+    )
+    return supplier_id, relationship_id
+
+
+def supplier_block_proof(
+    kernel: Any,
+    booking_id: str,
+    *,
+    level: str = "B",
+    check_in: Optional[str] = None,
+    check_out: Optional[str] = None,
+    evidence_id: Optional[str] = None,
+    supplier_id: Optional[str] = None,
+    relationship_id: Optional[str] = None,
+    expires_at: Optional[str] = None,
+    verification_method: str = "SUPPLIER_EMAIL",
+    verified_by: str = "user:ops-1",
+    **evidence_options: Any,
+) -> str:
+    """Record the booking-scoped proof ADR-0073 requires (one booking, one unit, one stay).
+
+    ``evidence_id`` lets a caller reuse an existing availability answer; by default a
+    fresh level-A/B ``AVAILABLE`` answer is recorded and bound to this booking.
+    """
+    booking = kernel.conn.execute(
+        "SELECT * FROM bookings WHERE booking_id = ?", (booking_id,)
+    ).fetchone()
+    if booking is None:  # a typo in a test should say so, not seed a supplier
+        raise AssertionError(f"no booking {booking_id!r} to prove")
+    default_supplier, default_relationship = ensure_supplier(
+        kernel, unit_id=str(booking["unit_id"]), property_id=str(booking["property_id"])
+    )
+    evidence = evidence_id or kernel.record_evidence(
+        unit_id=str(booking["unit_id"]),
+        source_type="manager_written",
+        evidence_level=level,
+        result="available",
+        can_quote=True,
+        can_hold=True,
+        can_confirm=True,
+        source_ref="villa_block_letter",
+        **evidence_options,
+    )
+    return kernel.record_supplier_block_proof(
+        booking_id=booking_id,
+        evidence_id=evidence,
+        supplier_id=supplier_id or default_supplier,
+        relationship_id=relationship_id or default_relationship,
+        check_in=check_in or str(booking["check_in"]),
+        check_out=check_out or str(booking["check_out"]),
+        verification_method=verification_method,
+        verified_by=verified_by,
+        expires_at=expires_at,
     )
 
 
@@ -132,10 +212,9 @@ def confirm_through_payment(
         booking_id=reserved.booking_id, payment_id=payment_id, command_id=f"{command_id}_paid",
         actor="user:finance-1", actor_role="finance",
     )
-    unit_id = kernel.get_booking(reserved.booking_id)["unit_id"]
     return kernel.confirm_booking(
         booking_id=reserved.booking_id,
-        block_evidence_id=block_proof(kernel, unit_id),
+        block_proof_id=supplier_block_proof(kernel, reserved.booking_id),
         command_id=f"{command_id}_conf",
         actor=actor,
         actor_role=actor_role,

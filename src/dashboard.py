@@ -2041,6 +2041,7 @@ class Dashboard:
             "hold_form": self._hold_form(principal, units),
             "booking_form": self._booking_form(principal),
             "awaiting_payment": self._awaiting_payment_table(),
+            "confirmation": self._confirmation_table(principal),
         }
 
     def _hold_form(self, principal: Principal, units: Sequence[Any]) -> Markup:
@@ -2220,6 +2221,108 @@ class Dashboard:
             "<th>Booking</th><th>Unit</th><th>Dates</th><th>Status</th>"
             "<th>Payment</th><th>Total</th><th>Paid</th>"
             f"</tr></thead><tbody>{body}</tbody></table>"
+        )
+
+    # -- Stage E: the supplier block, and the confirmation it authorises ---- #
+    def _confirmation_table(self, principal: Principal) -> Markup:
+        """Paid bookings with their supplier block proof, and the confirm action.
+
+        Every cell is read from the database: the proof, the evidence under it, the
+        supplier that issued it and the human who verified it. A booking whose proof is
+        missing, expired or revoked shows why the button is absent rather than a button
+        the kernel would refuse.
+        """
+        rows = self._rows(
+            "SELECT b.booking_id, b.unit_id, b.check_in, b.check_out, b.status,"
+            " b.currency, b.total_minor, p.proof_id, p.verification_method, p.verified_by,"
+            " p.expires_at, p.evidence_id, e.source_ref, e.evidence_level, e.captured_at,"
+            " (SELECT COUNT(*) FROM supplier_block_proofs r"
+            "  WHERE r.booking_id = b.booking_id AND r.agency_id = b.agency_id"
+            "  AND r.revoked_at IS NOT NULL) AS revoked_count"
+            " FROM bookings b"
+            " LEFT JOIN supplier_block_proofs p ON p.booking_id = b.booking_id"
+            "  AND p.agency_id = b.agency_id AND p.revoked_at IS NULL"
+            " LEFT JOIN availability_evidence e ON e.evidence_id = p.evidence_id"
+            "  AND e.agency_id = b.agency_id"
+            " WHERE b.agency_id = ? AND b.status IN ('DEPOSIT_PAID','PAID_IN_FULL')"
+            " ORDER BY b.created_at DESC",
+            (self.agency_id,),
+        )
+        if not rows:
+            return Markup(
+                '<p class="muted" data-note="confirmation-empty">No paid booking is waiting '
+                "for confirmation.</p>"
+            )
+        now = to_iso(self.clock.now())
+        body_rows = []
+        for row in rows:
+            proof_id = row["proof_id"]
+            if proof_id is None:
+                state = "REVOKED" if int(row["revoked_count"] or 0) else "MISSING"
+                proof_cell = (
+                    "revoked — record a fresh proof"
+                    if state == "REVOKED"
+                    else "no supplier block on record"
+                )
+                evidence_cell, verified_cell = "—", "—"
+            elif str(row["expires_at"]) <= now:
+                state = "EXPIRED"
+                proof_cell = f"{row['proof_id']} — expired {_time_label(row['expires_at'])}"
+                evidence_cell = f"{row['evidence_id']} ({row['evidence_level']})"
+                verified_cell = f"{row['verified_by']} via {row['verification_method']}"
+            else:
+                state = "VERIFIED"
+                proof_cell = f"{row['proof_id']} — valid to {_time_label(row['expires_at'])}"
+                evidence_cell = (
+                    f"{row['evidence_id']} ({row['evidence_level']}, "
+                    f"{row['source_ref']}, captured {_time_label(row['captured_at'])})"
+                )
+                verified_cell = f"{row['verified_by']} via {row['verification_method']}"
+            if state == "VERIFIED" and principal.may_write:
+                action = (
+                    '<form method="post" action="/bookings/confirm" data-write-form="1"'
+                    ' data-form="confirm-booking">'
+                    f'<input type="hidden" name="{FORM_TOKEN_FIELD}"'
+                    f' value="{escape_value(self.form_token_for(principal))}">'
+                    f'<input type="hidden" name="booking_id"'
+                    f' value="{escape_value(row["booking_id"])}">'
+                    f'<input type="hidden" name="block_proof_id"'
+                    f' value="{escape_value(proof_id)}">'
+                    '<label>Idempotency key <input name="idempotency_key" required'
+                    ' minlength="8" maxlength="64"></label> '
+                    '<button type="submit">Confirm booking</button></form>'
+                )
+            elif state == "VERIFIED":
+                action = (
+                    '<span class="muted" data-note="confirmation-readonly">read-only role; '
+                    "confirmation belongs to Reservation or Operations</span>"
+                )
+            else:
+                action = (
+                    f'<span class="muted" data-note="confirmation-blocked"'
+                    f' data-reason="{escape_value(state)}">confirmation blocked: '
+                    f"{escape_value(state.lower())}</span>"
+                )
+            body_rows.append(
+                f'<tr data-booking-id="{escape_value(row["booking_id"])}"'
+                f' data-status="{escape_value(row["status"])}"'
+                f' data-proof-state="{escape_value(state)}">'
+                f"<td>{escape_value(row['booking_id'])}</td>"
+                f"<td>{escape_value(row['unit_id'])}</td>"
+                f"<td>{escape_value(row['check_in'])} → {escape_value(row['check_out'])}</td>"
+                f"<td>{escape_value(row['status'])}</td>"
+                f"<td>{escape_value(proof_cell)}</td>"
+                f"<td>{escape_value(evidence_cell)}</td>"
+                f"<td>{escape_value(verified_cell)}</td>"
+                f"<td>{action}</td>"
+                "</tr>"
+            )
+        return Markup(
+            "<h3>Paid bookings awaiting the supplier block</h3>"
+            '<table data-table="confirmation"><thead><tr>'
+            "<th>Booking</th><th>Unit</th><th>Dates</th><th>Status</th>"
+            "<th>Supplier proof</th><th>Evidence</th><th>Verified by</th><th>Action</th>"
+            f"</tr></thead><tbody>{''.join(body_rows)}</tbody></table>"
         )
 
     # -- Stage D: the payment half of the booking chain (read + two actions) -- #
@@ -2526,11 +2629,10 @@ class Dashboard:
             "invoice_form": self._invoice_issue_form(principal),
             "mark_paid_form": self._mark_paid_form(principal),
             "confirmation_withheld": Markup(
-                '<p class="muted" data-note="confirmation-withheld">Final confirmation is not '
-                "offered here: availability evidence proves a unit was available to a source, "
-                "but the contract records no stay window and no booking link, so it cannot "
-                "prove the supplier blocked this booking's dates. Confirmation stays with "
-                "ReservationKernel.confirm_booking until that gap is closed.</p>"
+                '<p class="muted" data-note="confirmation-elsewhere">Final confirmation is a '
+                "reservation decision, not a finance one: it needs a supplier block proof "
+                "(ADR-0073) and lives on the unit calendar page, where Reservation and "
+                "Operations can see the proof and the stay it covers.</p>"
             ),
         }
 
@@ -3410,6 +3512,9 @@ class Dashboard:
         if segments == ["bookings"]:
             self.require_page("inventory", principal)
             return self.post_booking_request(request, principal)
+        if segments == ["bookings", "confirm"]:
+            self.require_page("inventory", principal)
+            return self.post_confirm_request(request, principal)
         if segments == ["invoices"]:
             self.require_page("finance", principal)
             return self.post_invoice_request(request, principal)
@@ -3418,13 +3523,14 @@ class Dashboard:
             return self.post_mark_paid_request(request, principal)
         raise MethodNotAllowed(
             "POST is only available for approval actions, hold requests, booking conversion, "
-            "invoice issuance and mark-paid",
+            "booking confirmation, invoice issuance and mark-paid",
             path="/" + "/".join(segments),
             allowed=[
                 "POST /approvals",
                 "POST /approvals/<id>/decide",
                 "POST /holds",
                 "POST /bookings",
+                "POST /bookings/confirm",
                 "POST /invoices",
                 "POST /payments/mark-paid",
             ],
@@ -3694,6 +3800,82 @@ class Dashboard:
             f"{' — a replay, no new booking was created' if outcome.replayed else ''}."
             " The hold still locks the slot until final confirmation."
             "</p>"
+        )
+        return _Response(200, self.render("inventory", principal, context), page="inventory")
+
+    # ------------------------------------------------------------------ #
+    # Stage E: Reservation confirms a paid booking against its supplier block
+    # ------------------------------------------------------------------ #
+    def _confirmation_refusal(self, principal: Principal, exc: DomainError) -> _Response:
+        """A refusal renders the page it came from, with the code the kernel chose."""
+        context = self.view_inventory(principal)
+        context["banner"] = Markup(
+            f'<p class="err" role="alert" data-banner="confirmation-refused"'
+            f' data-code="{escape_value(exc.code)}">'
+            f"Confirmation refused: {escape_value(exc.message)} "
+            f"(code {escape_value(exc.code)}). The booking is unchanged.</p>"
+        )
+        return _Response(
+            status_for(exc), self.render("inventory", principal, context), page="inventory"
+        )
+
+    def post_confirm_request(self, request: "_Request", principal: Principal) -> _Response:
+        """Close one paid booking with its supplier block proof (ADR-0069, ADR-0073).
+
+        The route owns the form token, the idempotency key and two references. It does
+        not decide whether the proof is good: ``ReservationKernel.confirm_booking``
+        re-reads the proof, its evidence, the supplier relationship, the hold and the
+        overlap under its own transaction, and its refusal codes are what the operator
+        sees. A second click replays; it never writes a second transition.
+        """
+        self._require_form_token(request, principal)
+        if not principal.may_write:
+            raise Forbidden("this role is read-only", role=principal.role)
+        key = self._require_idempotency(request)
+        booking_id = str(request.option("booking_id") or "").strip()
+        if not booking_id:
+            raise InvalidInput("booking is required", field="booking_id")
+        block_proof_id = str(request.option("block_proof_id") or "").strip()
+        if not block_proof_id:
+            raise InvalidInput("supplier block proof is required", field="block_proof_id")
+        try:
+            outcome = self._reservation_kernel(principal).confirm_booking(
+                booking_id=booking_id,
+                block_proof_id=block_proof_id,
+                command_id=key,
+                actor=principal.identity,
+                actor_role=principal.role,
+            )
+        except DomainError as exc:
+            return self._confirmation_refusal(principal, exc)
+        booking = self._rows(
+            "SELECT status, unit_id, check_in, check_out, currency, total_minor"
+            " FROM bookings WHERE booking_id = ? AND agency_id = ?",
+            (booking_id, self.agency_id),
+        )[0]
+        audit = self._rows(
+            "SELECT audit_event_id FROM audit_events WHERE entity_type = 'booking'"
+            " AND entity_id = ? AND action = 'booking.confirmed'"
+            " ORDER BY seq DESC LIMIT 1",
+            (booking_id,),
+        )
+        audit_ref = str(audit[0]["audit_event_id"]) if audit else ""
+        context = self.view_inventory(principal)
+        context["banner"] = Markup(
+            f'<p class="ok" role="status" data-banner="booking-confirmed"'
+            f' data-booking-id="{escape_value(booking_id)}"'
+            f' data-status="{escape_value(booking["status"])}"'
+            f' data-proof-id="{escape_value(block_proof_id)}"'
+            f' data-command-id="{escape_value(key)}"'
+            f' data-audit-id="{escape_value(audit_ref)}"'
+            f' data-replayed="{int(outcome.replayed)}">'
+            f"Booking {escape_value(booking_id)} is {escape_value(booking['status'])} —"
+            f" {escape_value(booking['unit_id'])} "
+            f"{escape_value(booking['check_in'])} → {escape_value(booking['check_out'])}, "
+            f"{escape_value(format_money(booking['total_minor'], str(booking['currency'])))}."
+            f" Supplier block {escape_value(block_proof_id)}"
+            f"{' (replay — no second transition)' if outcome.replayed else ''}."
+            f"{' Audit ' + escape_value(audit_ref) + '.' if audit_ref else ''}</p>"
         )
         return _Response(200, self.render("inventory", principal, context), page="inventory")
 

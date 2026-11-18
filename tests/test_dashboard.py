@@ -2904,20 +2904,19 @@ def test_finance_page_lists_the_booking_waiting_for_money(seeded_http):
     assert 'data-note="mark-paid-unavailable"' in page.text
 
 
-def test_confirmation_is_withheld_and_named(seeded_http):
-    """F: the page says plainly why it does not offer a confirmation."""
+def test_confirmation_is_not_a_finance_action(seeded_http):
+    """F: after ADR-0073 the finance page points at Reservation, and finance cannot confirm."""
     _seed_stage_d_booking(seeded_http.db)
 
     page = seeded_http.get("/finance", token="tok-finance")
 
     assert page.status == 200
-    assert 'data-note="confirmation-withheld"' in page.text
+    assert 'data-note="confirmation-elsewhere"' in page.text
     assert 'action="/bookings/confirm"' not in page.text
-    assert 'name="confirm"' not in page.text
     refusal = seeded_http.post(
         "/bookings/confirm", token="tok-finance", form={"form_token": "x" * 64}
     )
-    assert refusal.status == 405, "there is no confirmation route to call"
+    assert refusal.status == 403, "finance holds no page that may confirm a booking"
 
 
 def test_invoice_is_priced_from_the_accepted_quote(seeded_http):
@@ -3238,3 +3237,305 @@ def test_reservation_saw_the_booking_become_paid(seeded_http):
     assert 'data-table="awaiting-payment"' in page.text
     assert 'data-booking-id="booking-d1"' in page.text
     assert "PAID_IN_FULL" in page.text
+
+
+# --------------------------------------------------------------------------- #
+# Stage E: the supplier block and the confirmation it authorises (ADR-0073)
+# --------------------------------------------------------------------------- #
+CONFIRM_FORM = 'data-form="confirm-booking"'
+
+
+def _seed_stage_e_paid_booking(
+    db,
+    *,
+    booking_id: str = "booking-e1",
+    hold_id: str = "hold-e1",
+    check_in: str = "2026-12-10",
+    check_out: str = "2026-12-13",
+) -> None:
+    """A PAID_IN_FULL booking with the live hold that still keeps its slot."""
+    _seed_stage_d_booking(
+        db,
+        booking_id=booking_id,
+        quote_id=f"quote-{booking_id}",
+        status="PAID_IN_FULL",
+        check_in=check_in,
+        check_out=check_out,
+        amount_paid_minor=STAGE_D_TOTAL,
+        payment_status="CLEARED_FULL",
+    )
+    db.execute(
+        "INSERT INTO holds (hold_id, unit_id, property_id, check_in, check_out, nights,"
+        " status, guest_ref, quote_ref, policy_version_id, evidence_id, idempotency_key,"
+        " created_at, expires_at, expires_timezone) VALUES (?, 'unit-2', 'prop-1', ?, ?, 3,"
+        " 'CONFIRMED', 'guest-stage-e', ?, 'policy-1', 'evidence-1', ?,"
+        " '2026-11-01T00:00:00Z', '2027-06-01T00:00:00Z', 'Asia/Makassar')",
+        (hold_id, check_in, check_out, f"quote-{booking_id}", f"idem-{hold_id}"),
+    )
+    db.execute(
+        "UPDATE bookings SET hold_ref = ?, created_at = '2026-09-01T00:00:00Z',"
+        " updated_at = '2026-09-01T00:00:00Z' WHERE booking_id = ?",
+        (hold_id, booking_id),
+    )
+
+
+def _seed_stage_e_proof(
+    db,
+    *,
+    booking_id: str = "booking-e1",
+    proof_id: str = "proof-e1",
+    evidence_id: str = "evid-block-1",
+    check_in: str = "2026-12-10",
+    check_out: str = "2026-12-13",
+    captured_at: str = "2026-09-02T00:00:00Z",
+    expires_at: str = "2027-06-01T00:00:00Z",
+    revoked: bool = False,
+) -> None:
+    """The supplier block ADR-0073 requires, seeded as rows — the kernel writes these."""
+    stamp = captured_at
+    db.execute(
+        "INSERT OR IGNORE INTO suppliers (supplier_id, name, status, created_at, updated_at)"
+        " VALUES ('sup-1', 'Villa manager', 'ACTIVE', ?, ?)",
+        (stamp, stamp),
+    )
+    db.execute(
+        "INSERT OR IGNORE INTO villa_supplier_relationships"
+        " (villa_supplier_relationship_id, supplier_id, property_id, unit_id, status,"
+        " created_at, updated_at) VALUES ('vsr-1', 'sup-1', 'prop-1', 'unit-2', 'ACTIVE', ?, ?)",
+        (stamp, stamp),
+    )
+    db.execute(
+        "INSERT INTO availability_evidence (evidence_id, unit_id, evidence_level, source_type,"
+        " source_ref, captured_at, valid_until, result, occupancy_ranges, can_quote, can_hold,"
+        " can_confirm, created_at) VALUES (?, 'unit-2', 'B', 'manager_written',"
+        " 'villa_block_letter', ?, ?, 'AVAILABLE', '[]', 1, 1, 1, ?)",
+        (evidence_id, stamp, expires_at, stamp),
+    )
+    db.execute(
+        "INSERT INTO supplier_block_proofs (proof_id, booking_id, unit_id, check_in, check_out,"
+        " supplier_id, relationship_id, evidence_id, verification_method, verified_by,"
+        " verified_at, expires_at, created_at, revoked_at, revoked_by, revoke_reason)"
+        " VALUES (?, ?, 'unit-2', ?, ?, 'sup-1', 'vsr-1', ?, 'SUPPLIER_EMAIL',"
+        " 'user:ops-1', ?, ?, ?, ?, ?, ?)",
+        (
+            proof_id,
+            booking_id,
+            check_in,
+            check_out,
+            evidence_id,
+            stamp,
+            expires_at,
+            stamp,
+            stamp if revoked else None,
+            "user:ops-1" if revoked else None,
+            "supplier withdrew the block" if revoked else None,
+        ),
+    )
+
+
+def _confirm_token(live, *, token: str = "tok-reservation") -> str:
+    page = live.get("/inventory", token=token)
+    assert page.status == 200, page.status
+    start = page.text.find(CONFIRM_FORM)
+    assert start != -1, "the confirmation form was not rendered"
+    match = BOOKING_TOKEN_PATTERN.search(page.text, start)
+    assert match, "the confirmation form carries no token"
+    return match.group(1)
+
+
+def _confirmation_row(booking_id: str, live) -> str:
+    """The rendered row for one booking, so the assertions read real markup."""
+    page = live.get("/inventory", token="tok-reservation")
+    table = page.text.find('data-table="confirmation"')
+    assert table != -1, "the confirmation panel is not on the page"
+    start = page.text.find(f'data-booking-id="{booking_id}"', table)
+    assert start != -1, "booking is not on the confirmation panel"
+    end = page.text.find("</tr>", start)
+    return page.text[start : end if end != -1 else start + 2000]
+
+
+def test_confirmation_is_offered_only_with_a_live_supplier_proof(seeded_http):
+    """The button appears with a real proof, and never without one."""
+    _seed_stage_e_paid_booking(seeded_http.db)
+    _seed_stage_e_paid_booking(
+        seeded_http.db, booking_id="booking-e2", hold_id="hold-e2",
+        check_in="2026-12-20", check_out="2026-12-23",
+    )
+    _seed_stage_e_proof(seeded_http.db, proof_id="proof-e1")
+
+    proven = _confirmation_row("booking-e1", seeded_http)
+    unproven = _confirmation_row("booking-e2", seeded_http)
+
+    assert 'data-proof-state="VERIFIED"' in proven
+    assert 'action="/bookings/confirm"' in proven
+    assert "proof-e1" in proven and "user:ops-1" in proven
+    assert 'data-proof-state="MISSING"' in unproven
+    assert 'data-note="confirmation-blocked"' in unproven
+    assert 'action="/bookings/confirm"' not in unproven
+
+
+def test_confirmation_action_closes_the_booking_with_an_audit_reference(seeded_http):
+    _seed_stage_e_paid_booking(seeded_http.db)
+    _seed_stage_e_proof(seeded_http.db)
+    token = _confirm_token(seeded_http)
+
+    response = seeded_http.post(
+        "/bookings/confirm",
+        token="tok-reservation",
+        form={
+            "form_token": token,
+            "booking_id": "booking-e1",
+            "block_proof_id": "proof-e1",
+            "idempotency_key": "idem-confirm-e1",
+        },
+    )
+
+    assert response.status == 200, response.text[-900:]
+    assert 'data-banner="booking-confirmed"' in response.text
+    assert 'data-status="CONFIRMED"' in response.text
+    assert 'data-replayed="0"' in response.text
+    assert 'data-audit-id=""' not in response.text
+    booking = seeded_http.db.execute(
+        "SELECT status, confirmed_at FROM bookings WHERE booking_id = 'booking-e1'"
+    ).fetchone()
+    assert booking["status"] == "CONFIRMED" and booking["confirmed_at"]
+    hold = seeded_http.db.execute(
+        "SELECT status FROM holds WHERE hold_id = 'hold-e1'"
+    ).fetchone()
+    assert hold["status"] == "CONVERTED"
+    event = seeded_http.db.execute(
+        "SELECT to_state, evidence_ref FROM booking_state_events"
+        " WHERE booking_id = 'booking-e1' AND to_state = 'CONFIRMED'"
+    ).fetchone()
+    assert event["evidence_ref"] == "proof-e1"
+
+
+def test_confirmation_refuses_an_expired_proof(seeded_http):
+    _seed_stage_e_paid_booking(seeded_http.db)
+    _seed_stage_e_proof(seeded_http.db, proof_id="proof-live")
+    _seed_stage_e_paid_booking(
+        seeded_http.db, booking_id="booking-e2", hold_id="hold-e2",
+        check_in="2026-12-20", check_out="2026-12-23",
+    )
+    _seed_stage_e_proof(
+        seeded_http.db,
+        booking_id="booking-e2",
+        proof_id="proof-stale",
+        evidence_id="evid-block-2",
+        check_in="2026-12-20",
+        check_out="2026-12-23",
+        captured_at="2026-09-02T00:00:00Z",
+        expires_at="2026-09-10T00:00:00Z",
+    )
+    token = _confirm_token(seeded_http)
+
+    response = seeded_http.post(
+        "/bookings/confirm",
+        token="tok-reservation",
+        form={
+            "form_token": token,
+            "booking_id": "booking-e2",
+            "block_proof_id": "proof-stale",
+            "idempotency_key": "idem-confirm-stale",
+        },
+    )
+
+    assert response.status == 400, response.status
+    assert 'data-code="BLOCK_PROOF_EXPIRED"' in response.text
+    assert seeded_http.db.execute(
+        "SELECT status FROM bookings WHERE booking_id = 'booking-e2'"
+    ).fetchone()["status"] == "PAID_IN_FULL"
+
+
+def test_confirmation_refuses_a_revoked_proof(seeded_http):
+    _seed_stage_e_paid_booking(seeded_http.db)
+    _seed_stage_e_proof(seeded_http.db, revoked=True)
+    _seed_stage_e_paid_booking(
+        seeded_http.db, booking_id="booking-e2", hold_id="hold-e2",
+        check_in="2026-12-20", check_out="2026-12-23",
+    )
+    _seed_stage_e_proof(seeded_http.db, booking_id="booking-e2", proof_id="proof-live",
+                        evidence_id="evid-block-2", check_in="2026-12-20",
+                        check_out="2026-12-23")
+    token = _confirm_token(seeded_http)
+
+    response = seeded_http.post(
+        "/bookings/confirm",
+        token="tok-reservation",
+        form={
+            "form_token": token,
+            "booking_id": "booking-e1",
+            "block_proof_id": "proof-e1",
+            "idempotency_key": "idem-confirm-revoked",
+        },
+    )
+
+    assert response.status == 400, response.status
+    assert 'data-code="BLOCK_PROOF_REVOKED"' in response.text
+    assert 'data-proof-state="REVOKED"' in _confirmation_row("booking-e1", seeded_http)
+
+
+def test_confirmation_is_refused_for_finance_and_the_auditor(seeded_http):
+    """Finance settles money; only Reservation or Operations closes the booking."""
+    _seed_stage_e_paid_booking(seeded_http.db)
+    _seed_stage_e_proof(seeded_http.db)
+    before = seeded_http.counts()
+    token = _confirm_token(seeded_http)
+
+    finance = seeded_http.post(
+        "/bookings/confirm",
+        token="tok-finance",
+        form={
+            "form_token": token,
+            "booking_id": "booking-e1",
+            "block_proof_id": "proof-e1",
+            "idempotency_key": "idem-confirm-finance",
+        },
+    )
+    auditor = seeded_http.post(
+        "/bookings/confirm",
+        token="tok-auditor",
+        form={
+            "form_token": token,
+            "booking_id": "booking-e1",
+            "block_proof_id": "proof-e1",
+            "idempotency_key": "idem-confirm-auditor",
+        },
+    )
+
+    assert finance.status == 403 and auditor.status == 403
+    assert seeded_http.counts() == before
+    assert seeded_http.db.execute(
+        "SELECT status FROM bookings WHERE booking_id = 'booking-e1'"
+    ).fetchone()["status"] == "PAID_IN_FULL"
+
+
+def test_a_second_confirmation_replays_instead_of_double_journalling(seeded_http):
+    _seed_stage_e_paid_booking(seeded_http.db)
+    _seed_stage_e_proof(seeded_http.db)
+    token = _confirm_token(seeded_http)
+    form = {
+        "form_token": token,
+        "booking_id": "booking-e1",
+        "block_proof_id": "proof-e1",
+        "idempotency_key": "idem-confirm-1",
+    }
+
+    first = seeded_http.post("/bookings/confirm", token="tok-reservation", form=form)
+    second = seeded_http.post(
+        "/bookings/confirm",
+        token="tok-reservation",
+        form={**form, "idempotency_key": "idem-confirm-2"},
+    )
+
+    assert first.status == 200 and second.status == 200
+    assert 'data-replayed="1"' in second.text
+    events = seeded_http.db.execute(
+        "SELECT COUNT(*) FROM booking_state_events"
+        " WHERE booking_id = 'booking-e1' AND to_state = 'CONFIRMED'"
+    ).fetchone()[0]
+    audits = seeded_http.db.execute(
+        "SELECT COUNT(*) FROM audit_events"
+        " WHERE entity_id = 'booking-e1' AND action = 'booking.confirmed'"
+    ).fetchone()[0]
+    assert (events, audits) == (1, 1)

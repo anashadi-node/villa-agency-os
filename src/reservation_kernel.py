@@ -190,6 +190,27 @@ EVIDENCE_SOURCES: tuple[str, ...] = (
 #: How long a piece of evidence stays usable when the caller does not say.
 DEFAULT_EVIDENCE_TTL_HOURS = 24
 
+#: ADR-0073: the ways a human can establish that a supplier blocked the stay. The
+#: vocabulary mirrors ``supplier_block_proofs.verification_method`` verbatim, so a
+#: method the database would reject is refused by the kernel with a named code first.
+BLOCK_PROOF_METHODS: tuple[str, ...] = (
+    "SUPPLIER_PORTAL",
+    "SUPPLIER_API",
+    "SUPPLIER_EMAIL",
+    "MANAGER_CALL",
+    "MANAGER_WRITTEN",
+)
+
+#: Booking states a supplier block may be recorded against. A CONFIRMED booking needs
+#: no further block, and a cancelled or expired one must not accumulate proof that a
+#: later confirmation could lean on.
+BLOCK_PROOF_BOOKING_STATES: tuple[str, ...] = (
+    "PAYMENT_PENDING",
+    "PAYMENT_PARTIAL",
+    "DEPOSIT_PAID",
+    "PAID_IN_FULL",
+)
+
 DEFAULT_ROLE = "kernel"
 
 #: The availability-check vocabulary (§7), mirroring the schema CHECK verbatim —
@@ -875,6 +896,297 @@ class ReservationKernel:
                 evidence_id=evidence_id,
             )
         return row
+
+    # -- supplier block proofs (ADR-0073) ------------------------------------ #
+    def record_supplier_block_proof(
+        self,
+        *,
+        booking_id: str,
+        evidence_id: str,
+        supplier_id: str,
+        relationship_id: str,
+        check_in: str,
+        check_out: str,
+        verification_method: str,
+        verified_by: str,
+        expires_at: Optional[str] = None,
+        evidence_object_id: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> str:
+        """Bind one authenticated supplier answer to one booking, verified by a human.
+
+        ``availability_evidence`` answers a unit-level question and carries no booking,
+        so on its own it cannot say "the supplier blocked *these* dates for *this*
+        guest". This method is the only way to make that claim, and it refuses to make
+        it on weaker grounds than the claim needs:
+
+        * the stay window must be the booking's own window — a block for other dates is
+          a different promise, not a proof for this one;
+        * the evidence must be level A/B, ``can_confirm`` and ``AVAILABLE*``, and must
+          have been captured after the booking existed (a proof obtained before the ask
+          cannot prove the answer);
+        * the supplier must be ACTIVE for this agency and must have an ACTIVE
+          relationship covering this unit or its property;
+        * ``verified_by`` is mandatory: an uploaded document
+          (``evidence_object_id``) is provenance, never verification;
+        * one availability answer backs one booking, ever (``uq_sbp_evidence``), and a
+          booking carries at most one live proof (``ux_sbp_active_booking``);
+        * ``expires_at`` may shorten the evidence's own validity but never extend it —
+          a proof is not fresher than the answer under it.
+
+        The row is immutable afterwards. A wrong proof is revoked with a reason, and
+        the replacement is a new row, so both stay in the trail.
+        """
+        booking_id = require_ref(booking_id, "booking_id")
+        evidence_id = require_ref(evidence_id, "evidence_id")
+        supplier_id = require_ref(supplier_id, "supplier_id")
+        relationship_id = require_ref(relationship_id, "relationship_id")
+        check_in = require_ref(check_in, "check_in")
+        check_out = require_ref(check_out, "check_out")
+        verified_by = require_text(verified_by, "verified_by", max_len=120)
+        if len(verified_by) < 3:
+            raise DomainError(
+                "a supplier block is verified by a named human, not by a blank string",
+                code="BLOCK_PROOF_VERIFIER_REQUIRED",
+            )
+        method = str(verification_method).strip().upper()
+        if method not in BLOCK_PROOF_METHODS:
+            raise DomainError(
+                f"verification_method must be one of {list(BLOCK_PROOF_METHODS)}",
+                code="BLOCK_PROOF_INVALID_METHOD",
+                verification_method=verification_method,
+            )
+        if check_in >= check_out:
+            raise DomainError(
+                "the blocked stay must end after it starts",
+                code="BLOCK_PROOF_WRONG_DATES",
+                check_in=check_in,
+                check_out=check_out,
+            )
+        with self.transaction() as conn:
+            booking = self._require_booking(conn, booking_id)
+            if booking["status"] not in BLOCK_PROOF_BOOKING_STATES:
+                raise DomainError(
+                    "a supplier block is recorded only for a booking that is still live",
+                    code="BLOCK_PROOF_BOOKING_CLOSED",
+                    status=booking["status"],
+                )
+            if check_in != booking["check_in"] or check_out != booking["check_out"]:
+                raise DomainError(
+                    "the blocked stay does not match this booking",
+                    code="BLOCK_PROOF_WRONG_DATES",
+                    blocked=(check_in, check_out),
+                    booked=(booking["check_in"], booking["check_out"]),
+                )
+            evidence = conn.execute(
+                "SELECT * FROM availability_evidence WHERE evidence_id = ? AND agency_id = ?",
+                (evidence_id, self.agency_id),
+            ).fetchone()
+            if evidence is None:
+                raise DomainError(
+                    "unknown availability evidence for this agency",
+                    code="BLOCK_PROOF_REQUIRED",
+                    evidence_id=evidence_id,
+                )
+            if evidence["unit_id"] != booking["unit_id"]:
+                raise DomainError(
+                    "block proof must be evidence for this booking's unit",
+                    code="BLOCK_PROOF_WRONG_UNIT",
+                    evidence_unit=evidence["unit_id"],
+                    booking_unit=booking["unit_id"],
+                )
+            if (
+                evidence["evidence_level"] not in ("A", "B")
+                or not int(evidence["can_confirm"])
+                or evidence["result"] not in ("AVAILABLE", "AVAILABLE_BUT_RESTRICTED")
+            ):
+                raise DomainError(
+                    "block proof must be level A/B evidence that authorises confirmation",
+                    code="BLOCK_PROOF_NOT_AUTHORITATIVE",
+                    evidence_level=evidence["evidence_level"],
+                    can_confirm=int(evidence["can_confirm"]),
+                )
+            if evidence["captured_at"] < booking["created_at"]:
+                raise DomainError(
+                    "block proof predates the reservation it is meant to close",
+                    code="BLOCK_PROOF_PREDATES_BOOKING",
+                    captured_at=evidence["captured_at"],
+                    booking_created_at=booking["created_at"],
+                )
+            now = self._now()
+            if evidence["valid_until"] <= now:
+                raise DomainError(
+                    "the supplier answer has expired; ask for a fresh block",
+                    code="BLOCK_PROOF_EXPIRED",
+                    valid_until=evidence["valid_until"],
+                    now=now,
+                )
+            supplier = conn.execute(
+                "SELECT status FROM suppliers WHERE supplier_id = ? AND agency_id = ?",
+                (supplier_id, self.agency_id),
+            ).fetchone()
+            if supplier is None or supplier["status"] != "ACTIVE":
+                raise DomainError(
+                    "only an active supplier of this agency can authorise a block",
+                    code="BLOCK_PROOF_SUPPLIER_NOT_AUTHORIZED",
+                    supplier_id=supplier_id,
+                )
+            relationship = conn.execute(
+                "SELECT * FROM villa_supplier_relationships"
+                " WHERE villa_supplier_relationship_id = ? AND agency_id = ?",
+                (relationship_id, self.agency_id),
+            ).fetchone()
+            covers_unit = relationship is not None and (
+                relationship["unit_id"] == booking["unit_id"]
+                or (
+                    relationship["unit_id"] is None
+                    and relationship["property_id"] == booking["property_id"]
+                )
+            )
+            if (
+                relationship is None
+                or relationship["supplier_id"] != supplier_id
+                or relationship["status"] != "ACTIVE"
+                or not covers_unit
+            ):
+                raise DomainError(
+                    "the supplier relationship does not cover this unit",
+                    code="BLOCK_PROOF_SUPPLIER_NOT_AUTHORIZED",
+                    relationship_id=relationship_id,
+                    unit_id=booking["unit_id"],
+                )
+            if conn.execute(
+                "SELECT 1 FROM supplier_block_proofs WHERE evidence_id = ?", (evidence_id,)
+            ).fetchone():
+                raise DomainError(
+                    "this supplier answer already backs another proof; one answer, one booking",
+                    code="BLOCK_PROOF_EVIDENCE_REUSED",
+                    evidence_id=evidence_id,
+                )
+            if conn.execute(
+                "SELECT 1 FROM supplier_block_proofs WHERE booking_id = ? AND revoked_at IS NULL",
+                (booking_id,),
+            ).fetchone():
+                raise DomainError(
+                    "this booking already carries a live supplier block; revoke it first",
+                    code="BLOCK_PROOF_ALREADY_RECORDED",
+                    booking_id=booking_id,
+                )
+            expires = evidence["valid_until"] if expires_at is None else expires_at
+            if expires > evidence["valid_until"]:
+                raise DomainError(
+                    "a proof cannot outlive the supplier answer it rests on",
+                    code="BLOCK_PROOF_INVALID_EXPIRY",
+                    expires_at=expires,
+                    valid_until=evidence["valid_until"],
+                )
+            if expires <= now:
+                raise DomainError(
+                    "a proof must still be valid when it is recorded",
+                    code="BLOCK_PROOF_EXPIRED",
+                    expires_at=expires,
+                    now=now,
+                )
+            if evidence_object_id is not None:
+                document = conn.execute(
+                    "SELECT status FROM evidence_objects"
+                    " WHERE evidence_id = ? AND agency_id = ?",
+                    (require_ref(evidence_object_id, "evidence_object_id"), self.agency_id),
+                ).fetchone()
+                if document is None or document["status"] != "STORED":
+                    raise DomainError(
+                        "only a scanned, stored document can be cited as provenance",
+                        code="BLOCK_PROOF_DOCUMENT_INVALID",
+                        evidence_object_id=evidence_object_id,
+                    )
+            proof_id = self.ids.new("proof")
+            conn.execute(
+                """
+                INSERT INTO supplier_block_proofs (
+                    proof_id, agency_id, booking_id, unit_id, check_in, check_out,
+                    supplier_id, relationship_id, evidence_id, evidence_object_id,
+                    verification_method, verified_by, verified_at, expires_at, notes,
+                    revoked_at, revoked_by, revoke_reason, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?)
+                """,
+                (
+                    proof_id,
+                    self.agency_id,
+                    booking_id,
+                    booking["unit_id"],
+                    check_in,
+                    check_out,
+                    supplier_id,
+                    relationship_id,
+                    evidence_id,
+                    evidence_object_id,
+                    method,
+                    verified_by,
+                    now,
+                    expires,
+                    notes,
+                    now,
+                ),
+            )
+        return proof_id
+
+    def get_supplier_block_proof(self, proof_id: str) -> sqlite3.Row:
+        """One proof, tenant-scoped; unknown ids are refused, never guessed."""
+        row = self.conn.execute(
+            "SELECT * FROM supplier_block_proofs WHERE proof_id = ? AND agency_id = ?",
+            (require_ref(proof_id, "proof_id"), self.agency_id),
+        ).fetchone()
+        if row is None:
+            raise DomainError(
+                f"unknown supplier block proof: {proof_id}",
+                code="BLOCK_PROOF_REQUIRED",
+                proof_id=proof_id,
+            )
+        return row
+
+    def supplier_block_proof_for_booking(self, booking_id: str) -> Optional[sqlite3.Row]:
+        """The live proof for a booking, or ``None`` — read-only, for the UI."""
+        return self.conn.execute(
+            "SELECT * FROM supplier_block_proofs"
+            " WHERE booking_id = ? AND agency_id = ? AND revoked_at IS NULL",
+            (require_ref(booking_id, "booking_id"), self.agency_id),
+        ).fetchone()
+
+    def revoke_supplier_block_proof(
+        self, *, proof_id: str, reason: str, actor: Optional[str] = None
+    ) -> None:
+        """Retire a live proof, keeping the row and the reason it was retired.
+
+        Revocation is not deletion: the proof keeps its provenance and gains a name, a
+        timestamp and a reason (``ck_sbp_revocation_complete`` refuses half of that).
+        A revoked proof can never confirm anything again, and the partial unique index
+        frees the booking for a corrected proof. Revoking twice is a no-op, so a retry
+        cannot overwrite the first reason.
+        """
+        proof_id = require_ref(proof_id, "proof_id")
+        text = require_text(reason, "reason", max_len=200)
+        if len(text) < 3:
+            raise DomainError(
+                "a proof is revoked with a reason", code="BLOCK_PROOF_REVOCATION_NEEDS_REASON"
+            )
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT revoked_at FROM supplier_block_proofs WHERE proof_id = ? AND agency_id = ?",
+                (proof_id, self.agency_id),
+            ).fetchone()
+            if row is None:
+                raise DomainError(
+                    f"unknown supplier block proof: {proof_id}",
+                    code="BLOCK_PROOF_REQUIRED",
+                    proof_id=proof_id,
+                )
+            if row["revoked_at"] is not None:
+                return
+            conn.execute(
+                "UPDATE supplier_block_proofs SET revoked_at = ?, revoked_by = ?,"
+                " revoke_reason = ? WHERE proof_id = ? AND agency_id = ?",
+                (self._now(), actor or self.actor, text, proof_id, self.agency_id),
+            )
 
     # -- availability checks (§7) ------------------------------------------- #
     def request_availability_check(
@@ -1924,21 +2236,26 @@ class ReservationKernel:
         self,
         *,
         booking_id: str,
-        block_evidence_id: str,
+        block_proof_id: str,
         command_id: str,
         actor: Optional[str] = None,
         actor_role: Optional[str] = None,
     ) -> BookingOutcome:
-        """Reservation's closing step (ADR-0033 §2.6): the villa's block proof
-        turns a paid booking into ``CONFIRMED`` and converts its hold.
+        """Reservation's closing step (ADR-0033 §2.6, hardened by ADR-0073): the
+        supplier's block turns a paid booking into ``CONFIRMED`` and converts its hold.
 
-        ``block_evidence_id`` must be availability evidence for the same unit, from an
-        authoritative source (level A/B, ``can_confirm``), captured **after** the
-        booking was reserved — a proof obtained before the agency asked for the block
-        cannot prove the block.
+        ``block_proof_id`` names a ``supplier_block_proofs`` row — the artifact that
+        binds one authenticated supplier answer to *this* booking, unit and stay
+        window. Availability evidence alone is no longer accepted here: it answers a
+        unit-level question and cannot say which dates the supplier blocked. The proof
+        must be live (not revoked, not expired), belong to the same agency, name this
+        booking, match its unit and its exact stay, rest on evidence that is still
+        level A/B with ``can_confirm``, and still be backed by an active supplier
+        relationship. Any mismatch fails closed with a named code; nothing is
+        "repaired" on the way through.
         """
         booking_id = require_ref(booking_id, "booking_id")
-        block_evidence_id = require_ref(block_evidence_id, "block_evidence_id")
+        block_proof_id = require_ref(block_proof_id, "block_proof_id")
         command_id = require_ref(command_id, "command_id")
         _require_min_length(command_id, "command_id", 8)
         with self.transaction() as conn:
@@ -1952,15 +2269,88 @@ class ReservationKernel:
                     code="PAYMENT_REQUIRED",
                     status=current,
                 )
+            proof = conn.execute(
+                "SELECT * FROM supplier_block_proofs WHERE proof_id = ? AND agency_id = ?",
+                (block_proof_id, self.agency_id),
+            ).fetchone()
+            if proof is None:
+                raise DomainError(
+                    "confirmation needs a supplier block proof bound to this booking",
+                    code="BLOCK_PROOF_REQUIRED",
+                    block_proof_id=block_proof_id,
+                )
+            if proof["booking_id"] != booking_id:
+                raise DomainError(
+                    "block proof belongs to a different booking",
+                    code="BLOCK_PROOF_NOT_FOR_BOOKING",
+                    proof_booking_id=proof["booking_id"],
+                )
+            if proof["revoked_at"] is not None:
+                raise DomainError(
+                    "block proof was revoked; record a fresh one",
+                    code="BLOCK_PROOF_REVOKED",
+                    revoked_at=proof["revoked_at"],
+                    revoke_reason=proof["revoke_reason"],
+                )
+            if proof["unit_id"] != booking["unit_id"]:
+                raise DomainError(
+                    "block proof belongs to a different unit",
+                    code="BLOCK_PROOF_WRONG_UNIT",
+                    proof_unit=proof["unit_id"],
+                    booking_unit=booking["unit_id"],
+                )
+            if proof["check_in"] != booking["check_in"] or proof["check_out"] != booking["check_out"]:
+                raise DomainError(
+                    "block proof covers different dates than this stay",
+                    code="BLOCK_PROOF_WRONG_DATES",
+                    proof_window=(proof["check_in"], proof["check_out"]),
+                    booking_window=(booking["check_in"], booking["check_out"]),
+                )
+            if proof["expires_at"] <= self._now():
+                raise DomainError(
+                    "block proof has expired; ask the supplier again",
+                    code="BLOCK_PROOF_EXPIRED",
+                    expires_at=proof["expires_at"],
+                )
+            supplier = conn.execute(
+                "SELECT status FROM suppliers WHERE supplier_id = ? AND agency_id = ?",
+                (proof["supplier_id"], self.agency_id),
+            ).fetchone()
+            relationship = conn.execute(
+                "SELECT * FROM villa_supplier_relationships"
+                " WHERE villa_supplier_relationship_id = ? AND agency_id = ?",
+                (proof["relationship_id"], self.agency_id),
+            ).fetchone()
+            covers_unit = relationship is not None and (
+                relationship["unit_id"] == booking["unit_id"]
+                or (
+                    relationship["unit_id"] is None
+                    and relationship["property_id"] == booking["property_id"]
+                )
+            )
+            if (
+                supplier is None
+                or supplier["status"] != "ACTIVE"
+                or relationship is None
+                or relationship["status"] != "ACTIVE"
+                or relationship["supplier_id"] != proof["supplier_id"]
+                or not covers_unit
+            ):
+                raise DomainError(
+                    "the supplier that issued this proof is no longer authorised for this unit",
+                    code="BLOCK_PROOF_SUPPLIER_NOT_AUTHORIZED",
+                    supplier_id=proof["supplier_id"],
+                    relationship_id=proof["relationship_id"],
+                )
             evidence = conn.execute(
                 "SELECT * FROM availability_evidence WHERE evidence_id = ? AND agency_id = ?",
-                (block_evidence_id, self.agency_id),
+                (proof["evidence_id"], self.agency_id),
             ).fetchone()
             if evidence is None or evidence["unit_id"] != booking["unit_id"]:
                 raise DomainError(
                     "block proof must be evidence for this booking's unit",
                     code="BLOCK_PROOF_REQUIRED",
-                    block_evidence_id=block_evidence_id,
+                    block_proof_id=block_proof_id,
                 )
             if (
                 evidence["evidence_level"] not in ("A", "B")
@@ -2013,7 +2403,7 @@ class ReservationKernel:
             )
             self._transition_hold(
                 conn, hold_id, HOLD_CONVERTED, reason="converted_to_booking", actor=actor,
-                evidence_ref=block_evidence_id, action="hold.converted",
+                evidence_ref=block_proof_id, action="hold.converted",
             )
             self._append_state_event(
                 conn,
@@ -2025,7 +2415,7 @@ class ReservationKernel:
                 actor=actor or self.actor,
                 actor_role=actor_role or self.actor_role,
                 reason=None,
-                evidence_ref=block_evidence_id,
+                evidence_ref=block_proof_id,
             )
             self._audit(
                 conn,
@@ -2036,7 +2426,7 @@ class ReservationKernel:
                 after={"status": "CONFIRMED", "hold_id": hold_id},
                 reason=None,
                 policy_version_id=booking["policy_version_id"],
-                evidence_ref=block_evidence_id,
+                evidence_ref=block_proof_id,
                 actor=actor,
             )
             row = self._require_booking(conn, booking_id)
