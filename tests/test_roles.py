@@ -22,6 +22,7 @@ Five properties are pinned here:
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import sys
@@ -36,38 +37,51 @@ import gates
 import identity
 import roles
 from approvals import ApprovalService, InvalidApprover
-from primitives import FrozenClock, IdFactory
+from policy_engine import PolicyResolver
+from primitives import FrozenClock, IdFactory, SystemClock
+from schema_loader import connect_sqlite
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-LIVE_DB = Path(os.environ.get("VILLA_DB", REPO_ROOT / "data" / "villa.db"))
+#: The deployment's store, and **only** when the operator names it. There is deliberately no
+#: fallback to ``REPO_ROOT/data/villa.db``: an ordinary regression run must not read the
+#: database this checkout happens to contain, and a fallback is what made it do exactly that
+#: (AUD-02). Naming the store is the authorization; ``make check-store VILLA_DB=…`` is the
+#: supported way to name it.
+LIVE_DB: Path | None = (
+    Path(os.environ["VILLA_DB"]).expanduser()
+    if os.environ.get("VILLA_DB", "").strip()
+    else None
+)
 
 #: ``VILLA_DB_REQUIRED=1`` turns "no store in this checkout" from a skip into a failure —
-#: the same switch the PostgreSQL twin uses (``VILLA_PG_REQUIRED``). A clean clone has no
-#: ``data/villa.db``, so skipping is right by default; a deployment that *must* read its own
-#: store turns the switch on. Without it, a store that never adopted ADR-0036 could stay
-#: unnoticed by the code gate forever.
+#: the same switch the PostgreSQL twin uses (``VILLA_PG_REQUIRED``). A clean clone names no
+#: store, so skipping is right by default; a deployment that *must* read its own store turns
+#: the switch on. Without it, a store that never adopted ADR-0036 could stay unnoticed by
+#: the code gate forever.
 LIVE_DB_REQUIRED = os.environ.get("VILLA_DB_REQUIRED") == "1"
 
 
-def _refuse_or_skip(path: Path) -> NoReturn:
+def _refuse_or_skip(path: Path | None) -> NoReturn:
     """Raise the failure or the skip — never return, so callers have no second branch."""
+    where = str(path) if path is not None else "no store named (VILLA_DB is unset)"
     if LIVE_DB_REQUIRED:
         raise pytest.fail.Exception(
-            f"VILLA_DB_REQUIRED=1 but no store at {path}: point VILLA_DB at the database this"
-            " deployment runs on, or leave VILLA_DB_REQUIRED unset to allow the skip",
+            f"VILLA_DB_REQUIRED=1 but no store at {where}: point VILLA_DB at the database"
+            " this deployment runs on, or leave VILLA_DB_REQUIRED unset to allow the skip",
             pytrace=False,
         )
     raise pytest.skip.Exception(
-        f"no live database at {path} in this checkout"
+        f"no live database at {where} in this checkout"
         " (VILLA_DB_REQUIRED=1 turns this skip into a failure)"
     )
 
 
-def _live_db(path: Path = LIVE_DB) -> Path:
+def _live_db(path: Path | None = None) -> Path:
     """The operator's store, or an explicit skip/failure that names which one it is."""
-    if path.exists():
-        return path
-    _refuse_or_skip(path)
+    target = path if path is not None else LIVE_DB
+    if target is not None and target.exists():
+        return target
+    _refuse_or_skip(target)
 
 
 #: Every capability the vocabulary declares, in one tuple, so the negative assertions below
@@ -324,16 +338,14 @@ def test_a_ladder_that_cannot_be_honoured_is_refused(ladder):
         roles.approval_ladder(ladder)
 
 
-def test_the_ladder_published_in_this_database_names_known_roles():
-    """The drift the reconciliation was written to catch, checked against the real store.
+def _published_ladder_in(path: Path) -> dict:
+    """The newest published ladder in ``path``, read with a genuinely read-only connection.
 
-    ``finance.approval.payment_thresholds_minor`` was published naming
-    ``["finance_manager", "gm"]`` while neither name existed in the ladder, which would have
-    answered the first real payment with a refusal that named no cause. The value and the
-    vocabulary are checked together here — and this check belongs in preflight, not only here,
-    because a fresh checkout has no ``data/villa.db`` to read.
+    ``mode=ro`` on purpose: this function exists to *check* a store, so it must not be able
+    to change one. The ordinary connector sets ``journal_mode=WAL`` and applies the schema,
+    which is why "read the value and compare" was never as harmless as it looked (AUD-02/03).
     """
-    conn = sqlite3.connect(f"file:{_live_db()}?mode=ro", uri=True)
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     try:
         row = conn.execute(
             "SELECT value FROM policy_revisions WHERE policy_key = ?"
@@ -344,15 +356,60 @@ def test_the_ladder_published_in_this_database_names_known_roles():
         conn.close()
     if row is None:  # pragma: no cover - depends on the store's contents
         pytest.skip("the key is unpublished in this database")
+    return json.loads(row[0])
 
-    import json
 
-    value = json.loads(row[0])
+def _assert_ladder_names_known_roles(value: dict) -> None:
+    """The drift check itself: a published ladder every one of whose names can be ranked."""
     ladder = value.get("ladder")
     if ladder is None:  # pragma: no cover - the pre-ADR-0036 shape named levels instead
         pytest.skip("this revision predates the ladder shape")
     assert roles.approval_ladder(ladder) == ("finance_manager", "gm")
     assert roles.MONEY_OUT_APPROVER_ROLES >= set(roles.approval_ladder(ladder))
+
+
+def test_the_ladder_published_in_this_database_names_known_roles():
+    """The drift the reconciliation was written to catch, checked against a named store.
+
+    ``finance.approval.payment_thresholds_minor`` was published naming
+    ``["finance_manager", "gm"]`` while neither name existed in the ladder, which would have
+    answered the first real payment with a refusal that named no cause. The value and the
+    vocabulary are checked together here — and this check belongs in preflight, not only here,
+    because it runs only in the deployment that names its store (``make check-store``).
+    """
+    _assert_ladder_names_known_roles(_published_ladder_in(_live_db()))
+
+
+def _synthetic_ladder_store(path: Path, ladder: list[str]) -> Path:
+    """A store carrying one published ladder — the same shape the live check reads."""
+    conn = connect_sqlite(str(path))
+    try:
+        PolicyResolver(
+            conn, clock=SystemClock(), ids=IdFactory(seed="roles"), agency_id="agency_default"
+        ).publish(
+            "finance.approval.payment_thresholds_minor",
+            {"ladder": ladder},
+            effective_from="2026-09-01",
+            source_doc_ref="§16 — synthetic control for the published-ladder check",
+            approved_by="owner_anas",
+        )
+    finally:
+        conn.close()
+    return path
+
+
+def test_the_ladder_check_has_teeth_on_a_synthetic_store(tmp_path):
+    """Positive control, then negative control: the check passes a good ladder and fails a bad.
+
+    Without this the live check could pass by never really reading a value, and an ordinary
+    regression run would have no evidence that the drift it exists to catch is caught.
+    """
+    good = _synthetic_ladder_store(tmp_path / "good.db", ["finance_manager", "gm"])
+    _assert_ladder_names_known_roles(_published_ladder_in(good))
+
+    bad = _synthetic_ladder_store(tmp_path / "bad.db", ["finance_manager", "bukan_peran"])
+    with pytest.raises(roles.UnknownRole):
+        _assert_ladder_names_known_roles(_published_ladder_in(bad))
 
 
 def test_the_store_switch_turns_a_missing_database_into_a_failure(tmp_path, monkeypatch):

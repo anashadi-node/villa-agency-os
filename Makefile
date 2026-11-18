@@ -88,6 +88,10 @@ check: interpreter syntax lint test secret-scan unsafe-scan pii-scan schema-pari
 # the strictness gets its own target: run it against the database this deployment actually
 # uses, where a missing or drifted store is a failure rather than a line in the summary.
 check-store:
+	@test -n "$(strip $(VILLA_DB))" || { \
+		echo "check-store needs an explicit store: make check-store VILLA_DB=data/villa.db"; \
+		echo "(the live-store tests have no default target: an ordinary run must not read one)"; \
+		exit 2; }
 	VILLA_DB_REQUIRED=1 $(PYTHON) -m pytest tests/test_roles.py --tb=short
 
 # Dicetak paling awal supaya versi interpreter tidak pernah tersembunyi di balik "PASS":

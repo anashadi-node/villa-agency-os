@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -37,9 +38,16 @@ OPEN_FROM = (TODAY - datetime.timedelta(days=1)).isoformat()
 OPEN_TO = (TODAY + datetime.timedelta(days=30)).isoformat()
 
 
-def _run(db: Path | None, *args: str) -> subprocess.CompletedProcess[str]:
+def _run(
+    db: Path | None, *args: str, cwd: Path | None = None
+) -> subprocess.CompletedProcess[str]:
     """Run the CLI. ``db=None`` means *leave VILLA_DB unset* — the case that matters for the
-    granting act, which must refuse to guess its target rather than inherit one."""
+    granting act, which must refuse to guess its target rather than inherit one.
+
+    ``cwd`` is the directory the CLI resolves its ``data/villa.db`` default against. Every
+    test that exercises that default points it at a synthetic tree, so the repository's own
+    store is never the target — the default is only safe to test when it can be redirected.
+    """
     env = dict(os.environ)
     env.pop("VILLA_DB", None)
     if db is not None:
@@ -47,18 +55,24 @@ def _run(db: Path | None, *args: str) -> subprocess.CompletedProcess[str]:
     env["PYTHONPATH"] = str(REPO / "src")
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args],
-        capture_output=True, text=True, env=env, cwd=str(REPO), timeout=120,
+        capture_output=True, text=True, env=env, cwd=str(cwd or REPO), timeout=120,
     )
 
 
 def _revisions(db: Path) -> int:
-    conn = connect_sqlite(str(db))
+    """Count revisions with a **read-only** connection.
+
+    ``connect_sqlite`` is the wrong tool for this: it issues ``PRAGMA journal_mode=WAL`` and
+    ``apply_schema()``, so a call meant to prove "nothing was written" could itself write to
+    the file it is inspecting (AUD-03). ``mode=ro`` cannot.
+    """
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     try:
         row = conn.execute(
             "SELECT COUNT(*) AS n FROM policy_revisions WHERE policy_key = ?",
             (ALLOWANCE,),
         ).fetchone()
-        return int(row["n"])
+        return int(row[0])
     finally:
         conn.close()
 
@@ -129,6 +143,27 @@ def test_a_missing_database_is_a_configuration_error(tmp_path: Path):
     assert "database not found" in result.stderr
 
 
+def _synthetic_working_directory(tmp_path: Path) -> Path:
+    """A tree whose ``data/villa.db`` *is* the CLI's default, and is not this repository's.
+
+    The CLI's default is relative, which is what makes it testable without a live store: the
+    subprocess runs here, so ``data/villa.db`` is this file and nothing else.
+    """
+    work = tmp_path / "work"
+    (work / "data").mkdir(parents=True)
+    connect_sqlite(str(work / "data" / "villa.db")).close()
+    return work
+
+
+def test_the_default_target_is_the_working_directorys_store(tmp_path: Path):
+    """The isolation the next two tests rest on, asserted instead of assumed."""
+    work = _synthetic_working_directory(tmp_path)
+    default_store = work / "data" / "villa.db"
+
+    assert default_store.exists()
+    assert default_store.resolve() != REPO.joinpath("data", "villa.db").resolve()
+
+
 def test_publish_without_an_explicit_target_is_refused_and_writes_nothing(tmp_path: Path):
     """The granting act names its database.
 
@@ -137,19 +172,62 @@ def test_publish_without_an_explicit_target_is_refused_and_writes_nothing(tmp_pa
     happens to sit in the working directory is a permission nobody decided to give. Found by
     running the documented command without ``VILLA_DB``: it published a revision into this
     repository's demo database.
+
+    The working directory here is a synthetic one, so the assertion "nothing was written"
+    is checked against the store the CLI *would* have written to — and the repository's own
+    store is never opened, let alone written.
     """
-    repo_db = REPO / "data" / "villa.db"
-    before = _revisions(repo_db) if repo_db.exists() else None
+    work = _synthetic_working_directory(tmp_path)
+    default_store = work / "data" / "villa.db"
+    before = _revisions(default_store)
 
     result = _run(
         None, "publish", "--approved-by", "owner_anas",
         "--effective-from", OPEN_FROM, "--effective-to", OPEN_TO,
+        cwd=work,
     )
 
     assert result.returncode == 2
     assert "VILLA_DB" in result.stderr
-    after = _revisions(repo_db) if repo_db.exists() else None
-    assert after == before, "a refused publish must not write a revision anywhere"
+    assert _revisions(default_store) == before, (
+        "a refused publish must not write a revision anywhere"
+    )
+
+
+def test_the_refused_default_is_writable_when_it_is_named_explicitly(tmp_path: Path):
+    """Positive control: the store the refusal above declined to write to accepts a write.
+
+    Without this, "nothing was written" would also pass on a target that could never be
+    written at all — the assertion would be green and empty.
+    """
+    work = _synthetic_working_directory(tmp_path)
+    default_store = work / "data" / "villa.db"
+
+    named = _run(
+        Path("data") / "villa.db", "publish", "--approved-by", "owner_anas",
+        "--effective-from", OPEN_FROM, "--effective-to", OPEN_TO,
+        cwd=work,
+    )
+
+    assert named.returncode == 0, named.stderr
+    assert _revisions(default_store) == 1
+
+
+def test_this_file_never_names_the_repositorys_own_database():
+    """A guard with teeth against the regression this repair is about.
+
+    Two data paths lived here and both opened the real store. The isolation above only
+    holds while no test in this file points at ``REPO/data/villa.db``; reading the source
+    is enough to catch a reintroduced one before anything opens a file.
+    """
+    source = Path(__file__).read_text(encoding="utf-8")
+    anchor = "REPO"  # composed, so this guard does not match its own literal
+    for tail in (' / "data"', " / 'data'"):
+        assert (anchor + tail) not in source, (
+            f"{anchor + tail!r} is back in {Path(__file__).name}: a test in this file would be "
+            "resolving a path under this repository again, and the store it would reach is "
+            "the operator's own"
+        )
 
 
 def test_publish_says_which_database_it_wrote_to(db: Path):
