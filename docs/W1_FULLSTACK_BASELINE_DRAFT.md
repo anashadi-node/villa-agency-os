@@ -110,3 +110,38 @@ No row is `VERIFIED_COMPLETE`.
 - It does not certify AC-level correctness; every `AS_BUILT_UNVERIFIED` row needs its own
   evidence before a release gate can cite it.
 - It does not assert that no undiscovered defect exists.
+
+## 6. Stage B vertical slice — Reservation Workspace (2026-11-18)
+
+One coherent frontend→backend slice inside the approved surface (`src/dashboard.py`,
+`templates/inventory.html`, `tests/test_dashboard.py`): the operator sees inventory, picks a
+unit and dates, names the availability evidence, and the **existing** `ReservationKernel`
+decides. No second kernel, no new business rule, no automatic payment confirmation, and no
+schema, permission, financial-authorization or banking change.
+
+| Acceptance | Test (`tests/test_dashboard.py`) | Status |
+|---|---|---|
+| A. Authorized operator completes a valid HOLD | `test_authorized_operator_requests_a_hold` | PASS |
+| B. Unauthorized role is denied | `test_hold_is_denied_for_a_read_only_role` | PASS |
+| C. Cross-tenant operation is denied | `test_hold_refuses_a_unit_from_another_tenant` | PASS |
+| D. Expired session is denied | `test_expired_session_cannot_reach_the_hold_route` | PASS |
+| E. Missing/invalid form token is denied | `test_hold_requires_a_form_token_from_this_process_and_this_principal` | PASS |
+| F. Invalid dates rejected | `test_hold_rejects_invalid_dates` | PASS |
+| G. Stale availability evidence rejected | `test_hold_rejects_stale_evidence` | PASS |
+| H. Overlapping reservation rejected | `test_hold_rejects_an_overlapping_booking` | PASS |
+| I. Duplicate submission is idempotent | `test_hold_retry_is_idempotent` | PASS |
+| J. Failed operation creates no partial state | `test_refused_hold_writes_nothing_anywhere` | PASS |
+| K. UI shows the states it can show | `test_hold_form_is_rendered_for_a_writer_and_names_no_unsupported_action` | PASS — form, success banner (`role="status"`), refusal banner (`role="alert"`); no client script exists, so there is no "loading" state to fake (CSP `default-src 'none'`) |
+| L. Every write carries audit evidence | asserted inside `test_authorized_operator_requests_a_hold` (`audit_events` row `hold.requested`, actor = principal identity) | PASS |
+| M. Reservation Kernel tests remain valid | `tests/test_reservation_kernel.py` (73 tests) unchanged and green | PASS |
+| N. Dashboard regression passes | `tests/test_dashboard.py`, `tests/test_dashboard_tenant_scope.py`, `tests/test_dashboard_session.py` | PASS |
+
+Evidence for the run: 378 tests (incl. subtests), **0 failed, 0 errors, 0 skipped**, 125.5 s,
+`RC=0`, `--basetemp` inside the approved scratch dir, re-run after the banner was moved to a
+human label (`_time_label`) with an assertion guarding it. PG-live paths were not exercised
+here (no `VILLA_PG_DSN`); the PostgreSQL evidence for this commit is the Stage A CI run.
+
+What this does **not** claim: no requirement in §2's register is promoted to
+`VERIFIED_COMPLETE` by this slice; the candidate OPEN items stay OPEN until their own evidence
+exists, and the strict PG HOLD-vs-BOOKING XFAIL (`tests/test_pg_overlap_concurrency.py:756`)
+remains unresolved.

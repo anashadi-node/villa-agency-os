@@ -20,10 +20,11 @@ from datetime import timedelta
 import pytest
 
 import dashboard as D
+import identity as identity_module
 import roles as ROLES_MOD
 from approvals import ROLE_RANK, ApprovalService
 from audit import AuditLog
-from primitives import IdFactory, to_iso
+from primitives import FrozenClock, IdFactory, to_iso
 from schema_loader import connect_sqlite
 
 REPO_ROOT = D.REPO_ROOT
@@ -2030,3 +2031,294 @@ def test_no_page_shows_a_raw_iso_instant_in_visible_text(seeded_app):
         leaked = instant.findall(visible)
         assert not leaked, f"{page} masih menampilkan ISO mentah: {leaked[:3]}"
         assert "<time datetime=" in body, f"{page} tidak merender satu pun <time>"
+
+
+# --------------------------------------------------------------------------- #
+# Reservation workspace — the HOLD slice (Stage B)
+#
+# One vertical slice: the operator sees inventory, picks a unit and dates, names the
+# evidence it relies on, and the *kernel* decides. These tests walk acceptance A-N of
+# the Stage B contract; the kernel's own suite stays the proof that the range rules
+# inside it still hold (M), and the dashboard suite above is the regression (N).
+# --------------------------------------------------------------------------- #
+
+HOLD_TOKEN_PATTERN = re.compile(r'name="form_token" value="([0-9a-f]{64})"')
+HOLD_ACTION = 'action="/holds"'
+
+#: A slot nobody occupies: unit-1 is booked 21-24 Sep, held nothing else in the seed.
+FREE_WINDOW = {"check_in": "2026-09-26", "check_out": "2026-09-29"}
+
+
+def _hold_form(token: str, **overrides: str) -> dict:
+    """The form a browser would submit after loading /inventory."""
+    form = {
+        "form_token": token,
+        "unit_id": "unit-1",
+        "guest_ref": "guest-web-1",
+        "policy_version_id": "policy-1",
+        "evidence_id": "evidence-1",
+        "idempotency_key": "idem-web-hold-1",
+        **FREE_WINDOW,
+    }
+    form.update(overrides)
+    return form
+
+
+def _form_token(live, *, token: str = "tok-reservation", path: str = "/inventory") -> str:
+    """Read the token out of the rendered form — never minted on the test's behalf."""
+    page = live.get(path, token=token)
+    assert page.status == 200, f"halaman inventory tidak terbuka: {page.status}"
+    match = HOLD_TOKEN_PATTERN.search(page.text)
+    assert match, "form hold tidak dirender dengan token"
+    return match.group(1)
+
+
+def _hold_rows(live) -> list:
+    return list(live.db.execute(
+        "SELECT hold_id, unit_id, status, check_in, check_out, idempotency_key, evidence_id"
+        " FROM holds ORDER BY hold_id"
+    ))
+
+
+def test_hold_form_is_rendered_for_a_writer_and_names_no_unsupported_action(seeded_http):
+    """K: the operator gets a real form; the unit list is the actionable one."""
+    page = seeded_http.get("/inventory", token="tok-reservation")
+
+    assert page.status == 200
+    assert HOLD_ACTION in page.text and 'data-form="hold-request"' in page.text
+    assert 'name="check_in" type="date"' in page.text
+    assert 'name="idempotency_key"' in page.text
+    assert 'name="form_token"' in page.text, "form tulis wajib membawa token"
+    # unit-3 is MAINTENANCE: offering it would be offering a slot nobody can sell.
+    assert 'value="unit-3"' not in page.text
+    assert 'value="unit-1"' in page.text and 'value="unit-2"' in page.text
+    # The form asks for a hold only; confirmation and money stay on the human path.
+    assert "konfirmasi booking" in page.text
+    assert 'action="/holds"' in page.text and 'action="/approvals"' not in page.text
+
+
+def test_authorized_operator_requests_a_hold(seeded_http):
+    """A + L: right role, real hold, and an audit row that names the actor."""
+    before = seeded_http.counts()
+    token = _form_token(seeded_http)
+
+    response = seeded_http.post("/holds", token="tok-reservation", form=_hold_form(token))
+
+    assert response.status == 200, f"hold ditolak tak terduga: {response.status}"
+    assert 'data-banner="hold-requested"' in response.text
+    assert 'data-status="CONFIRMED"' in response.text
+    assert 'data-replayed="0"' in response.text
+    assert "Tidak ada slot yang diambil" not in response.text
+    # Same rule the page sweep enforces on GET: the eye reads a label, not an instant.
+    visible = re.sub(r"<[^>]+>", " ", response.text)
+    assert not re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", visible)
+    rows = _hold_rows(seeded_http)
+    assert len(rows) == before["holds"] + 1
+    created = [row for row in rows if row["idempotency_key"] == "idem-web-hold-1"]
+    assert len(created) == 1
+    assert created[0]["unit_id"] == "unit-1"
+    assert created[0]["status"] == "CONFIRMED", "status hold ditulis oleh kernel, bukan route"
+    assert created[0]["evidence_id"] == "evidence-1", "hold harus menunjuk bukti yang dipilih"
+    audit = [
+        (row["actor"], row["action"])
+        for row in seeded_http.db.execute(
+            "SELECT actor, action FROM audit_events WHERE entity_id = ?"
+            " AND action = 'hold.requested'",
+            (created[0]["hold_id"],),
+        )
+    ]
+    assert audit == [("agent-reservation-1", "hold.requested")], "hold wajib punya bukti audit"
+    # Nothing else moved: no booking, no money, no evidence invented.
+    after = seeded_http.counts()
+    assert set(after) == set(before)
+    for table in ("bookings", "invoices", "payments", "availability_evidence"):
+        assert after[table] == before[table], f"{table} berubah tanpa izin"
+
+
+def test_hold_is_denied_for_a_read_only_role(seeded_http):
+    """B: the auditor cannot even open the page, let alone post to it."""
+    before = _hold_rows(seeded_http)
+    page = seeded_http.get("/inventory", token="tok-auditor")
+    post = seeded_http.post("/holds", token="tok-auditor", form=_hold_form("0" * 64))
+
+    assert page.status == 403
+    assert post.status == 403
+    assert _hold_rows(seeded_http) == before
+
+
+def test_hold_refuses_a_unit_from_another_tenant(seeded_http):
+    """C: a unit that belongs to another agency is not addressable at all."""
+    seeded_http.db.execute(
+        "INSERT INTO agencies (agency_id, name, status, created_at, updated_at)"
+        " VALUES ('agency-other', 'Agency Lain', 'ACTIVE', '2026-09-21T07:00:00Z',"
+        " '2026-09-21T07:00:00Z')"
+    )
+    seeded_http.db.execute(
+        "INSERT INTO properties (property_id, agency_id, name, property_type, region,"
+        " province, timezone, status, contract_pack_status, created_at, updated_at)"
+        " VALUES ('prop-other', 'agency-other', 'Villa Lain', 'guesthouse', 'Badung',"
+        " 'Bali', 'Asia/Makassar', 'SELLABLE', 'ACTIVATED', '2026-09-21T07:00:00Z',"
+        " '2026-09-21T07:00:00Z')"
+    )
+    seeded_http.db.execute(
+        "INSERT INTO units (unit_id, agency_id, property_id, name, unit_type, bedrooms,"
+        " bathrooms, base_capacity, max_guests, status, created_at, updated_at)"
+        " VALUES ('unit-other', 'agency-other', 'prop-other', 'Unit Lain', 'room', 1, 1,"
+        " 1, 2, 'ACTIVE', '2026-09-21T07:00:00Z', '2026-09-21T07:00:00Z')"
+    )
+    before = _hold_rows(seeded_http)
+    token = _form_token(seeded_http)
+
+    response = seeded_http.post(
+        "/holds", token="tok-reservation", form=_hold_form(token, unit_id="unit-other")
+    )
+
+    assert response.status == 400
+    assert 'data-code="UNIT_NOT_FOUND"' in response.text
+    assert _hold_rows(seeded_http) == before
+    # And the page for this tenant never advertises the other agency's unit.
+    assert "unit-other" not in seeded_http.get("/inventory", token="tok-reservation").text
+
+
+def test_expired_session_cannot_reach_the_hold_route(seeded, clock):
+    """D: the cookie is a carrier for a session, and a stale session authenticates nobody."""
+    sessions = identity_module.SessionService(seeded, clock=clock, agency_id="agency_default")
+    opened = sessions.open_session("agent-reservation-1", "reservation_agent")
+    headers = {"Cookie": f"{D.SESSION_COOKIE}={opened.token}"}
+
+    fresh = make_app(seeded, clock)
+    principal = fresh.authenticate(headers)
+    assert (principal.identity, principal.role) == ("agent-reservation-1", "reservation")
+
+    later = FrozenClock.at("2026-09-21T09:30:00Z")  # idle timeout is 30 minutes
+    expired = make_app(seeded, later)
+    with pytest.raises(D.Unauthenticated):
+        expired.authenticate(headers)
+
+
+def test_hold_requires_a_form_token_from_this_process_and_this_principal(seeded_http):
+    """E: missing, forged and other-principal tokens are all refused before any write."""
+    before = _hold_rows(seeded_http)
+    token = _form_token(seeded_http)
+
+    missing = seeded_http.post(
+        "/holds", token="tok-reservation", form=_hold_form(token, form_token="")
+    )
+    forged = seeded_http.post(
+        "/holds", token="tok-reservation", form=_hold_form("f" * 64)
+    )
+    # A token minted for another principal's page is not this principal's token.
+    owner_token = _form_token(seeded_http, token="tok-owner")
+    crossed = seeded_http.post(
+        "/holds", token="tok-reservation", form=_hold_form(owner_token)
+    )
+
+    assert missing.status == 403 and 'data-code="FORM_TOKEN_INVALID"' in missing.text
+    assert forged.status == 403 and 'data-code="FORM_TOKEN_INVALID"' in forged.text
+    assert crossed.status == 403 and 'data-code="FORM_TOKEN_INVALID"' in crossed.text
+    assert _hold_rows(seeded_http) == before
+
+
+def test_hold_rejects_invalid_dates(seeded_http):
+    """F: the kernel owns date validation; the route does not re-implement it."""
+    before = _hold_rows(seeded_http)
+    token = _form_token(seeded_http)
+
+    backwards = seeded_http.post(
+        "/holds",
+        token="tok-reservation",
+        form=_hold_form(token, check_in="2026-09-29", check_out="2026-09-26"),
+    )
+    nonsense = seeded_http.post(
+        "/holds",
+        token="tok-reservation",
+        form=_hold_form(token, check_in="2026-02-30", check_out="2026-03-02"),
+    )
+
+    assert backwards.status == 400, backwards.status
+    assert nonsense.status == 400, nonsense.status
+    assert 'data-banner="hold-refused"' in backwards.text
+    assert "Hold ditolak" in nonsense.text
+    assert _hold_rows(seeded_http) == before
+
+
+def test_hold_rejects_stale_evidence(seeded_http):
+    """G: evidence past its window cannot be leaned on, even when it says AVAILABLE."""
+    seeded_http.db.execute(
+        "INSERT INTO availability_evidence (evidence_id, unit_id, evidence_level,"
+        " source_type, source_ref, captured_at, valid_until, result, can_quote, can_hold,"
+        " can_confirm, created_at) VALUES ('evidence-stale', 'unit-1', 'A', 'property_api',"
+        " 'src-stale', '2026-09-01T00:00:00Z', '2026-09-02T00:00:00Z', 'AVAILABLE', 1, 1, 1,"
+        " '2026-09-01T00:00:00Z')"
+    )
+    before = _hold_rows(seeded_http)
+    token = _form_token(seeded_http)
+
+    response = seeded_http.post(
+        "/holds", token="tok-reservation", form=_hold_form(token, evidence_id="evidence-stale")
+    )
+
+    assert response.status == 400, response.status
+    assert 'data-code="EVIDENCE_STALE"' in response.text
+    assert _hold_rows(seeded_http) == before
+
+
+def test_hold_rejects_an_overlapping_booking(seeded_http):
+    """H: 21-24 Sep on unit-1 is sold; the range rule refuses the request."""
+    before = _hold_rows(seeded_http)
+    token = _form_token(seeded_http)
+
+    response = seeded_http.post(
+        "/holds",
+        token="tok-reservation",
+        form=_hold_form(token, check_in="2026-09-22", check_out="2026-09-24"),
+    )
+
+    # 400, not 409: the kernel classifies the refusal and this route only renders it.
+    assert response.status == 400, response.status
+    assert 'data-code="SLOT_ALREADY_BOOKED"' in response.text
+    assert _hold_rows(seeded_http) == before
+
+
+def test_hold_retry_is_idempotent(seeded_http):
+    """I: the same submission twice is one hold, and the page says so."""
+    token = _form_token(seeded_http)
+    form = _hold_form(token)
+
+    first = seeded_http.post("/holds", token="tok-reservation", form=form)
+    second = seeded_http.post("/holds", token="tok-reservation", form=form)
+
+    assert first.status == 200 and 'data-replayed="0"' in first.text
+    assert second.status == 200 and 'data-replayed="1"' in second.text
+    rows = [row for row in _hold_rows(seeded_http) if row["idempotency_key"] == form["idempotency_key"]]
+    assert len(rows) == 1, "pengulangan tidak boleh membuat hold kedua"
+
+
+def test_refused_hold_writes_nothing_anywhere(seeded_http):
+    """J: a refused request leaves no partial state — not in holds, not in audit."""
+    # Fresh evidence for unit-2, so the refusal under test is the *range* one and not
+    # the evidence check that runs before it.
+    seeded_http.db.execute(
+        "INSERT INTO availability_evidence (evidence_id, unit_id, evidence_level,"
+        " source_type, source_ref, captured_at, valid_until, result, can_quote, can_hold,"
+        " can_confirm, created_at) VALUES ('evidence-2', 'unit-2', 'A', 'property_api',"
+        " 'src-2', '2026-09-21T06:00:00Z', '2026-09-23T08:00:00Z', 'AVAILABLE', 1, 1, 1,"
+        " '2026-09-21T06:00:00Z')"
+    )
+    token = _form_token(seeded_http)
+    before = seeded_http.counts()
+
+    refused = seeded_http.post(
+        "/holds",
+        token="tok-reservation",
+        form=_hold_form(
+            token, unit_id="unit-2", evidence_id="evidence-2",
+            check_in="2026-09-23", check_out="2026-09-26",
+        ),
+    )
+
+    assert refused.status == 400, refused.status  # unit-2 is held 22-25 Sep in the seed
+    codes = re.findall(r'data-code="([A-Z_]+)"', refused.text)
+    assert codes == ["SLOT_ALREADY_HELD"], codes
+    after = seeded_http.counts()
+    assert after == before, "penolakan tidak boleh meninggalkan jejak tulis"

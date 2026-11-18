@@ -1,16 +1,18 @@
-"""Internal dashboard — read-only operational views, approval-only write path.
+"""Internal dashboard — read-only operational views, approval and hold write paths.
 
 The dashboard is the human window onto the kernel: it *shows* what the database
-says and offers exactly one way to change anything — the existing approval queue.
+says and offers exactly two ways to change anything — the existing approval queue,
+and a hold request that is handed to :class:`reservation_kernel.ReservationKernel`.
 It never becomes a second writer.
 
 Invariants (each has a test in ``tests/test_dashboard.py``):
 
-1. **Read-only for data.** Every GET handler only ever SELECTs. The single write
-   path is ``POST /approvals`` (and ``POST /approvals/<id>/decide``), which calls
-   :class:`approvals.ApprovalService` — the module that owns those tables.
-   Nothing here issues an INSERT/UPDATE/DELETE. A full crawl of every GET route
-   leaves the row count of every table unchanged.
+1. **Read-only for data.** Every GET handler only ever SELECTs. The write paths are
+   ``POST /approvals`` (and ``POST /approvals/<id>/decide``), which calls
+   :class:`approvals.ApprovalService`, and ``POST /holds``, which calls
+   :class:`reservation_kernel.ReservationKernel.request_hold` — the modules that own
+   those tables. Nothing here issues an INSERT/UPDATE/DELETE of its own. A full crawl
+   of every GET route leaves the row count of every table unchanged.
 2. **Real, if simple, authentication.** Identity *and* role come from a bearer
    token — the ``X-Dashboard-Token`` header, or an ``Authorization`` header whose
    scheme is ``Bearer`` — mapped to a principal. No token ⇒ 401. A token whose
@@ -39,6 +41,8 @@ Stdlib only: ``http.server``, no framework, no template engine.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import html
 import io
 import json
@@ -199,6 +203,14 @@ PAGE_ROLES: Mapping[str, tuple[str, ...]] = MappingProxyType(
 
 #: Roles allowed to *act* (approval writes). An auditor is read-only by design.
 WRITE_ROLES: tuple[str, ...] = ("reservation", "operations", "finance", "owner", "gm")
+
+#: Hidden field that carries the per-session form token on a write form (``POST /holds``).
+#: The token is not a second authentication: it proves the submitted form was rendered
+#: by this process for *this* principal, so a page replayed from another browser cannot
+#: move inventory. ``SameSite=Strict`` on the session cookie closes the cross-site half;
+#: this closes the same-site half that a cookie alone cannot see (a stale tab, a form
+#: re-submitted by a different logged-in user of the same machine).
+FORM_TOKEN_FIELD = "form_token"
 
 #: Roles for which free text keeps its identifiers. A rendered page is treated as
 #: an outbound copy of the record, so this follows the stricter export rule of
@@ -676,6 +688,19 @@ class MissingIdempotencyKey(InvalidInput):
         super().__init__(message, code="MISSING_IDEMPOTENCY_KEY", **details)
 
 
+class FormTokenInvalid(Forbidden):
+    """The submitted form did not carry a token this process minted for this principal.
+
+    Refused before any domain call, so a replayed or forged form can never reach the
+    kernel. It is a 403 and not a 400: the request was understood and denied.
+    """
+
+    def __init__(
+        self, message: str = "form token tidak valid; muat ulang halaman", **details: Any
+    ) -> None:
+        DomainError.__init__(self, message, code="FORM_TOKEN_INVALID", **details)
+
+
 class TemplateError(DashboardError):
     """A template asked for a key nobody supplied: fail loud, not blank."""
 
@@ -753,6 +778,21 @@ def _render_fragment(text: str, context: Mapping[str, Any], *, source: str) -> s
         return escape_value(context[key])
 
     return _PLACEHOLDER_RE.sub(replace, text)
+
+
+def _time_label(value: Any) -> str:
+    """The *text* of a timestamp, already escaped, for places that allow text only.
+
+    ``humanize`` returns a ``<time>`` element; an ``<option>`` cannot hold one (its
+    content model is text), so this asks ``time_display`` for the same label and escapes
+    it. Anything unparseable is passed through escaped rather than reformatted.
+    """
+
+    raw = value if isinstance(value, str) else str(value)
+    moment = time_display_module.parse(raw)
+    if moment is None:
+        return escape_value(value)
+    return escape_value(time_display_module.label(moment))
 
 
 def _template_path(name: str, templates_dir: Optional[Any] = None) -> Path:
@@ -1266,6 +1306,10 @@ class Dashboard:
             )
         )
         self._handler_class: Optional[type] = None
+        # One process-wide secret for form tokens: the token is an HMAC of the
+        # principal, so a page rendered for one operator is useless for another and a
+        # restart invalidates every outstanding form without storing anything.
+        self._form_secret = secrets.token_bytes(32)
 
     def _ensure_agency_scope(self) -> None:
         """Fail fast when the configured agency does not exist (read-only check).
@@ -1991,7 +2035,85 @@ class Dashboard:
                 "UNKNOWN = tidak ada bukti "
                 "ketersediaan (bukan berarti tersedia).</p>"
             ),
+            # Both are context keys the template always sees; a POST replaces ``banner``
+            # with the outcome it actually got, so a refusal never renders as silence.
+            "banner": Markup(""),
+            "hold_form": self._hold_form(principal, units),
         }
+
+    def _hold_form(self, principal: Principal, units: Sequence[Any]) -> Markup:
+        """The hold request form, listing only choices this tenant may act on.
+
+        The lists are a convenience, never the gate: the kernel re-reads the unit, the
+        policy and the evidence inside its transaction and refuses anything that does not
+        hold up. Evidence is offered only when it says AVAILABLE and authorises a hold,
+        because the one thing this form must not do is invent availability.
+        """
+        unit_ids = [str(unit["unit_id"]) for unit in units if str(unit["status"]) == "ACTIVE"]
+        if not unit_ids:
+            return Markup('<p class="muted" data-note="hold-unavailable">Belum ada unit aktif '
+                          "untuk diminta hold-nya.</p>")
+        placeholders = ", ".join("?" for _ in unit_ids)
+        evidence = self._rows(
+            f"SELECT evidence_id, unit_id, valid_until FROM availability_evidence "
+            f"WHERE agency_id = ? AND unit_id IN ({placeholders}) AND result = 'AVAILABLE' "
+            f"AND can_hold = 1 ORDER BY captured_at DESC",
+            (self.agency_id, *unit_ids),
+        )
+        if not evidence:
+            return Markup('<p class="muted" data-note="hold-unavailable">Tidak ada bukti '
+                          "ketersediaan yang mengizinkan hold. Catat bukti dulu; form ini "
+                          "tidak mengarang bukti.</p>")
+        policies = self._rows(
+            "SELECT pv.policy_version_id, pv.property_id, u.unit_id FROM policy_versions pv "
+            "JOIN units u ON u.property_id = pv.property_id "
+            f"WHERE pv.agency_id = ? AND u.unit_id IN ({placeholders}) "
+            "ORDER BY pv.version DESC",
+            (self.agency_id, *unit_ids),
+        )
+        policy_options = "".join(
+            f'<option data-property="{escape_value(row["property_id"])}" '
+            f'data-unit="{escape_value(row["unit_id"])}" '
+            f'value="{escape_value(row["policy_version_id"])}"'
+            f' data-property-of-unit="{escape_value(row["property_id"])}">'
+            f"{escape_value(row['policy_version_id'])}</option>"
+            for row in policies
+        )
+        evidence_options = "".join(
+            f'<option data-unit="{escape_value(row["unit_id"])}" '
+            f'value="{escape_value(row["evidence_id"])}">'
+            f"{escape_value(row['evidence_id'])} "
+            f"(berlaku sampai {_time_label(row['valid_until'])})"
+            f"</option>"
+            for row in evidence
+        )
+        unit_options = "".join(
+            f'<option value="{escape_value(unit_id)}">{escape_value(unit_id)}</option>'
+            for unit_id in unit_ids
+        )
+        return Markup(
+            '<form method="post" action="/holds" data-write-form="1" '
+            'data-form="hold-request">'
+            '<h3>Minta hold</h3>'
+            f'<input type="hidden" name="{FORM_TOKEN_FIELD}" '
+            f'value="{escape_value(self.form_token_for(principal))}">'
+            '<p><label>Unit <select name="unit_id" required>'
+            f"{unit_options}</select></label> "
+            '<label>Bukti ketersediaan <select name="evidence_id" required>'
+            f"{evidence_options}</select></label></p>"
+            '<p><label>Versi policy <select name="policy_version_id" required>'
+            f"{policy_options}</select></label> "
+            '<label>Guest ref <input name="guest_ref" required maxlength="64"></label></p>'
+            '<p><label>Check-in <input name="check_in" type="date" required></label> '
+            '<label>Check-out <input name="check_out" type="date" required></label></p>'
+            '<p><label>Idempotency key <input name="idempotency_key" required '
+            'minlength="8" maxlength="64"></label> '
+            '<button type="submit">Minta hold</button></p>'
+            '<p class="muted" data-note="hold-scope">Form ini hanya meminta HOLD; '
+            "konfirmasi booking, pembayaran, dan perubahan finansial tetap di jalur "
+            "approval manusia.</p>"
+            "</form>"
+        )
 
     @staticmethod
     def _inventory_row(cells: Sequence[Any]) -> str:
@@ -3037,10 +3159,13 @@ class Dashboard:
         if len(segments) == 3 and segments[0] == "approvals" and segments[2] == "decide":
             self.require_page("approvals", principal)
             return self.post_approval_decide(request, principal, segments[1])
+        if segments == ["holds"]:
+            self.require_page("inventory", principal)
+            return self.post_hold_request(request, principal)
         raise MethodNotAllowed(
-            "POST hanya tersedia untuk aksi approval",
+            "POST hanya tersedia untuk aksi approval dan permintaan hold",
             path="/" + "/".join(segments),
-            allowed=["POST /approvals", "POST /approvals/<id>/decide"],
+            allowed=["POST /approvals", "POST /approvals/<id>/decide", "POST /holds"],
         )
 
     # ------------------------------------------------------------------ #
@@ -3141,6 +3266,105 @@ class Dashboard:
             f"Keputusan {escape_value(decision)} untuk {escape_value(clean)} tercatat.</p>"
         )
         return _Response(200, self.render("approvals", principal, context), page="approvals")
+
+    # ------------------------------------------------------------------ #
+    # The second write path: a hold request, handed to the kernel
+    # ------------------------------------------------------------------ #
+    def form_token_for(self, principal: Principal) -> str:
+        """The token a form rendered for *this* principal must carry back."""
+        message = f"{self.agency_id}:{principal.identity}".encode("utf-8")
+        return hmac.new(self._form_secret, message, hashlib.sha256).hexdigest()
+
+    def _require_form_token(self, request: "_Request", principal: Principal) -> None:
+        supplied = request.option(FORM_TOKEN_FIELD)
+        expected = self.form_token_for(principal)
+        if not supplied or not hmac.compare_digest(supplied, expected):
+            raise FormTokenInvalid(
+                "form token tidak valid; muat ulang halaman", field=FORM_TOKEN_FIELD
+            )
+
+    def _reservation_kernel(self, principal: Principal) -> Any:
+        """A kernel on this request's connection, scoped to this tenant and actor.
+
+        Imported lazily: the dashboard is served by processes that never write
+        inventory, and an unused import should not decide whether they start.
+        ``ListeningHTTPServer.request_lock`` serialises handler bodies, so the shared
+        connection keeps the single-writer order the kernel's ``BEGIN IMMEDIATE`` assumes.
+        """
+        from reservation_kernel import ReservationKernel
+
+        return ReservationKernel(
+            self.conn,
+            clock=self.clock,
+            agency_id=self.agency_id,
+            actor=principal.identity,
+            actor_role=principal.role,
+        )
+
+    def post_hold_request(self, request: "_Request", principal: Principal) -> _Response:
+        """Request a hold through the kernel and report exactly what it decided.
+
+        Order matters and mirrors the kernel's own: form token (the request came from a
+        form we rendered), idempotency (a retry must not duplicate), then the fields. The
+        evidence id is **required** — passing ``None`` would let the kernel record a
+        fresh ``manual_ops`` evidence row itself, which is the availability bypass this
+        surface must not offer.
+        """
+        self._require_form_token(request, principal)
+        if not principal.may_write:
+            raise Forbidden("peran ini hanya boleh membaca", role=principal.role)
+        key = self._require_idempotency(request)
+        fields = {
+            name: request.option(name)
+            for name in (
+                "unit_id",
+                "check_in",
+                "check_out",
+                "guest_ref",
+                "policy_version_id",
+                "evidence_id",
+            )
+        }
+        missing = sorted(name for name, value in fields.items() if not value)
+        if missing:
+            raise InvalidInput(
+                "kolom hold belum lengkap; bukti ketersediaan wajib dipilih",
+                missing=missing,
+            )
+        try:
+            outcome = self._reservation_kernel(principal).request_hold(
+                **fields,
+                idempotency_key=key,
+                actor=principal.identity,
+                actor_role=principal.role,
+            )
+        except DomainError as exc:
+            context = self.view_inventory(principal)
+            context["banner"] = Markup(
+                f'<p class="err" role="alert" data-banner="hold-refused" '
+                f'data-code="{escape_value(exc.code)}">'
+                f"Hold ditolak: {escape_value(exc.message)} "
+                f"(kode {escape_value(exc.code)}). Tidak ada slot yang diambil.</p>"
+            )
+            return _Response(
+                status_for(exc), self.render("inventory", principal, context), page="inventory"
+            )
+        context = self.view_inventory(principal)
+        context["banner"] = Markup(
+            f'<p class="ok" role="status" data-banner="hold-requested" '
+            f'data-hold-id="{escape_value(outcome.hold_id)}" '
+            f'data-status="{escape_value(outcome.status)}" '
+            f'data-replayed="{int(outcome.replayed)}" '
+            f'data-expires-at="{escape_value(outcome.expires_at)}" '
+            f'data-idempotency-key="{escape_value(key)}">'
+            f"Hold {escape_value(outcome.hold_id)} untuk {escape_value(outcome.unit_id)} "
+            f"{escape_value(outcome.check_in)} → {escape_value(outcome.check_out)} "
+            f"tercatat ({escape_value(outcome.status)}), berlaku sampai "
+            f"{_time_label(outcome.expires_at)}"
+            f"{' — permintaan ini pengulangan, tidak ada hold baru' if outcome.replayed else ''}."
+            "</p>"
+        )
+        return _Response(200, self.render("inventory", principal, context), page="inventory")
 
     # ------------------------------------------------------------------ #
     # Error pages / dump
