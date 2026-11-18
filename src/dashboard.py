@@ -2028,17 +2028,19 @@ class Dashboard:
             ),
             "inventory_rows": Markup("".join(self._inventory_row(row) for row in rows))
             if rows
-            else empty_note("unit untuk kalender"),
+            else empty_note("units to show on the calendar"),
             "legend": Markup(
-                '<p class="muted" data-note="legend">BOOKED = booking aktif pada tanggal itu; '
-                "HOLD = hold yang masih memblokir slot (termasuk yang menunggu verifikasi); "
-                "UNKNOWN = tidak ada bukti "
-                "ketersediaan (bukan berarti tersedia).</p>"
+                '<p class="muted" data-note="legend">BOOKED = a booking occupies that date; '
+                "HOLD = a hold still blocking the slot (including one awaiting verification); "
+                "UNKNOWN = no availability "
+                "evidence, which does not mean available.</p>"
             ),
             # Both are context keys the template always sees; a POST replaces ``banner``
             # with the outcome it actually got, so a refusal never renders as silence.
             "banner": Markup(""),
             "hold_form": self._hold_form(principal, units),
+            "booking_form": self._booking_form(principal),
+            "awaiting_payment": self._awaiting_payment_table(),
         }
 
     def _hold_form(self, principal: Principal, units: Sequence[Any]) -> Markup:
@@ -2051,8 +2053,8 @@ class Dashboard:
         """
         unit_ids = [str(unit["unit_id"]) for unit in units if str(unit["status"]) == "ACTIVE"]
         if not unit_ids:
-            return Markup('<p class="muted" data-note="hold-unavailable">Belum ada unit aktif '
-                          "untuk diminta hold-nya.</p>")
+            return Markup('<p class="muted" data-note="hold-unavailable">No active unit '
+                          "to request a hold on.</p>")
         placeholders = ", ".join("?" for _ in unit_ids)
         evidence = self._rows(
             f"SELECT evidence_id, unit_id, valid_until FROM availability_evidence "
@@ -2061,9 +2063,9 @@ class Dashboard:
             (self.agency_id, *unit_ids),
         )
         if not evidence:
-            return Markup('<p class="muted" data-note="hold-unavailable">Tidak ada bukti '
-                          "ketersediaan yang mengizinkan hold. Catat bukti dulu; form ini "
-                          "tidak mengarang bukti.</p>")
+            return Markup('<p class="muted" data-note="hold-unavailable">No availability '
+                          "evidence permits a hold. Record the evidence first; this form "
+                          "does not invent it.</p>")
         policies = self._rows(
             "SELECT pv.policy_version_id, pv.property_id, u.unit_id FROM policy_versions pv "
             "JOIN units u ON u.property_id = pv.property_id "
@@ -2083,7 +2085,7 @@ class Dashboard:
             f'<option data-unit="{escape_value(row["unit_id"])}" '
             f'value="{escape_value(row["evidence_id"])}">'
             f"{escape_value(row['evidence_id'])} "
-            f"(berlaku sampai {_time_label(row['valid_until'])})"
+            f"(valid until {_time_label(row['valid_until'])})"
             f"</option>"
             for row in evidence
         )
@@ -2094,25 +2096,128 @@ class Dashboard:
         return Markup(
             '<form method="post" action="/holds" data-write-form="1" '
             'data-form="hold-request">'
-            '<h3>Minta hold</h3>'
+            '<h3>Request a hold</h3>'
             f'<input type="hidden" name="{FORM_TOKEN_FIELD}" '
             f'value="{escape_value(self.form_token_for(principal))}">'
             '<p><label>Unit <select name="unit_id" required>'
             f"{unit_options}</select></label> "
-            '<label>Bukti ketersediaan <select name="evidence_id" required>'
+            '<label>Availability evidence <select name="evidence_id" required>'
             f"{evidence_options}</select></label></p>"
-            '<p><label>Versi policy <select name="policy_version_id" required>'
+            '<p><label>Policy version <select name="policy_version_id" required>'
             f"{policy_options}</select></label> "
             '<label>Guest ref <input name="guest_ref" required maxlength="64"></label></p>'
             '<p><label>Check-in <input name="check_in" type="date" required></label> '
             '<label>Check-out <input name="check_out" type="date" required></label></p>'
             '<p><label>Idempotency key <input name="idempotency_key" required '
             'minlength="8" maxlength="64"></label> '
-            '<button type="submit">Minta hold</button></p>'
-            '<p class="muted" data-note="hold-scope">Form ini hanya meminta HOLD; '
-            "konfirmasi booking, pembayaran, dan perubahan finansial tetap di jalur "
-            "approval manusia.</p>"
+            '<button type="submit">Request hold</button></p>'
+            '<p class="muted" data-note="hold-scope">This form requests a HOLD only; '
+            "booking confirmation, payment, and financial changes stay on the human "
+            "approval path.</p>"
             "</form>"
+        )
+
+    def _booking_form(self, principal: Principal) -> Markup:
+        """The hold→booking form: only eligible holds and live quotes are offered.
+
+        ADR-0069 moved the commercial gate into ``reserve_from_hold``, so this form asks
+        for the quote the guest accepted and nothing else — it never prices anything. A
+        hold that has expired or is no longer ``CONFIRMED`` is not offered at all, and a
+        window with no live quote says so instead of accepting a submission that must
+        be refused (``CONFIRM_NOT_ACCEPTED`` is the kernel's sentence to pass, not ours).
+        """
+        now = to_iso(self.clock.now())
+        holds = self._rows(
+            "SELECT hold_id, unit_id, check_in, check_out FROM holds"
+            " WHERE agency_id = ? AND status = 'CONFIRMED' AND expires_at > ?"
+            " ORDER BY expires_at",
+            (self.agency_id, now),
+        )
+        if not holds:
+            return Markup('<p class="muted" data-note="booking-unavailable">No live hold '
+                          "can be converted. Request a hold first.</p>")
+        quotes = self._rows(
+            "SELECT quote_id, unit_id, check_in, check_out, total_minor, currency FROM quotes"
+            " WHERE agency_id = ? AND status <> 'VOID' AND expires_at > ?"
+            " ORDER BY created_at DESC",
+            (self.agency_id, now),
+        )
+        if not quotes:
+            return Markup('<p class="muted" data-note="booking-unavailable">No live quote '
+                          "exists. A booking is never made from a price that is not there.</p>")
+        hold_options = "".join(
+            f'<option value="{escape_value(row["hold_id"])}">'
+            f'{escape_value(row["hold_id"])} — {escape_value(row["unit_id"])} '
+            f'{escape_value(row["check_in"])} → {escape_value(row["check_out"])}</option>'
+            for row in holds
+        )
+        quote_options = "".join(
+            f'<option value="{escape_value(row["quote_id"])}">'
+            f'{escape_value(row["quote_id"])} — {escape_value(row["unit_id"])} '
+            f'{escape_value(row["check_in"])} → {escape_value(row["check_out"])} — '
+            f"{escape_value(format_money(row['total_minor'], str(row['currency'])))}</option>"
+            for row in quotes
+        )
+        return Markup(
+            '<form method="post" action="/bookings" data-write-form="1"'
+            ' data-form="booking-from-hold">'
+            "<h3>Convert a hold into a booking (payment pending)</h3>"
+            f'<input type="hidden" name="{FORM_TOKEN_FIELD}"'
+            f' value="{escape_value(self.form_token_for(principal))}">'
+            '<p><label>Hold <select name="hold_id" required>'
+            f"{hold_options}</select></label> "
+            '<label>Quote the guest accepted <select name="quote_id" required>'
+            f"{quote_options}</select></label></p>"
+            '<p><label>Adults <input name="adults" type="number" min="1" max="20"'
+            ' value="2" required></label> '
+            '<label>Children <input name="children" type="number" min="0" max="20" value="0"'
+            ' required></label> '
+            '<label>Infants <input name="infants" type="number" min="0" max="20" value="0"'
+            ' required></label></p>'
+            '<p><label>Idempotency key <input name="idempotency_key" required'
+            ' minlength="8" maxlength="64"></label> '
+            '<button type="submit">Create booking</button></p>'
+            '<p class="muted" data-note="booking-scope">The result is PAYMENT_PENDING: the '
+            "hold still locks the slot. Payment verification and final confirmation are "
+            "separate actions this form does not run.</p>"
+            "</form>"
+        )
+
+    def _awaiting_payment_table(self) -> Markup:
+        """Read-only visibility of the bookings that wait for money.
+
+        ADR-0069 keeps ``PAYMENT_PENDING`` out of the occupying set on purpose: the hold
+        still locks the slot. Showing the pair as it stands is the whole point — the
+        operator should see which holds have become bookings and what finance still owes.
+        """
+        rows = self._rows(
+            "SELECT booking_id, unit_id, check_in, check_out, status, payment_status,"
+            " currency, total_minor, amount_paid_minor FROM bookings"
+            " WHERE agency_id = ? AND status IN ('PAYMENT_PENDING','PAYMENT_PARTIAL')"
+            " ORDER BY created_at DESC",
+            (self.agency_id,),
+        )
+        if not rows:
+            return Markup('<p class="muted" data-note="awaiting-payment-empty">No booking '
+                          "is awaiting payment.</p>")
+        body = "".join(
+            "<tr>"
+            f"<td>{escape_value(row['booking_id'])}</td>"
+            f"<td>{escape_value(row['unit_id'])}</td>"
+            f"<td>{escape_value(row['check_in'])} → {escape_value(row['check_out'])}</td>"
+            f"<td>{escape_value(row['status'])}</td>"
+            f"<td>{escape_value(row['payment_status'])}</td>"
+            f"<td>{escape_value(format_money(row['total_minor'], str(row['currency'])))}</td>"
+            f"<td>{escape_value(format_money(row['amount_paid_minor'], str(row['currency'])))}</td>"
+            "</tr>"
+            for row in rows
+        )
+        return Markup(
+            "<h3>Bookings awaiting payment</h3>"
+            '<table data-table="awaiting-payment"><thead><tr>'
+            "<th>Booking</th><th>Unit</th><th>Dates</th><th>Status</th>"
+            "<th>Payment</th><th>Total</th><th>Paid</th>"
+            f"</tr></thead><tbody>{body}</tbody></table>"
         )
 
     @staticmethod
@@ -3162,10 +3267,18 @@ class Dashboard:
         if segments == ["holds"]:
             self.require_page("inventory", principal)
             return self.post_hold_request(request, principal)
+        if segments == ["bookings"]:
+            self.require_page("inventory", principal)
+            return self.post_booking_request(request, principal)
         raise MethodNotAllowed(
-            "POST hanya tersedia untuk aksi approval dan permintaan hold",
+            "POST is only available for approval actions, hold requests and booking conversion",
             path="/" + "/".join(segments),
-            allowed=["POST /approvals", "POST /approvals/<id>/decide", "POST /holds"],
+            allowed=[
+                "POST /approvals",
+                "POST /approvals/<id>/decide",
+                "POST /holds",
+                "POST /bookings",
+            ],
         )
 
     # ------------------------------------------------------------------ #
@@ -3312,7 +3425,7 @@ class Dashboard:
         """
         self._require_form_token(request, principal)
         if not principal.may_write:
-            raise Forbidden("peran ini hanya boleh membaca", role=principal.role)
+            raise Forbidden("this role is read-only", role=principal.role)
         key = self._require_idempotency(request)
         fields = {
             name: request.option(name)
@@ -3328,7 +3441,7 @@ class Dashboard:
         missing = sorted(name for name, value in fields.items() if not value)
         if missing:
             raise InvalidInput(
-                "kolom hold belum lengkap; bukti ketersediaan wajib dipilih",
+                "hold fields are incomplete; availability evidence is required",
                 missing=missing,
             )
         try:
@@ -3343,8 +3456,8 @@ class Dashboard:
             context["banner"] = Markup(
                 f'<p class="err" role="alert" data-banner="hold-refused" '
                 f'data-code="{escape_value(exc.code)}">'
-                f"Hold ditolak: {escape_value(exc.message)} "
-                f"(kode {escape_value(exc.code)}). Tidak ada slot yang diambil.</p>"
+                f"Hold refused: {escape_value(exc.message)} "
+                f"(code {escape_value(exc.code)}). No slot was taken.</p>"
             )
             return _Response(
                 status_for(exc), self.render("inventory", principal, context), page="inventory"
@@ -3357,11 +3470,80 @@ class Dashboard:
             f'data-replayed="{int(outcome.replayed)}" '
             f'data-expires-at="{escape_value(outcome.expires_at)}" '
             f'data-idempotency-key="{escape_value(key)}">'
-            f"Hold {escape_value(outcome.hold_id)} untuk {escape_value(outcome.unit_id)} "
+            f"Hold {escape_value(outcome.hold_id)} for {escape_value(outcome.unit_id)} "
             f"{escape_value(outcome.check_in)} → {escape_value(outcome.check_out)} "
-            f"tercatat ({escape_value(outcome.status)}), berlaku sampai "
+            f"recorded ({escape_value(outcome.status)}), valid until "
             f"{_time_label(outcome.expires_at)}"
-            f"{' — permintaan ini pengulangan, tidak ada hold baru' if outcome.replayed else ''}."
+            f"{' — this request was a replay, no new hold was created' if outcome.replayed else ''}."
+            "</p>"
+        )
+        return _Response(200, self.render("inventory", principal, context), page="inventory")
+
+    def post_booking_request(self, request: "_Request", principal: Principal) -> _Response:
+        """Convert one eligible hold into a ``PAYMENT_PENDING`` booking, via the kernel.
+
+        The route owns exactly what a form owns: the form token, the idempotency key, and
+        turning three text fields into integers. Everything commercial — accepted quote,
+        same unit, same policy version, live hold, capacity — is ``reserve_from_hold``'s
+        decision, and its refusal codes are rendered instead of translated so nothing is
+        lost between the kernel and the operator. ``command_id`` is derived from the
+        idempotency key: a retry must hash the same way, or the kernel would correctly
+        call it a conflicting request.
+        """
+        self._require_form_token(request, principal)
+        if not principal.may_write:
+            raise Forbidden("this role is read-only", role=principal.role)
+        key = self._require_idempotency(request)
+        references = {name: request.option(name) for name in ("hold_id", "quote_id")}
+        missing = sorted(name for name, value in references.items() if not value)
+        if missing:
+            raise InvalidInput("hold and quote are required", missing=missing)
+        guests: dict[str, int] = {}
+        for name, floor in (("adults", 1), ("children", 0), ("infants", 0)):
+            raw = str(request.option(name) or "").strip()
+            if not raw.isdigit():
+                raise InvalidInput("guest count must be a whole number", field=name)
+            value = int(raw)
+            if value < floor:
+                raise InvalidInput("guest count is out of range", field=name, minimum=floor)
+            guests[name] = value
+        try:
+            outcome = self._reservation_kernel(principal).reserve_from_hold(
+                **references,
+                **guests,
+                idempotency_key=key,
+                command_id=f"dash-{key}",
+                actor=principal.identity,
+                actor_role=principal.role,
+            )
+        except DomainError as exc:
+            context = self.view_inventory(principal)
+            context["banner"] = Markup(
+                f'<p class="err" role="alert" data-banner="booking-refused" '
+                f'data-code="{escape_value(exc.code)}">'
+                f"Booking refused: {escape_value(exc.message)} "
+                f"(code {escape_value(exc.code)}). No booking was created.</p>"
+            )
+            return _Response(
+                status_for(exc), self.render("inventory", principal, context), page="inventory"
+            )
+        context = self.view_inventory(principal)
+        context["banner"] = Markup(
+            f'<p class="ok" role="status" data-banner="booking-created" '
+            f'data-booking-id="{escape_value(outcome.booking_id)}" '
+            f'data-status="{escape_value(outcome.status)}" '
+            f'data-replayed="{int(outcome.replayed)}" '
+            f'data-total-minor="{escape_value(outcome.total_minor)}" '
+            f'data-deposit-due-minor="{escape_value(outcome.deposit_due_minor)}" '
+            f'data-balance-due-minor="{escape_value(outcome.balance_due_minor)}">'
+            f"Booking {escape_value(outcome.booking_id)} for {escape_value(outcome.unit_id)} "
+            f"{escape_value(outcome.check_in)} → {escape_value(outcome.check_out)} "
+            f"is {escape_value(outcome.status)}; total "
+            f"{escape_value(format_money(outcome.total_minor, outcome.currency))}, "
+            f"deposit {escape_value(format_money(outcome.deposit_due_minor, outcome.currency))}, "
+            f"balance {escape_value(format_money(outcome.balance_due_minor, outcome.currency))}"
+            f"{' — a replay, no new booking was created' if outcome.replayed else ''}."
+            " The hold still locks the slot until final confirmation."
             "</p>"
         )
         return _Response(200, self.render("inventory", principal, context), page="inventory")

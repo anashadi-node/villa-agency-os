@@ -1,12 +1,14 @@
 <section data-page="inventory" data-window="{{ window }}">
-  <h2>Kalender unit — {{ window }}</h2>
+  <h2>Unit calendar — {{ window }}</h2>
   {{ legend }}
   {{ banner }}
   <table data-table="calendar">
     <thead><tr>
-      <th>Unit</th><th>Properti</th><th>Nama</th><th>Status unit</th>{{ day_headers }}
+      <th>Unit</th><th>Property</th><th>Name</th><th>Unit status</th>{{ day_headers }}
     </tr></thead>
     <tbody>{{ inventory_rows }}</tbody>
   </table>
   {{ hold_form }}
+  {{ booking_form }}
+  {{ awaiting_payment }}
 </section>

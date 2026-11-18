@@ -53,7 +53,9 @@ RECORDED_SRC = {
     # ("Kasus", "Keuangan", "Rantai Audit"); ADR-0011 §55 governs production error and
     # guest-facing text, not the dashboard's own chrome. Deliberate, like every other
     # raise of this number — the three literals are ``PAGE_TITLES["workforce_*"]``.
-    "dashboard.py": 159,
+    # Lowered 159 -> 156 when the Stage C1 booking-conversion copy was written in en-US
+    # (ADR-0011 §55). The ratchet test below is what forces this pin down, not up.
+    "dashboard.py": 156,
     "documents.py": 7,
     "identity.py": 26,
     "incidents.py": 74,
@@ -91,7 +93,7 @@ RECORDED_TEMPLATES = {
     "command_center.html": 1,
     "error.html": 1,
     "finance.html": 1,
-    "inventory.html": 1,
+    "inventory.html": 0,
     "properties.html": 1,
 }
 

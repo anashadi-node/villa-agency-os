@@ -2093,7 +2093,7 @@ def test_hold_form_is_rendered_for_a_writer_and_names_no_unsupported_action(seed
     assert 'value="unit-3"' not in page.text
     assert 'value="unit-1"' in page.text and 'value="unit-2"' in page.text
     # The form asks for a hold only; confirmation and money stay on the human path.
-    assert "konfirmasi booking" in page.text
+    assert "booking confirmation" in page.text
     assert 'action="/holds"' in page.text and 'action="/approvals"' not in page.text
 
 
@@ -2108,7 +2108,7 @@ def test_authorized_operator_requests_a_hold(seeded_http):
     assert 'data-banner="hold-requested"' in response.text
     assert 'data-status="CONFIRMED"' in response.text
     assert 'data-replayed="0"' in response.text
-    assert "Tidak ada slot yang diambil" not in response.text
+    assert "No slot was taken" not in response.text
     # Same rule the page sweep enforces on GET: the eye reads a label, not an instant.
     visible = re.sub(r"<[^>]+>", " ", response.text)
     assert not re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", visible)
@@ -2238,7 +2238,7 @@ def test_hold_rejects_invalid_dates(seeded_http):
     assert backwards.status == 400, backwards.status
     assert nonsense.status == 400, nonsense.status
     assert 'data-banner="hold-refused"' in backwards.text
-    assert "Hold ditolak" in nonsense.text
+    assert "Hold refused" in nonsense.text
     assert _hold_rows(seeded_http) == before
 
 
@@ -2322,3 +2322,394 @@ def test_refused_hold_writes_nothing_anywhere(seeded_http):
     assert codes == ["SLOT_ALREADY_HELD"], codes
     after = seeded_http.counts()
     assert after == before, "penolakan tidak boleh meninggalkan jejak tulis"
+
+
+# --------------------------------------------------------------------------- #
+# Booking conversion workspace — HOLD → PAYMENT_PENDING (Stage C1)
+#
+# The second vertical slice: an operator takes one eligible hold and one quote the
+# guest already accepted, and the *kernel* decides the rest. These tests walk
+# acceptance A-N of the Stage C1 contract; nothing here writes a booking, a payment
+# or a policy of its own.
+# --------------------------------------------------------------------------- #
+
+BOOKING_ACTION = 'action="/bookings"'
+BOOKING_FORM = 'data-form="booking-from-hold"'
+BOOKING_TOKEN_PATTERN = re.compile(r'name="form_token" value="([0-9a-f]{64})"')
+
+
+def _seed_rate_card(db) -> None:
+    """The rate card a quote must point at (``quotes.rate_card_id`` is a FK)."""
+    db.execute(
+        "INSERT INTO rate_cards (rate_card_id, property_id, unit_scope, name, version,"
+        " effective_from, effective_to, currency, weekly_discount_pct, monthly_discount_pct,"
+        " source_doc_ref, approved_by, created_at)"
+        " VALUES ('rc-1', 'prop-1', 'unit-2', 'Rate Unit Dua', 1, '2026-09-01', '2026-12-31',"
+        " 'IDR', '0', '0', 'doc-rc-1', 'owner-sakti-1', '2026-09-01T00:00:00Z')"
+    )
+
+
+def _seed_quote(
+    db,
+    *,
+    quote_id: str = "quote-1",
+    unit_id: str = "unit-2",
+    check_in: str = "2026-09-22",
+    check_out: str = "2026-09-25",
+    total_minor: int = 3_680_000,
+    status: str = "SENT",
+    accepted: bool = True,
+) -> None:
+    """A quote priced under policy-1, optionally with the version the guest accepted.
+
+    The numbers are a fixture, not a rule: the deposit and the balance come out of
+    ``policy-1``'s 30% inside the kernel, and the tests assert only invariants
+    (deposit + balance == total), never a hand-computed rupiah figure.
+    """
+    if db.execute("SELECT 1 FROM rate_cards WHERE rate_card_id = 'rc-1'").fetchone() is None:
+        _seed_rate_card(db)
+    db.execute(
+        "INSERT INTO quotes (quote_id, property_id, unit_id, check_in, check_out, nights,"
+        " adults, children, infants, currency, policy_version_id, policy_fingerprint,"
+        " rate_card_id, accommodation_minor, extra_guest_minor, cleaning_minor, extras_minor,"
+        " discount_minor, subtotal_minor, service_fee_minor, tax_minor, total_minor,"
+        " security_deposit_minor, lines, fingerprint, status, warnings, created_at, expires_at)"
+        " VALUES (?, 'prop-1', ?, ?, ?, 3, 2, 0, 0, 'IDR', 'policy-1', ?, 'rc-1', ?, 0,"
+        " 200000, 0, 0, ?, 160000, 320000, ?, 1000000, '[]', ?, ?, '[]',"
+        " '2026-09-21T07:00:00Z', '2026-09-23T08:00:00Z')",
+        (
+            quote_id,
+            unit_id,
+            check_in,
+            check_out,
+            "a" * 64,
+            total_minor - 680_000,
+            total_minor - 680_000,
+            total_minor,
+            "c" * 64,
+            status,
+        ),
+    )
+    if accepted:
+        db.execute(
+            "INSERT INTO quotation_versions (quotation_version_id, property_id, unit_id,"
+            " check_in, check_out, version, quote_id, status, supersedes_id, created_by,"
+            " created_at, sent_at)"
+            " VALUES (?, 'prop-1', ?, ?, ?, 1, ?, 'ACCEPTED', NULL, 'agent-reservation-1',"
+            " '2026-09-21T07:30:00Z', '2026-09-21T07:31:00Z')",
+            (f"qv-{quote_id}", unit_id, check_in, check_out, quote_id),
+        )
+
+
+def _booking_token(live, *, token: str = "tok-reservation") -> str:
+    """Read the token out of the *booking* form — never minted on the test's behalf."""
+    page = live.get("/inventory", token=token)
+    assert page.status == 200, f"halaman inventory tidak terbuka: {page.status}"
+    start = page.text.find(BOOKING_FORM)
+    assert start != -1, "form booking tidak dirender"
+    match = BOOKING_TOKEN_PATTERN.search(page.text, start)
+    assert match, "form booking tidak membawa token"
+    return match.group(1)
+
+
+def _booking_form(token: str, **overrides: str) -> dict:
+    """The shape a browser submits from the booking form."""
+    form = {
+        "form_token": token,
+        "hold_id": "hold-1",
+        "quote_id": "quote-1",
+        "adults": "2",
+        "children": "0",
+        "infants": "0",
+        "idempotency_key": "idem-web-book-1",
+    }
+    form.update(overrides)
+    return form
+
+
+def _booking_rows(live) -> list:
+    return list(live.db.execute(
+        "SELECT booking_id, unit_id, check_in, check_out, status, payment_status,"
+        " hold_ref, quote_ref, total_minor, amount_paid_minor, confirmed_at"
+        " FROM bookings ORDER BY booking_id"
+    ))
+
+
+def _attr(text: str, name: str) -> str:
+    """Read one data-attribute off the rendered page, refusing to guess."""
+    match = re.search(rf'{name}="([^"]+)"', text)
+    assert match, f"atribut {name} tidak ada di halaman"
+    return match.group(1)
+
+
+def test_booking_form_is_offered_only_when_a_live_quote_exists(seeded_http):
+    """M: an empty estate says so; a priced one offers the conversion, and nothing more."""
+    empty = seeded_http.get("/inventory", token="tok-reservation")
+    assert empty.status == 200
+    assert 'data-note="booking-unavailable"' in empty.text
+    assert BOOKING_ACTION not in empty.text, "tanpa quote tidak boleh ada form booking"
+
+    _seed_quote(seeded_http.db)
+    page = seeded_http.get("/inventory", token="tok-reservation")
+
+    assert BOOKING_ACTION in page.text and BOOKING_FORM in page.text
+    assert 'name="quote_id"' in page.text and 'value="quote-1"' in page.text
+    assert 'name="hold_id"' in page.text and 'value="hold-1"' in page.text
+    assert "PAYMENT_PENDING" in page.text
+    # The form stops at the booking: payment and confirmation are not its sentences.
+    assert 'name="mark_paid"' not in page.text and 'name="confirm"' not in page.text
+
+
+def test_authorized_operator_converts_a_hold_into_a_payment_pending_booking(seeded_http):
+    """A + L: right role, real booking, hold still holding, audit row naming the actor."""
+    _seed_quote(seeded_http.db)
+    before = seeded_http.counts()
+    token = _booking_token(seeded_http)
+
+    response = seeded_http.post("/bookings", token="tok-reservation", form=_booking_form(token))
+
+    assert response.status == 200, f"booking ditolak tak terduga: {response.status}"
+    assert 'data-banner="booking-created"' in response.text
+    assert 'data-status="PAYMENT_PENDING"' in response.text
+    assert 'data-replayed="0"' in response.text
+    total = int(_attr(response.text, "data-total-minor"))
+    deposit = int(_attr(response.text, "data-deposit-due-minor"))
+    balance = int(_attr(response.text, "data-balance-due-minor"))
+    assert total == 3_680_000, "total harus berasal dari quote"
+    assert deposit + balance == total, "deposit + sisa harus menutup total"
+
+    rows = [
+        row for row in _booking_rows(seeded_http)
+        if row["booking_id"] not in ("booking-1", "booking-2")
+    ]
+    assert len(rows) == 1, "tepat satu booking baru"
+    created = rows[0]
+    assert created["status"] == "PAYMENT_PENDING"
+    assert created["payment_status"] == "UNPAID", "route tidak boleh mengklaim uang masuk"
+    assert created["amount_paid_minor"] == 0
+    assert created["hold_ref"] == "hold-1" and created["quote_ref"] == "quote-1"
+    assert created["confirmed_at"] is None, "konfirmasi final bukan bagian dari slice ini"
+    assert created["total_minor"] == total
+
+    hold = seeded_http.db.execute(
+        "SELECT status FROM holds WHERE hold_id = 'hold-1'"
+    ).fetchone()
+    assert hold["status"] == "CONFIRMED", "hold tetap mengunci slot sampai konfirmasi"
+    audit = [
+        (row["actor"], row["action"])
+        for row in seeded_http.db.execute(
+            "SELECT actor, action FROM audit_events WHERE entity_id = ?", (created["booking_id"],)
+        )
+    ]
+    assert ("agent-reservation-1", "booking.reserved") in audit
+    after = seeded_http.counts()
+    assert after["bookings"] == before["bookings"] + 1
+    for table in ("invoices", "payments"):
+        assert after[table] == before[table], f"{table} berubah tanpa izin"
+
+
+def test_booking_is_denied_for_a_read_only_role(seeded_http):
+    """B: the auditor has no booking form and no booking route."""
+    _seed_quote(seeded_http.db)
+    before = _booking_rows(seeded_http)
+
+    page = seeded_http.get("/inventory", token="tok-auditor")
+    post = seeded_http.post("/bookings", token="tok-auditor", form=_booking_form("0" * 64))
+
+    assert page.status == 403
+    assert post.status == 403
+    assert _booking_rows(seeded_http) == before
+
+
+def test_booking_refuses_a_hold_from_another_tenant(seeded_http):
+    """C: another agency's hold is not addressable, and the page never shows it."""
+    _seed_quote(seeded_http.db)
+    seeded_http.db.execute(
+        "INSERT INTO agencies (agency_id, name, status, created_at, updated_at)"
+        " VALUES ('agency-other', 'Agency Lain', 'ACTIVE', '2026-09-21T07:00:00Z',"
+        " '2026-09-21T07:00:00Z')"
+    )
+    seeded_http.db.execute(
+        "INSERT INTO properties (property_id, agency_id, name, property_type, region,"
+        " province, timezone, status, contract_pack_status, created_at, updated_at)"
+        " VALUES ('prop-other', 'agency-other', 'Villa Lain', 'guesthouse', 'Badung',"
+        " 'Bali', 'Asia/Makassar', 'SELLABLE', 'ACTIVATED', '2026-09-21T07:00:00Z',"
+        " '2026-09-21T07:00:00Z')"
+    )
+    seeded_http.db.execute(
+        "INSERT INTO units (unit_id, agency_id, property_id, name, unit_type, bedrooms,"
+        " bathrooms, base_capacity, max_guests, status, created_at, updated_at)"
+        " VALUES ('unit-other', 'agency-other', 'prop-other', 'Unit Lain', 'room', 1, 1,"
+        " 1, 2, 'ACTIVE', '2026-09-21T07:00:00Z', '2026-09-21T07:00:00Z')"
+    )
+    seeded_http.db.execute(
+        "INSERT INTO holds (hold_id, agency_id, unit_id, property_id, check_in, check_out,"
+        " nights, status, guest_ref, policy_version_id, evidence_id, idempotency_key,"
+        " created_at, expires_at, expires_timezone)"
+        " VALUES ('hold-other', 'agency-other', 'unit-other', 'prop-other', '2026-09-22',"
+        " '2026-09-25', 3, 'CONFIRMED', 'guest-other', 'policy-1', 'evidence-1',"
+        " 'idem-hold-other', '2026-09-21T07:00:00Z', '2026-09-21T20:00:00Z', 'Asia/Makassar')"
+    )
+    before = _booking_rows(seeded_http)
+    token = _booking_token(seeded_http)
+
+    response = seeded_http.post(
+        "/bookings", token="tok-reservation", form=_booking_form(token, hold_id="hold-other")
+    )
+
+    assert response.status == 400, response.status
+    assert 'data-code="HOLD_NOT_FOUND"' in response.text
+    assert 'data-banner="booking-created"' not in response.text
+    assert _booking_rows(seeded_http) == before
+    assert "hold-other" not in seeded_http.get("/inventory", token="tok-reservation").text
+
+
+def test_booking_route_requires_a_session(seeded_http):
+    """D: no cookie, no booking — the route is behind the same wall as the pages."""
+    _seed_quote(seeded_http.db)
+    before = _booking_rows(seeded_http)
+
+    response = seeded_http.post("/bookings", token=None, form=_booking_form("0" * 64))
+
+    assert response.status == 401, response.status
+    assert _booking_rows(seeded_http) == before
+
+
+def test_booking_requires_a_form_token_from_this_process_and_this_principal(seeded_http):
+    """E: missing, forged and other-principal tokens are refused before any write."""
+    _seed_quote(seeded_http.db)
+    before = _booking_rows(seeded_http)
+    token = _booking_token(seeded_http)
+    owner_token = _booking_token(seeded_http, token="tok-owner")
+
+    missing = seeded_http.post(
+        "/bookings", token="tok-reservation", form=_booking_form(token, form_token="")
+    )
+    forged = seeded_http.post("/bookings", token="tok-reservation", form=_booking_form("f" * 64))
+    crossed = seeded_http.post(
+        "/bookings", token="tok-reservation", form=_booking_form(owner_token)
+    )
+
+    for response in (missing, forged, crossed):
+        assert response.status == 403, response.status
+        assert 'data-code="FORM_TOKEN_INVALID"' in response.text
+    assert _booking_rows(seeded_http) == before
+
+
+def test_booking_refuses_a_released_or_expired_hold(seeded_http):
+    """F + G: only a live, confirmed hold may become a booking."""
+    _seed_quote(seeded_http.db)
+    for hold in (
+        ("hold-released", "RELEASE_REQUESTED", "2026-09-21T06:00:00Z",
+         "2026-09-21T20:00:00Z", "2026-09-27", "2026-09-29"),
+        ("hold-expired", "CONFIRMED", "2026-09-19T00:00:00Z",
+         "2026-09-20T00:00:00Z", "2026-10-10", "2026-10-12"),
+    ):
+        seeded_http.db.execute(
+            "INSERT INTO holds (hold_id, unit_id, property_id, check_in, check_out, nights,"
+            " status, guest_ref, policy_version_id, evidence_id, idempotency_key, created_at,"
+            " expires_at, expires_timezone)"
+            " VALUES (?, 'unit-2', 'prop-1', ?, ?, 2, ?, 'guest-x',"
+            " 'policy-1', 'evidence-1', ?, ?, ?, 'Asia/Makassar')",
+            (hold[0], hold[4], hold[5], hold[1], f"idem-{hold[0]}", hold[2], hold[3]),
+        )
+    before = _booking_rows(seeded_http)
+    token = _booking_token(seeded_http)
+
+    released = seeded_http.post(
+        "/bookings", token="tok-reservation",
+        form=_booking_form(token, hold_id="hold-released", idempotency_key="idem-web-book-rel"),
+    )
+    expired = seeded_http.post(
+        "/bookings", token="tok-reservation",
+        form=_booking_form(token, hold_id="hold-expired", idempotency_key="idem-web-book-exp"),
+    )
+
+    assert released.status == 400 and 'data-code="HOLD_NOT_ACTIVE"' in released.text
+    assert expired.status == 400 and 'data-code="HOLD_ALREADY_EXPIRED"' in expired.text
+    assert _booking_rows(seeded_http) == before
+
+
+def test_booking_fails_closed_without_an_accepted_quote_for_this_stay(seeded_http):
+    """H: a price nobody accepted, a quote for another unit, and a missing quote."""
+    _seed_quote(seeded_http.db)
+    _seed_quote(seeded_http.db, quote_id="quote-2", accepted=False)
+    _seed_quote(seeded_http.db, quote_id="quote-3", unit_id="unit-1",
+                check_in="2026-09-26", check_out="2026-09-29")
+    before = _booking_rows(seeded_http)
+    token = _booking_token(seeded_http)
+
+    unaccepted = seeded_http.post(
+        "/bookings", token="tok-reservation",
+        form=_booking_form(token, quote_id="quote-2", idempotency_key="idem-web-book-q2"),
+    )
+    other_unit = seeded_http.post(
+        "/bookings", token="tok-reservation",
+        form=_booking_form(token, quote_id="quote-3", idempotency_key="idem-web-book-q3"),
+    )
+    missing = seeded_http.post(
+        "/bookings", token="tok-reservation",
+        form=_booking_form(token, quote_id="", idempotency_key="idem-web-book-q0"),
+    )
+
+    assert unaccepted.status == 400 and 'data-code="CONFIRM_NOT_ACCEPTED"' in unaccepted.text
+    assert other_unit.status == 400 and 'data-code="QUOTE_UNIT_MISMATCH"' in other_unit.text
+    assert missing.status == 400 and 'data-code="INVALID_INPUT"' in missing.text
+    assert _booking_rows(seeded_http) == before
+
+
+def test_booking_retry_is_idempotent(seeded_http):
+    """I: the same submission twice is one booking, and the page says so."""
+    _seed_quote(seeded_http.db)
+    before = _booking_rows(seeded_http)
+    token = _booking_token(seeded_http)
+    form = _booking_form(token)
+
+    first = seeded_http.post("/bookings", token="tok-reservation", form=form)
+    second = seeded_http.post("/bookings", token="tok-reservation", form=form)
+
+    assert first.status == 200 and 'data-replayed="0"' in first.text
+    assert second.status == 200 and 'data-replayed="1"' in second.text
+    ids = {
+        _attr(response.text, "data-booking-id")
+        for response in (first, second)
+    }
+    assert len(ids) == 1, "pengulangan tidak boleh menjadi booking kedua"
+    assert len(_booking_rows(seeded_http)) == len(before) + 1
+
+
+def test_one_hold_cannot_become_two_bookings(seeded_http):
+    """J: a second operator with a *different* key still lands on the same booking."""
+    _seed_quote(seeded_http.db)
+    before = _booking_rows(seeded_http)
+    token = _booking_token(seeded_http)
+
+    first = seeded_http.post("/bookings", token="tok-reservation", form=_booking_form(token))
+    second = seeded_http.post(
+        "/bookings", token="tok-owner",
+        form=_booking_form(_booking_token(seeded_http, token="tok-owner"),
+                           idempotency_key="idem-web-book-2"),
+    )
+
+    first_id = _attr(first.text, "data-booking-id")
+    second_id = _attr(second.text, "data-booking-id")
+    assert first.status == 200 and second.status == 200
+    assert first_id == second_id, "satu hold hanya boleh menopang satu booking"
+    assert second.text.count('data-replayed="1"') == 1
+    assert len(_booking_rows(seeded_http)) == len(before) + 1
+
+
+def test_booking_refusal_creates_no_partial_state(seeded_http):
+    """K: an over-capacity party leaves no booking, no invoice, no audit row."""
+    _seed_quote(seeded_http.db)
+    before = seeded_http.counts()
+    token = _booking_token(seeded_http)
+
+    response = seeded_http.post(
+        "/bookings", token="tok-reservation", form=_booking_form(token, adults="4")
+    )
+
+    assert response.status == 400, response.status
+    assert 'data-code="CAPACITY_EXCEEDED"' in response.text
+    assert 'data-banner="booking-created"' not in response.text
+    assert seeded_http.counts() == before, "penolakan tidak boleh meninggalkan jejak tulis"

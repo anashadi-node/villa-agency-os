@@ -145,3 +145,42 @@ What this does **not** claim: no requirement in §2's register is promoted to
 `VERIFIED_COMPLETE` by this slice; the candidate OPEN items stay OPEN until their own evidence
 exists, and the strict PG HOLD-vs-BOOKING XFAIL (`tests/test_pg_overlap_concurrency.py:756`)
 remains unresolved.
+
+## 6.1 Stage C1 — Booking Conversion Workspace (HOLD → PAYMENT_PENDING)
+
+Scope: convert an eligible live HOLD into a booking whose status is `PAYMENT_PENDING`, through
+the application UI, by an authorized reservation operator. The slice ends there: payment
+verification (`mark_paid`) and final confirmation (`confirm_booking`) are separate controlled
+actions and are **not** executed by this code. No new state machine, no direct
+`HOLD → CONFIRMED` path, no change to the Reservation Kernel, payment services, financial
+approval policy, or database schema.
+
+| # | Acceptance | Test | Result |
+|---|---|---|---|
+| A. An authorized operator converts a live hold | `test_authorized_operator_converts_a_live_hold` | PASS — `data-banner="booking-reserved"`, status `PAYMENT_PENDING` |
+| B. The result is not CONFIRMED and no money moved | asserted in A (`payment_status = UNPAID`, `amount_paid_minor = 0`, `confirmed_at IS NULL`) | PASS |
+| C. The hold keeps blocking the slot | asserted in A (hold row still `CONFIRMED`) | PASS |
+| D. Read-only auditor cannot convert | `test_read_only_role_cannot_convert_a_hold` | PASS — `403` |
+| E. Another agency's hold is not convertible | `test_a_hold_from_another_agency_is_not_convertible` | PASS — kernel `HOLD_NOT_FOUND` |
+| F. Missing cookie is unauthenticated | `test_conversion_requires_a_session` | PASS — `401` |
+| G. Wrong form token is refused | `test_conversion_requires_the_page_form_token` | PASS — `403 FORM_TOKEN_INVALID` |
+| H. A released hold is not convertible | `test_a_released_hold_cannot_be_converted` | PASS — `HOLD_NOT_ACTIVE` |
+| I. An expired hold is not convertible | `test_an_expired_hold_cannot_be_converted` | PASS — `HOLD_ALREADY_EXPIRED` |
+| J. A quote that was never accepted is refused | `test_a_quote_that_was_not_accepted_is_refused` | PASS — `CONFIRM_NOT_ACCEPTED` |
+| K. A quote for another unit is refused | `test_a_quote_for_another_unit_is_refused` | PASS — `QUOTE_UNIT_MISMATCH` |
+| L. A missing quote is refused, not invented | `test_a_booking_without_a_quote_is_refused` | PASS — `INVALID_INPUT` |
+| M. Duplicate submission is idempotent | `test_conversion_retry_is_idempotent` | PASS — one booking row, `data-replayed="1"` |
+| N. Refusal writes nothing anywhere | asserted across `bookings`/`invoices`/`payments`/`holds` | PASS |
+
+Language contract: every new user-facing literal in this slice is en-US (ADR-0011 §55);
+`dashboard.py` markers **159 → 156** and `inventory.html` **1 → 0**, with the ratchet pins
+lowered to the measured values rather than the numbers raised.
+
+Evidence: 389 tests (incl. subtests), **0 failed, 0 errors, 0 skipped**, 136.2 s, `RC=0`; the
+language gate `tests/test_language_standard.py` → 7 passed; `compileall` and `pyflakes` clean.
+PG-live paths were not exercised locally (no `VILLA_PG_DSN`); the PostgreSQL evidence for this
+commit is the CI run on branch `feat/villa-fullstack-integration`.
+
+What this does **not** claim: nothing here promotes an OPEN register item to `VERIFIED_COMPLETE`;
+the strict PG HOLD-vs-BOOKING XFAIL (`tests/test_pg_overlap_concurrency.py:756`) remains an
+unresolved production risk, and FR-904 is not production complete.
