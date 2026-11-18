@@ -2713,3 +2713,528 @@ def test_booking_refusal_creates_no_partial_state(seeded_http):
     assert 'data-code="CAPACITY_EXCEEDED"' in response.text
     assert 'data-banner="booking-created"' not in response.text
     assert seeded_http.counts() == before, "penolakan tidak boleh meninggalkan jejak tulis"
+
+# --------------------------------------------------------------------------- #
+# Stage D: finance -> reservation, the money half of the booking chain
+#
+# The tests below walk acceptance A-G of the Stage D contract over real HTTP and
+# the real domain services. Every record they create is synthetic and lives in the
+# test's own SQLite file; nothing here writes a payment, a provider event or a
+# policy of its own, and no test asserts a hand-computed rupiah figure it could
+# have invented — the numbers come from the quote the fixture seeds.
+# --------------------------------------------------------------------------- #
+INVOICE_FORM = 'data-form="issue-invoice"'
+MARK_PAID_FORM = 'data-form="mark-paid"'
+STAGE_D_LINES = [
+    {"code": "night:1", "description": "Nightly rate", "quantity": 3, "amount_minor": 3_000_000},
+    {"code": "service_fee", "description": "Service fee", "amount_minor": 150_000},
+    {"code": "tax_pbjt", "description": "PBJT", "amount_minor": 300_000},
+]
+STAGE_D_SUBTOTAL = 3_000_000
+STAGE_D_SERVICE = 150_000
+STAGE_D_TAX = 300_000
+STAGE_D_TOTAL = STAGE_D_SUBTOTAL + STAGE_D_SERVICE + STAGE_D_TAX
+
+
+def _seed_stage_d_booking(
+    db,
+    *,
+    booking_id: str = "booking-d1",
+    quote_id: str = "quote-d1",
+    status: str = "PAYMENT_PENDING",
+    quote_status: str = "ACCEPTED",
+    unit_id: str = "unit-2",
+    check_in: str = "2026-12-10",
+    check_out: str = "2026-12-13",
+    amount_paid_minor: int = 0,
+    payment_status: str = "UNPAID",
+) -> None:
+    """A booking that waits for money, priced by a quote whose lines reconcile."""
+    if db.execute("SELECT 1 FROM rate_cards WHERE rate_card_id = 'rc-1'").fetchone() is None:
+        _seed_rate_card(db)
+    db.execute(
+        "INSERT INTO quotes (quote_id, property_id, unit_id, check_in, check_out, nights,"
+        " adults, children, infants, currency, policy_version_id, policy_fingerprint,"
+        " rate_card_id, accommodation_minor, extra_guest_minor, cleaning_minor, extras_minor,"
+        " discount_minor, subtotal_minor, service_fee_minor, tax_minor, total_minor,"
+        " security_deposit_minor, lines, fingerprint, status, warnings, created_at, expires_at)"
+        " VALUES (?, 'prop-1', ?, ?, ?, 3, 2, 0, 0, 'IDR', 'policy-1', ?, 'rc-1', ?, 0, 0, 0,"
+        " 0, ?, ?, ?, ?, 500000, ?, ?, ?, '[]', '2026-11-01T00:00:00Z',"
+        " '2027-01-01T00:00:00Z')",
+        (
+            quote_id,
+            unit_id,
+            check_in,
+            check_out,
+            "a" * 64,
+            STAGE_D_SUBTOTAL,
+            STAGE_D_SUBTOTAL,
+            STAGE_D_SERVICE,
+            STAGE_D_TAX,
+            STAGE_D_TOTAL,
+            json.dumps(STAGE_D_LINES),
+            "c" * 64,
+            quote_status,
+        ),
+    )
+    db.execute(
+        "INSERT INTO bookings (booking_id, property_id, unit_id, check_in, check_out, nights,"
+        " status, guest_ref, adults, children, infants, currency, policy_version_id,"
+        " policy_fingerprint, quote_ref, total_minor, amount_paid_minor, security_deposit_minor,"
+        " payment_status, idempotency_key, version_lock, created_at, updated_at)"
+        " VALUES (?, 'prop-1', ?, ?, ?, 3, ?, 'guest-stage-d', 2, 0, 0, 'IDR', 'policy-1',"
+        " ?, ?, ?, ?, 500000, ?, ?, 1, '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z')",
+        (
+            booking_id,
+            unit_id,
+            check_in,
+            check_out,
+            status,
+            "b" * 64,
+            quote_id,
+            STAGE_D_TOTAL,
+            amount_paid_minor,
+            payment_status,
+            f"idem-{booking_id}",
+        ),
+    )
+
+
+def _seed_stage_d_invoice(
+    db,
+    *,
+    invoice_id: str = "invoice-d1",
+    booking_id: str = "booking-d1",
+    number: str = "INV-2026-9001",
+) -> None:
+    db.execute(
+        "INSERT INTO invoices (invoice_id, invoice_number, booking_id, policy_fingerprint,"
+        " currency, subtotal_minor, tax_minor, service_minor, total_minor, amount_paid_minor,"
+        " status, payment_status, issued_at, due_at, created_at)"
+        " VALUES (?, ?, ?, ?, 'IDR', ?, ?, ?, ?, 0, 'ISSUED', 'UNPAID',"
+        " '2026-11-01T00:00:00Z', '2026-11-08T00:00:00Z', '2026-11-01T00:00:00Z')",
+        (
+            invoice_id,
+            number,
+            booking_id,
+            "b" * 64,
+            STAGE_D_SUBTOTAL,
+            STAGE_D_TAX,
+            STAGE_D_SERVICE,
+            STAGE_D_TOTAL,
+        ),
+    )
+
+
+def _seed_stage_d_payment(
+    db,
+    *,
+    payment_id: str = "payment-d1",
+    invoice_id: str = "invoice-d1",
+    status: str = "SUCCEEDED",
+    amount_minor: int = STAGE_D_TOTAL,
+) -> None:
+    """A payment row, written the way the payment service would leave it.
+
+    ``SUCCEEDED`` is the only status this test file lets the happy path see; a
+    provider event that produced it is out of scope here (and in production it is
+    ``payments.PaymentService``, not the dashboard, that writes it).
+    """
+    db.execute(
+        "INSERT INTO payments (payment_id, invoice_id, provider, provider_intent_id, method,"
+        " currency, amount_minor, status, created_at, settled_at, provider_status)"
+        " VALUES (?, ?, 'midtrans', ?, 'BANK_TRANSFER', 'IDR', ?, ?,"
+        " '2026-11-01T00:00:00Z', ?, 'settlement')",
+        (
+            payment_id,
+            invoice_id,
+            f"intent-{payment_id}",
+            amount_minor,
+            status,
+            "2026-11-01T00:00:00Z" if status == "SUCCEEDED" else None,
+        ),
+    )
+
+
+def _form_token_from(live, marker: str, *, token: str = "tok-finance") -> str:
+    """Read a token out of a finance form — never minted here.
+
+    When the only pending booking already carries an invoice, the invoice form is
+    not offered; the mark-paid form carries the same token, so either form will do.
+    """
+    page = live.get("/finance", token=token)
+    assert page.status == 200, f"halaman finance tidak terbuka: {page.status}"
+    for candidate in (marker, MARK_PAID_FORM, INVOICE_FORM):
+        start = page.text.find(candidate)
+        if start != -1:
+            match = BOOKING_TOKEN_PATTERN.search(page.text, start)
+            assert match, f"form {candidate} tidak membawa token"
+            return match.group(1)
+    raise AssertionError(f"tidak ada form finance yang dirender (diminta {marker})")
+
+
+def _invoice_rows(live) -> list:
+    return list(live.db.execute(
+        "SELECT invoice_id, booking_id, subtotal_minor, tax_minor, service_minor, total_minor"
+        " FROM invoices ORDER BY invoice_id"
+    ))
+
+
+def _booking_row(live, booking_id: str = "booking-d1"):
+    return live.db.execute(
+        "SELECT status, amount_paid_minor, payment_status, confirmed_at FROM bookings"
+        " WHERE booking_id = ?",
+        (booking_id,),
+    ).fetchone()
+
+
+def test_finance_page_lists_the_booking_waiting_for_money(seeded_http):
+    """A + G: Finance sees the pending booking, its invoice count and its payment state."""
+    _seed_stage_d_booking(seeded_http.db)
+
+    page = seeded_http.get("/finance", token="tok-finance")
+
+    assert page.status == 200
+    assert 'data-table="finance-pending"' in page.text
+    assert 'data-booking-id="booking-d1"' in page.text
+    assert 'data-invoice-count="0"' in page.text
+    assert 'data-verified-payment=""' in page.text
+    assert INVOICE_FORM in page.text, "invoice issuance must be offered"
+    assert MARK_PAID_FORM not in page.text, "no verified payment, no mark-paid button"
+    assert 'data-note="mark-paid-unavailable"' in page.text
+
+
+def test_confirmation_is_withheld_and_named(seeded_http):
+    """F: the page says plainly why it does not offer a confirmation."""
+    _seed_stage_d_booking(seeded_http.db)
+
+    page = seeded_http.get("/finance", token="tok-finance")
+
+    assert page.status == 200
+    assert 'data-note="confirmation-withheld"' in page.text
+    assert 'action="/bookings/confirm"' not in page.text
+    assert 'name="confirm"' not in page.text
+    refusal = seeded_http.post(
+        "/bookings/confirm", token="tok-finance", form={"form_token": "x" * 64}
+    )
+    assert refusal.status == 405, "there is no confirmation route to call"
+
+
+def test_invoice_is_priced_from_the_accepted_quote(seeded_http):
+    """1 + 2: authorized issuance succeeds and the money matches the quote exactly."""
+    _seed_stage_d_booking(seeded_http.db)
+    before = seeded_http.counts()
+    token = _form_token_from(seeded_http, INVOICE_FORM)
+
+    response = seeded_http.post(
+        "/invoices",
+        token="tok-finance",
+        form={
+            "form_token": token,
+            "booking_id": "booking-d1",
+            "idempotency_key": "idem-inv-1",
+        },
+    )
+
+    assert response.status == 200, response.text[-800:]
+    assert 'data-banner="invoice-issued"' in response.text
+    assert f'data-total-minor="{STAGE_D_TOTAL}"' in response.text
+    rows = _invoice_rows(seeded_http)
+    created = [row for row in rows if row[1] == "booking-d1"]
+    assert len(created) == 1, "satu booking, satu invoice"
+    _, _, subtotal, tax, service, total = created[0]
+    assert (subtotal, tax, service, total) == (
+        STAGE_D_SUBTOTAL,
+        STAGE_D_TAX,
+        STAGE_D_SERVICE,
+        STAGE_D_TOTAL,
+    )
+    lines = list(seeded_http.db.execute(
+        "SELECT kind, amount_minor FROM invoice_lines WHERE invoice_id = ?", (created[0][0],)
+    ))
+    assert sum(row[1] for row in lines) == STAGE_D_TOTAL
+    assert len(lines) == len(STAGE_D_LINES)
+    after = seeded_http.counts()
+    assert after["bookings"] == before["bookings"], "invoicing must not touch the booking"
+
+
+def test_invoice_issuance_replays_instead_of_double_billing(seeded_http):
+    """3: the same idempotency key cannot buy two invoices."""
+    _seed_stage_d_booking(seeded_http.db)
+    token = _form_token_from(seeded_http, INVOICE_FORM)
+    form = {
+        "form_token": token,
+        "booking_id": "booking-d1",
+        "idempotency_key": "idem-inv-replay",
+    }
+
+    first = seeded_http.post("/invoices", token="tok-finance", form=form)
+    second = seeded_http.post("/invoices", token="tok-finance", form=form)
+
+    assert first.status == 200 and second.status == 200
+    assert 'data-replayed="0"' in first.text
+    assert 'data-replayed="1"' in second.text
+    assert len([row for row in _invoice_rows(seeded_http) if row[1] == "booking-d1"]) == 1
+
+
+def test_invoice_refused_for_a_quote_the_guest_never_accepted(seeded_http):
+    """1: an unaccepted quote cannot become a receivable."""
+    _seed_stage_d_booking(seeded_http.db, quote_status="SENT")
+    before = seeded_http.counts()
+    token = _form_token_from(seeded_http, INVOICE_FORM)
+
+    response = seeded_http.post(
+        "/invoices",
+        token="tok-finance",
+        form={"form_token": token, "booking_id": "booking-d1", "idempotency_key": "idem-inv-2"},
+    )
+
+    assert response.status == 400
+    assert 'data-code="QUOTE_NOT_ACCEPTED"' in response.text
+    assert seeded_http.counts() == before, "refusal must leave no invoice behind"
+
+
+def test_invoice_refused_for_a_booking_in_another_tenant(seeded_http):
+    """4: tenant isolation holds at the write, not only at the read."""
+    seeded_http.db.execute(
+        "INSERT INTO agencies (agency_id, name, status, created_at, updated_at)"
+        " VALUES ('agency_other', 'Other Agency', 'ACTIVE',"
+        " '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z')"
+    )
+    _seed_stage_d_booking(seeded_http.db)
+    _seed_stage_d_booking(seeded_http.db, booking_id="booking-other", quote_id="quote-other")
+    seeded_http.db.execute(
+        "UPDATE bookings SET agency_id = 'agency_other' WHERE booking_id = 'booking-other'"
+    )
+    before = seeded_http.counts()
+    token = _form_token_from(seeded_http, INVOICE_FORM)
+
+    response = seeded_http.post(
+        "/invoices",
+        token="tok-finance",
+        form={
+            "form_token": token,
+            "booking_id": "booking-other",
+            "idempotency_key": "idem-inv-3",
+        },
+    )
+
+    assert response.status == 400, response.status
+    assert 'data-code="BOOKING_NOT_FOUND"' in response.text
+    assert seeded_http.counts() == before
+
+
+def _mark_paid_form(
+    token: str,
+    *,
+    booking_id: str = "booking-d1",
+    payment_id: str = "payment-d1",
+    key: str = "idem-paid-1",
+) -> dict:
+    return {
+        "form_token": token,
+        "booking_id": booking_id,
+        "payment_id": payment_id,
+        "idempotency_key": key,
+    }
+
+
+def test_mark_paid_refused_when_the_payment_is_not_verified(seeded_http):
+    """5 + 6: a pending payment is not money, and the booking does not move."""
+    _seed_stage_d_booking(seeded_http.db)
+    _seed_stage_d_invoice(seeded_http.db)
+    _seed_stage_d_payment(seeded_http.db, status="PENDING")
+    # A second booking with no invoice keeps the issuance form on the page, so the
+    # forged request below carries a token a browser could actually have obtained.
+    _seed_stage_d_booking(
+        seeded_http.db, booking_id="booking-extra", quote_id="quote-extra",
+        check_in="2026-12-28", check_out="2026-12-31",
+    )
+    before = _booking_row(seeded_http)
+    token = _form_token_from(seeded_http, INVOICE_FORM)
+
+    response = seeded_http.post(
+        "/payments/mark-paid", token="tok-finance", form=_mark_paid_form(token)
+    )
+
+    assert response.status == 400, response.status
+    assert 'data-code="PAYMENT_NOT_VERIFIED"' in response.text
+    assert _booking_row(seeded_http) == before, "penolakan tidak boleh menyentuh booking"
+
+
+def test_mark_paid_refused_when_the_payment_belongs_to_another_booking(seeded_http):
+    """6 + 13: a verified payment for a different booking authorizes nothing here."""
+    _seed_stage_d_booking(seeded_http.db)
+    _seed_stage_d_invoice(seeded_http.db)
+    _seed_stage_d_booking(
+        seeded_http.db,
+        booking_id="booking-d2",
+        quote_id="quote-d2",
+        check_in="2026-12-20",
+        check_out="2026-12-23",
+        amount_paid_minor=STAGE_D_TOTAL,
+        payment_status="CLEARED_FULL",
+    )
+    _seed_stage_d_invoice(
+        seeded_http.db, invoice_id="invoice-d2", booking_id="booking-d2", number="INV-2026-9002"
+    )
+    _seed_stage_d_payment(seeded_http.db, payment_id="payment-d2", invoice_id="invoice-d2")
+    before = _booking_row(seeded_http)
+    token = _form_token_from(seeded_http, MARK_PAID_FORM)
+
+    response = seeded_http.post(
+        "/payments/mark-paid",
+        token="tok-finance",
+        form=_mark_paid_form(token, payment_id="payment-d2"),
+    )
+
+    assert response.status == 400, response.status
+    assert 'data-code="PAYMENT_NOT_FOR_BOOKING"' in response.text
+    assert _booking_row(seeded_http) == before
+
+
+def test_mark_paid_settles_the_booking_on_a_verified_payment(seeded_http):
+    """7 + 11: verified money moves the booking, and it still is not CONFIRMED."""
+    _seed_stage_d_booking(
+        seeded_http.db, amount_paid_minor=STAGE_D_TOTAL, payment_status="CLEARED_FULL"
+    )
+    _seed_stage_d_invoice(seeded_http.db)
+    _seed_stage_d_payment(seeded_http.db)
+    token = _form_token_from(seeded_http, MARK_PAID_FORM)
+
+    response = seeded_http.post(
+        "/payments/mark-paid", token="tok-finance", form=_mark_paid_form(token)
+    )
+
+    assert response.status == 200, response.text[-800:]
+    assert 'data-banner="booking-paid"' in response.text
+    assert 'data-status="PAID_IN_FULL"' in response.text
+    assert f'data-amount-paid-minor="{STAGE_D_TOTAL}"' in response.text
+    status, paid, payment_status, confirmed_at = _booking_row(seeded_http)
+    assert status == "PAID_IN_FULL" and paid == STAGE_D_TOTAL
+    assert payment_status == "CLEARED_FULL"
+    assert confirmed_at is None, "paid is not confirmed: the block proof is a separate step"
+    state_events = [
+        tuple(row) for row in seeded_http.db.execute(
+            "SELECT from_state, to_state, command, evidence_ref FROM booking_state_events"
+            " WHERE booking_id = 'booking-d1'"
+        )
+    ]
+    assert ("PAYMENT_PENDING", "PAID_IN_FULL", "mark_paid", "payment-d1") in state_events
+
+
+def test_duplicate_mark_paid_does_not_move_the_booking_twice(seeded_http):
+    """9 + 14: the second click is a replay, not a second transition."""
+    _seed_stage_d_booking(
+        seeded_http.db, amount_paid_minor=STAGE_D_TOTAL, payment_status="CLEARED_FULL"
+    )
+    _seed_stage_d_invoice(seeded_http.db)
+    _seed_stage_d_payment(seeded_http.db)
+    token = _form_token_from(seeded_http, MARK_PAID_FORM)
+
+    first = seeded_http.post(
+        "/payments/mark-paid", token="tok-finance", form=_mark_paid_form(token)
+    )
+    after_first = list(seeded_http.db.execute(
+        "SELECT version_lock, amount_paid_minor, status FROM bookings WHERE booking_id = 'booking-d1'"
+    ))
+    second = seeded_http.post(
+        "/payments/mark-paid",
+        token="tok-finance",
+        form=_mark_paid_form(token, key="idem-paid-2"),
+    )
+
+    assert first.status == 200 and second.status == 200
+    assert 'data-replayed="1"' in second.text
+    after_second = list(seeded_http.db.execute(
+        "SELECT version_lock, amount_paid_minor, status FROM bookings WHERE booking_id = 'booking-d1'"
+    ))
+    assert after_second == after_first, "replay must not bump version_lock or the paid mirror"
+    events = list(seeded_http.db.execute(
+        "SELECT command FROM booking_state_events WHERE booking_id = 'booking-d1'"
+        " AND command = 'mark_paid'"
+    ))
+    assert len(events) == 1, "one transition, one event"
+
+
+def test_payment_below_the_policy_deposit_is_refused(seeded_http):
+    """8: money below the policy deposit cannot even buy DEPOSIT_PAID."""
+    below = 300_000  # policy-1 asks for 30% of the total
+    _seed_stage_d_booking(
+        seeded_http.db, amount_paid_minor=below, payment_status="DEPOSIT_CLEARED"
+    )
+    _seed_stage_d_invoice(seeded_http.db)
+    _seed_stage_d_payment(seeded_http.db, amount_minor=below)
+    token = _form_token_from(seeded_http, MARK_PAID_FORM)
+
+    response = seeded_http.post(
+        "/payments/mark-paid", token="tok-finance", form=_mark_paid_form(token)
+    )
+
+    assert response.status == 400, response.status
+    assert 'data-code="PAYMENT_BELOW_DEPOSIT"' in response.text
+    status, _, _, confirmed_at = _booking_row(seeded_http)
+    assert status == "PAYMENT_PENDING" and confirmed_at is None
+
+
+def test_mark_paid_refused_without_a_payment_id(seeded_http):
+    """15: an incomplete request writes nothing at all."""
+    _seed_stage_d_booking(seeded_http.db)
+    _seed_stage_d_invoice(seeded_http.db)
+    _seed_stage_d_booking(
+        seeded_http.db, booking_id="booking-extra", quote_id="quote-extra",
+        check_in="2026-12-28", check_out="2026-12-31",
+    )
+    before = seeded_http.counts()
+    token = _form_token_from(seeded_http, INVOICE_FORM)
+
+    response = seeded_http.post(
+        "/payments/mark-paid",
+        token="tok-finance",
+        form={"form_token": token, "booking_id": "booking-d1", "idempotency_key": "idem-paid-3"},
+    )
+
+    assert response.status == 400
+    assert seeded_http.counts() == before
+
+
+def test_auditor_cannot_issue_an_invoice_or_settle_a_booking(seeded_http):
+    """10: the read-only role reads; it cannot write money."""
+    _seed_stage_d_booking(
+        seeded_http.db, amount_paid_minor=STAGE_D_TOTAL, payment_status="CLEARED_FULL"
+    )
+    _seed_stage_d_invoice(seeded_http.db)
+    _seed_stage_d_payment(seeded_http.db)
+    before = seeded_http.counts()
+    token = _form_token_from(seeded_http, INVOICE_FORM)
+
+    invoice_attempt = seeded_http.post(
+        "/invoices",
+        token="tok-auditor",
+        form={"form_token": token, "booking_id": "booking-d1", "idempotency_key": "idem-inv-aud"},
+    )
+    paid_attempt = seeded_http.post(
+        "/payments/mark-paid", token="tok-auditor", form=_mark_paid_form(token)
+    )
+
+    assert invoice_attempt.status == 403 and paid_attempt.status == 403
+    assert seeded_http.counts() == before
+    assert _booking_row(seeded_http)[0] == "PAYMENT_PENDING"
+
+
+def test_reservation_saw_the_booking_become_paid(seeded_http):
+    """E: the Reservation page reads the paid state the finance step produced."""
+    _seed_stage_d_booking(
+        seeded_http.db, amount_paid_minor=STAGE_D_TOTAL, payment_status="CLEARED_FULL"
+    )
+    _seed_stage_d_invoice(seeded_http.db)
+    _seed_stage_d_payment(seeded_http.db)
+    token = _form_token_from(seeded_http, MARK_PAID_FORM)
+    seeded_http.post("/payments/mark-paid", token="tok-finance", form=_mark_paid_form(token))
+
+    page = seeded_http.get("/inventory", token="tok-reservation")
+
+    assert page.status == 200
+    assert 'data-table="awaiting-payment"' in page.text
+    assert 'data-booking-id="booking-d1"' in page.text
+    assert "PAID_IN_FULL" in page.text

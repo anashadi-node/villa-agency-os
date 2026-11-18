@@ -1,7 +1,14 @@
 <section data-page="finance">
   <h2>Keuangan</h2>
   <p class="hint">{{ money_reference_note }}</p>
+  {{ banner }}
   {{ finance_summary }}
+
+  <h2>Bookings and money</h2>
+  {{ finance_actions_table }}
+  {{ invoice_form }}
+  {{ mark_paid_form }}
+  {{ confirmation_withheld }}
 
   <h2>Invoice</h2>
   {{ invoice_table }}

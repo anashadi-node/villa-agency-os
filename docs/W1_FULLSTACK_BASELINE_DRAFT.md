@@ -184,3 +184,62 @@ commit is the CI run on branch `feat/villa-fullstack-integration`.
 What this does **not** claim: nothing here promotes an OPEN register item to `VERIFIED_COMPLETE`;
 the strict PG HOLD-vs-BOOKING XFAIL (`tests/test_pg_overlap_concurrency.py:756`) remains an
 unresolved production risk, and FR-904 is not production complete.
+
+## 6.2 Stage D — Finance → Reservation (invoice, mark_paid, confirmation withheld)
+
+Scope: the money half of the approved chain, built only from the services that already exist.
+
+```
+PAYMENT_PENDING --issue_from_quote--> INVOICE ISSUED
+                --verified SUCCEEDED payment--> mark_paid --> DEPOSIT_PAID / PAID_IN_FULL
+                --supplier block proof--> confirm_booking --> CONFIRMED   [WITHHELD, gap below]
+```
+
+`InvoiceService.issue_from_quote` prices the invoice from the quote; `ReservationKernel.mark_paid`
+moves the booking. The dashboard adds no service, no state machine, no payment provider and no
+`confirm_from_hold` path. `mark_paid` is offered only for a payment that is already `SUCCEEDED`
+on an invoice of that booking, and the kernel re-checks every condition on its own.
+
+| # | Acceptance | Test | Result |
+|---|---|---|---|
+| 1 | Authorized invoice issuance from an eligible booking/quote | `test_invoice_is_priced_from_the_accepted_quote` | PASS — 200, `data-banner="invoice-issued"` |
+| 2 | Invoice amounts match the approved quote | same test | PASS — `subtotal/tax/service/total` equal the quote's, line sum equals total |
+| 3 | Invoice creation is idempotent | `test_invoice_issuance_replays_instead_of_double_billing` | PASS — one invoice, `data-replayed="1"` |
+| 4 | Wrong-tenant invoice access denied | `test_invoice_refused_for_a_booking_in_another_tenant` | PASS — `BOOKING_NOT_FOUND`, no write |
+| 5 | Missing/invalid payment evidence rejected | `test_mark_paid_refused_when_the_payment_is_not_verified` | PASS — `PAYMENT_NOT_VERIFIED` |
+| 6 | Failed/pending/forged payment cannot mark paid | same test + `test_mark_paid_refused_when_the_payment_belongs_to_another_booking` | PASS — `PAYMENT_NOT_FOR_BOOKING` |
+| 7 | Only a verified SUCCEEDED payment linked to the booking invoice is accepted | `test_mark_paid_settles_the_booking_on_a_verified_payment` | PASS — `PAID_IN_FULL`, `cleared_full`, state event names the payment |
+| 8 | Deposit below the policy amount is refused | `test_payment_below_the_policy_deposit_is_refused` | PASS — `PAYMENT_BELOW_DEPOSIT` (kernel), booking unchanged |
+| 9 | Duplicate `mark_paid` does not duplicate the transition | `test_duplicate_mark_paid_does_not_move_the_booking_twice` | PASS — `replayed=1`, `version_lock` unchanged, one state event |
+| 10 | Unauthorized role cannot mark paid | `test_auditor_cannot_issue_an_invoice_or_settle_a_booking` | PASS — both writes `403`, no rows |
+| 11 | Unpaid booking cannot become CONFIRMED | `test_mark_paid_settles_the_booking_on_a_verified_payment` (`confirmed_at IS NULL`) + `test_confirmation_is_withheld_and_named` (no route) | PASS |
+| 12 | Stale, unrelated or insufficient supplier evidence is rejected | withheld, not exposed | **WITHHELD — see gap** |
+| 13 | Correct supplier block evidence allows authorized confirmation | withheld, not exposed | **WITHHELD — see gap** |
+| 14 | Duplicate confirmation does not corrupt state/audit | not reachable without a confirmation action | **WITHHELD** |
+| 15 | No unauthorized partial writes after a refusal | `test_mark_paid_refused_without_a_payment_id`, `test_invoice_refused_for_a_booking_in_another_tenant`, `test_mark_paid_refused_when_the_payment_is_not_verified` | PASS — table counts unchanged |
+| 16 | No outgoing money or bank details changed | by construction: no payout surface, no bank fields, no provider calls in this slice | PASS |
+| 17 | UI success/error/empty states correct | `test_finance_page_lists_the_booking_waiting_for_money`, refusal assertions in tests 4–10, `data-note="mark-paid-unavailable"` | PASS |
+| 18 | Existing dashboard/finance/authorization/reservation regressions pass | 410 tests incl. language gate | PASS — 0 failed, 0 errors, 0 skipped |
+
+### The confirmation gap (HIGH)
+
+`availability_evidence` stores `unit_id`, `evidence_level`, `source_type`, `source_ref`,
+`captured_at`, `valid_until`, `result`, `restrictions`, `occupancy_ranges`, `can_quote/hold/confirm`.
+It stores **no** `booking_id`, `hold_id`, `check_in` or `check_out`.
+
+`ReservationKernel.confirm_booking` therefore verifies only: same agency, same `unit_id`, level A/B,
+`can_confirm = 1`, `result ∈ {AVAILABLE, AVAILABLE_BUT_RESTRICTED}`, `captured_at ≥ booking.created_at`,
+the hold still `CONFIRMED`, and no overlap in the agency's own ledger. It cannot check that the
+evidence covers the booking's stay, it does not re-check `valid_until` at confirmation time, and
+nothing stops one evidence row from authorising several bookings. `occupancy_ranges` is never read
+by the kernel, so a general `AVAILABLE` result is not proof that the supplier blocked those dates.
+
+Consequence: the confirmation action is **not exposed**. The finance page renders
+`data-note="confirmation-withheld"` stating why, `POST /bookings/confirm` does not exist (405), and
+no kernel or security-policy change was made. Closing it needs an approved contract decision (either
+evidence that carries a stay window plus booking linkage, or an explicit ADR establishing that a
+unit-level `AVAILABLE` with a freshness window is sufficient), which is outside this slice's file scope.
+
+Evidence: 410 tests, **0 failed, 0 errors, 0 skipped**, 151.5 s; `compileall` and `pyflakes` clean;
+`data/villa.db` untouched (all tests use `tmp_path` stores); no payment provider, bank or production
+database is contacted anywhere in the slice.

@@ -2193,7 +2193,8 @@ class Dashboard:
         rows = self._rows(
             "SELECT booking_id, unit_id, check_in, check_out, status, payment_status,"
             " currency, total_minor, amount_paid_minor FROM bookings"
-            " WHERE agency_id = ? AND status IN ('PAYMENT_PENDING','PAYMENT_PARTIAL')"
+            " WHERE agency_id = ?"
+            " AND status IN ('PAYMENT_PENDING','PAYMENT_PARTIAL','DEPOSIT_PAID','PAID_IN_FULL')"
             " ORDER BY created_at DESC",
             (self.agency_id,),
         )
@@ -2201,7 +2202,8 @@ class Dashboard:
             return Markup('<p class="muted" data-note="awaiting-payment-empty">No booking '
                           "is awaiting payment.</p>")
         body = "".join(
-            "<tr>"
+            f'<tr data-booking-id="{escape_value(row["booking_id"])}"'
+            f' data-status="{escape_value(row["status"])}">'
             f"<td>{escape_value(row['booking_id'])}</td>"
             f"<td>{escape_value(row['unit_id'])}</td>"
             f"<td>{escape_value(row['check_in'])} → {escape_value(row['check_out'])}</td>"
@@ -2213,11 +2215,136 @@ class Dashboard:
             for row in rows
         )
         return Markup(
-            "<h3>Bookings awaiting payment</h3>"
+            "<h3>Bookings after conversion</h3>"
             '<table data-table="awaiting-payment"><thead><tr>'
             "<th>Booking</th><th>Unit</th><th>Dates</th><th>Status</th>"
             "<th>Payment</th><th>Total</th><th>Paid</th>"
             f"</tr></thead><tbody>{body}</tbody></table>"
+        )
+
+    # -- Stage D: the payment half of the booking chain (read + two actions) -- #
+    def _pending_bookings(self) -> list[Any]:
+        """Bookings whose money is still moving, with their invoice and payment facts.
+
+        Read-only. The join answers one question per row: does this booking have an
+        invoice, and does any ``SUCCEEDED`` payment hang off that invoice? A payment on
+        some other booking's invoice is deliberately invisible here.
+        """
+        return self._rows(
+            "SELECT b.booking_id, b.unit_id, b.check_in, b.check_out, b.status, b.currency,"
+            " b.total_minor, b.amount_paid_minor, b.quote_ref,"
+            " (SELECT COUNT(*) FROM invoices i WHERE i.booking_id = b.booking_id"
+            "   AND i.agency_id = b.agency_id AND i.status <> 'VOID') AS invoice_count,"
+            " (SELECT p.payment_id FROM payments p"
+            "   JOIN invoices i2 ON i2.invoice_id = p.invoice_id"
+            "   WHERE i2.booking_id = b.booking_id AND i2.agency_id = b.agency_id"
+            "     AND p.agency_id = b.agency_id AND p.status = 'SUCCEEDED'"
+            "   ORDER BY p.settled_at DESC LIMIT 1) AS verified_payment_id"
+            " FROM bookings b WHERE b.agency_id = ?"
+            "   AND b.status IN ('PAYMENT_PENDING','PAYMENT_PARTIAL','DEPOSIT_PAID')"
+            " ORDER BY b.created_at DESC LIMIT 100",
+            (self.agency_id,),
+        )
+
+    def _finance_actions_table(self) -> Markup:
+        rows = self._pending_bookings()
+        if not rows:
+            return Markup('<p class="muted" data-note="finance-pending-empty">No booking is '
+                          "waiting for money.</p>")
+        body = "".join(
+            f'<tr data-booking-id="{escape_value(row["booking_id"])}"'
+            f' data-status="{escape_value(row["status"])}"'
+            f' data-invoice-count="{int(row["invoice_count"])}"'
+            f' data-verified-payment="{escape_value(row["verified_payment_id"] or "")}">'
+            f"<td>{escape_value(row['booking_id'])}</td>"
+            f"<td>{escape_value(row['unit_id'])}</td>"
+            f"<td>{escape_value(row['check_in'])} → {escape_value(row['check_out'])}</td>"
+            f"<td>{escape_value(row['status'])}</td>"
+            f"<td>{int(row['invoice_count'])}</td>"
+            f"<td>{escape_value(row['verified_payment_id'] or '—')}</td>"
+            f"<td>{escape_value(format_money(row['total_minor'], str(row['currency'])))}</td>"
+            f"<td>{escape_value(format_money(row['amount_paid_minor'], str(row['currency'])))}</td>"
+            "</tr>"
+            for row in rows
+        )
+        return Markup(
+            "<h3>Bookings waiting on money</h3>"
+            '<table data-table="finance-pending"><thead><tr>'
+            "<th>Booking</th><th>Unit</th><th>Dates</th><th>Status</th><th>Invoices</th>"
+            "<th>Verified payment</th><th>Total</th><th>Paid</th>"
+            f"</tr></thead><tbody>{body}</tbody></table>"
+        )
+
+    def _invoice_issue_form(self, principal: Principal) -> Markup:
+        eligible = [
+            row
+            for row in self._pending_bookings()
+            if row["quote_ref"]
+            and int(row["invoice_count"]) == 0
+            and row["status"] in ("PAYMENT_PENDING", "PAYMENT_PARTIAL")
+        ]
+        if not eligible:
+            return Markup('<p class="muted" data-note="invoice-unavailable">No booking needs an '
+                          "invoice right now.</p>")
+        options = "".join(
+            f'<option value="{escape_value(row["booking_id"])}">'
+            f"{escape_value(row['booking_id'])} · {escape_value(row['unit_id'])} "
+            f"{escape_value(row['check_in'])} → {escape_value(row['check_out'])} · "
+            f"{escape_value(format_money(row['total_minor'], str(row['currency'])))}</option>"
+            for row in eligible
+        )
+        return Markup(
+            '<form method="post" action="/invoices" data-form="issue-invoice">'
+            f'<input type="hidden" name="{FORM_TOKEN_FIELD}" '
+            f'value="{escape_value(self.form_token_for(principal))}">'
+            "<h3>Issue the invoice for a booking</h3>"
+            f'<p><label>Booking <select name="booking_id" required>{options}</select></label></p>'
+            '<p><label>Idempotency key <input name="idempotency_key" required minlength="8" '
+            'maxlength="64"></label> <button type="submit">Issue invoice</button></p>'
+            '<p class="muted" data-note="invoice-scope">The invoice is priced from the quote this '
+            "booking was reserved from. The operator picks the booking, not the amount.</p>"
+            "</form>"
+        )
+
+    def _mark_paid_form(self, principal: Principal) -> Markup:
+        eligible = [row for row in self._pending_bookings() if row["verified_payment_id"]]
+        if not eligible:
+            return Markup('<p class="muted" data-note="mark-paid-unavailable">No verified payment '
+                          "is waiting to be applied.</p>")
+        token = escape_value(self.form_token_for(principal))
+        forms = "".join(
+            '<form method="post" action="/payments/mark-paid" data-form="mark-paid"'
+            f' data-booking-id="{escape_value(row["booking_id"])}"'
+            f' data-payment-id="{escape_value(row["verified_payment_id"])}">'
+            f'<input type="hidden" name="{FORM_TOKEN_FIELD}" value="{token}">'
+            f'<input type="hidden" name="booking_id" value="{escape_value(row["booking_id"])}">'
+            f'<input type="hidden" name="payment_id" value="{escape_value(row["verified_payment_id"])}">'
+            f"<p><strong>{escape_value(row['booking_id'])}</strong> · "
+            f"{escape_value(row['unit_id'])} · "
+            f"{escape_value(row['check_in'])} → {escape_value(row['check_out'])} · "
+            f"{escape_value(format_money(row['total_minor'], str(row['currency'])))} · "
+            f"payment {escape_value(row['verified_payment_id'])} "
+            '<label>Idempotency key <input name="idempotency_key" required minlength="8" '
+            'maxlength="64"></label> <button type="submit">Mark paid</button></p></form>'
+            for row in eligible
+        )
+        return Markup(
+            "<h3>Verified payments waiting for Finance</h3>"
+            f"{forms}"
+            '<p class="muted" data-note="mark-paid-scope">Only a payment the payment service '
+            "already settled as SUCCEEDED appears here. This button records Finance's decision on "
+            "money that arrived; it never moves money and never confirms a booking.</p>"
+        )
+
+    def _invoice_banner(self, row: Any, *, replayed: bool) -> Markup:
+        return Markup(
+            f'<p class="ok" role="status" data-banner="invoice-issued"'
+            f' data-invoice-id="{escape_value(row["invoice_id"])}"'
+            f' data-total-minor="{escape_value(row["total_minor"])}"'
+            f' data-replayed="{int(replayed)}">'
+            f"Invoice {escape_value(row['invoice_number'] or row['invoice_id'])} issued for "
+            f"{escape_value(format_money(row['total_minor'], str(row['currency'])))}"
+            f"{' — a replay, no second invoice was written' if replayed else ''}.</p>"
         )
 
     @staticmethod
@@ -2391,6 +2518,19 @@ class Dashboard:
             # is empty so nothing is claimed when no fresh published rate exists.
             "money_reference_note": escape_value(
                 money_display_module.footnote(source, today=self.clock.now())
+            ),
+            # Stage D: the payment side of the booking chain, plus the one action this
+            # slice deliberately withholds (and why). Every number here is read-only.
+            "banner": Markup(""),
+            "finance_actions_table": self._finance_actions_table(),
+            "invoice_form": self._invoice_issue_form(principal),
+            "mark_paid_form": self._mark_paid_form(principal),
+            "confirmation_withheld": Markup(
+                '<p class="muted" data-note="confirmation-withheld">Final confirmation is not '
+                "offered here: availability evidence proves a unit was available to a source, "
+                "but the contract records no stay window and no booking link, so it cannot "
+                "prove the supplier blocked this booking's dates. Confirmation stays with "
+                "ReservationKernel.confirm_booking until that gap is closed.</p>"
             ),
         }
 
@@ -3270,14 +3410,23 @@ class Dashboard:
         if segments == ["bookings"]:
             self.require_page("inventory", principal)
             return self.post_booking_request(request, principal)
+        if segments == ["invoices"]:
+            self.require_page("finance", principal)
+            return self.post_invoice_request(request, principal)
+        if segments == ["payments", "mark-paid"]:
+            self.require_page("finance", principal)
+            return self.post_mark_paid_request(request, principal)
         raise MethodNotAllowed(
-            "POST is only available for approval actions, hold requests and booking conversion",
+            "POST is only available for approval actions, hold requests, booking conversion, "
+            "invoice issuance and mark-paid",
             path="/" + "/".join(segments),
             allowed=[
                 "POST /approvals",
                 "POST /approvals/<id>/decide",
                 "POST /holds",
                 "POST /bookings",
+                "POST /invoices",
+                "POST /payments/mark-paid",
             ],
         )
 
@@ -3547,6 +3696,207 @@ class Dashboard:
             "</p>"
         )
         return _Response(200, self.render("inventory", principal, context), page="inventory")
+
+    # ------------------------------------------------------------------ #
+    # Stage D writes: invoice issuance and Finance's mark-paid
+    # ------------------------------------------------------------------ #
+    def _invoicing(self) -> Any:
+        """An InvoiceService on this request's connection, scoped to this tenant.
+
+        Imported lazily for the same reason the kernel is: a read-only dashboard process
+        should not need the write-side module to start.
+        """
+        from invoicing import InvoiceService
+
+        return InvoiceService(self.conn, clock=self.clock, agency_id=self.agency_id)
+
+    def _finance_refusal(self, principal: Principal, exc: DomainError, *, banner: str) -> _Response:
+        context = self.view_finance(principal)
+        label = "Invoice refused" if banner == "invoice-refused" else "Payment refused"
+        context["banner"] = Markup(
+            f'<p class="err" role="alert" data-banner="{escape_value(banner)}"'
+            f' data-code="{escape_value(exc.code)}">'
+            f"{label}: {escape_value(exc.message)} (code {escape_value(exc.code)})."
+            f"{' Nothing was issued.' if banner == 'invoice-refused' else ' Nothing moved.'}</p>"
+        )
+        return _Response(status_for(exc), self.render("finance", principal, context), page="finance")
+
+    def post_invoice_request(self, request: "_Request", principal: Principal) -> _Response:
+        """Issue the invoice this booking's accepted quote describes (ADR-0033 §2.2).
+
+        The operator names a booking; the amounts come from the quote the booking was
+        reserved from. ``InvoiceService.issue_from_quote`` re-derives and cross-checks
+        the totals, so a UI request cannot invent a price.
+        """
+        self._require_form_token(request, principal)
+        if not principal.may_write:
+            raise Forbidden("this role is read-only", role=principal.role)
+        key = self._require_idempotency(request)
+        booking_id = str(request.option("booking_id") or "").strip()
+        if not booking_id:
+            raise InvalidInput("booking is required", field="booking_id")
+        try:
+            banner = self._issue_invoice(booking_id, key, principal)
+        except DomainError as exc:
+            return self._finance_refusal(principal, exc, banner="invoice-refused")
+        context = self.view_finance(principal)
+        context["banner"] = banner
+        return _Response(200, self.render("finance", principal, context), page="finance")
+
+    def _issue_invoice(self, booking_id: str, key: str, principal: Principal) -> Markup:
+        rows = self._rows(
+            "SELECT * FROM bookings WHERE booking_id = ? AND agency_id = ?",
+            (booking_id, self.agency_id),
+        )
+        if not rows:
+            raise DomainError("unknown booking", code="BOOKING_NOT_FOUND", booking_id=booking_id)
+        booking = rows[0]
+        if booking["status"] not in ("PAYMENT_PENDING", "PAYMENT_PARTIAL"):
+            raise DomainError(
+                "only a booking awaiting payment can be invoiced",
+                code="BOOKING_NOT_AWAITING_PAYMENT",
+                status=booking["status"],
+            )
+        existing = self._rows(
+            "SELECT * FROM invoices WHERE booking_id = ? AND agency_id = ?"
+            " AND status <> 'VOID' ORDER BY issued_at DESC",
+            (booking_id, self.agency_id),
+        )
+        if existing:
+            replay = self._rows(
+                "SELECT result_ref FROM idempotency_keys WHERE idempotency_key = ?"
+                " AND agency_id = ?",
+                (key, self.agency_id),
+            )
+            if replay and str(replay[0]["result_ref"]) == str(existing[0]["invoice_id"]):
+                return self._invoice_banner(existing[0], replayed=True)
+            raise DomainError(
+                "this booking already has an invoice; void it before issuing another",
+                code="INVOICE_ALREADY_ISSUED",
+                invoice_id=existing[0]["invoice_id"],
+            )
+        if not booking["quote_ref"]:
+            raise DomainError(
+                "the booking records no accepted quote to price an invoice from",
+                code="QUOTE_REQUIRED",
+                booking_id=booking_id,
+            )
+        quotes = self._rows(
+            "SELECT * FROM quotes WHERE quote_id = ? AND agency_id = ?",
+            (booking["quote_ref"], self.agency_id),
+        )
+        if not quotes:
+            raise DomainError(
+                "unknown quote", code="QUOTE_NOT_FOUND", quote_id=booking["quote_ref"]
+            )
+        quote = quotes[0]
+        if quote["status"] != "ACCEPTED":
+            raise DomainError(
+                "only an accepted quote can be invoiced",
+                code="QUOTE_NOT_ACCEPTED",
+                status=quote["status"],
+            )
+        if (quote["unit_id"], quote["check_in"], quote["check_out"], quote["currency"]) != (
+            booking["unit_id"],
+            booking["check_in"],
+            booking["check_out"],
+            booking["currency"],
+        ):
+            raise DomainError(
+                "the quote does not describe this booking's unit, stay and currency",
+                code="QUOTE_BOOKING_MISMATCH",
+                booking_id=booking_id,
+                quote_id=quote["quote_id"],
+            )
+        invoice = self._invoicing().issue_from_quote(
+            quote={
+                "lines": json.loads(quote["lines"]),
+                "currency": quote["currency"],
+                "policy_fingerprint": quote["policy_fingerprint"],
+                "subtotal": int(quote["subtotal_minor"]),
+                "service_fee": int(quote["service_fee_minor"]),
+                "tax": int(quote["tax_minor"]),
+                "total": int(quote["total_minor"]),
+            },
+            booking_id=booking_id,
+            idempotency_key=key,
+            actor=principal.identity,
+            actor_role=principal.role,
+        )
+        stored = self._rows(
+            "SELECT * FROM invoices WHERE invoice_id = ? AND agency_id = ?",
+            (invoice.invoice_id, self.agency_id),
+        )[0]
+        return self._invoice_banner(stored, replayed=False)
+
+    def post_mark_paid_request(self, request: "_Request", principal: Principal) -> _Response:
+        """Finance's step: apply a verified payment to the booking it pays for.
+
+        The dashboard refuses anything the kernel would refuse, and the kernel decides
+        anyway. ``SUCCEEDED`` is only ever written by ``payments.PaymentService`` from a
+        verified provider event or a reconciled bank line — never by this handler.
+        """
+        self._require_form_token(request, principal)
+        if not principal.may_write:
+            raise Forbidden("this role is read-only", role=principal.role)
+        key = self._require_idempotency(request)
+        booking_id = str(request.option("booking_id") or "").strip()
+        payment_id = str(request.option("payment_id") or "").strip()
+        missing = [name for name, value in (("booking_id", booking_id), ("payment_id", payment_id)) if not value]
+        if missing:
+            raise InvalidInput("booking and payment are required", missing=missing)
+        try:
+            evidence = self._rows(
+                "SELECT p.status AS status FROM payments p"
+                " JOIN invoices i ON i.invoice_id = p.invoice_id"
+                " WHERE p.payment_id = ? AND p.agency_id = ? AND i.booking_id = ?"
+                " AND i.agency_id = ?",
+                (payment_id, self.agency_id, booking_id, self.agency_id),
+            )
+            if not evidence:
+                raise DomainError(
+                    "the payment does not belong to an invoice of this booking",
+                    code="PAYMENT_NOT_FOR_BOOKING",
+                    payment_id=payment_id,
+                )
+            if evidence[0]["status"] != "SUCCEEDED":
+                raise DomainError(
+                    "only a verified (SUCCEEDED) payment can move a booking",
+                    code="PAYMENT_NOT_VERIFIED",
+                    payment_id=payment_id,
+                    status=evidence[0]["status"],
+                )
+            outcome = self._reservation_kernel(principal).mark_paid(
+                booking_id=booking_id,
+                payment_id=payment_id,
+                command_id=f"dash-paid-{key}",
+                actor=principal.identity,
+                actor_role=principal.role,
+            )
+        except DomainError as exc:
+            return self._finance_refusal(principal, exc, banner="payment-refused")
+        # The kernel returns the booking's money *due*; the money *paid* is the booking's
+        # own mirror. Read it back rather than compute it here.
+        paid_rows = self._rows(
+            "SELECT status, amount_paid_minor, currency, total_minor FROM bookings"
+            " WHERE booking_id = ? AND agency_id = ?",
+            (booking_id, self.agency_id),
+        )
+        paid = paid_rows[0]
+        context = self.view_finance(principal)
+        context["banner"] = Markup(
+            f'<p class="ok" role="status" data-banner="booking-paid"'
+            f' data-booking-id="{escape_value(booking_id)}"'
+            f" data-status=\"{escape_value(paid['status'])}\""
+            f" data-amount-paid-minor=\"{escape_value(paid['amount_paid_minor'])}\""
+            f' data-replayed="{int(outcome.replayed)}">'
+            f"Booking {escape_value(booking_id)} is {escape_value(paid['status'])}; "
+            f"paid {escape_value(format_money(paid['amount_paid_minor'], str(paid['currency'])))} of "
+            f"{escape_value(format_money(paid['total_minor'], str(paid['currency'])))}"
+            f"{' — a replay, no state moved again' if outcome.replayed else ''}."
+            " Confirmation is a separate action this page does not offer.</p>"
+        )
+        return _Response(200, self.render("finance", principal, context), page="finance")
 
     # ------------------------------------------------------------------ #
     # Error pages / dump
