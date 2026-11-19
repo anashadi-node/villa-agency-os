@@ -376,76 +376,6 @@ CREATE TABLE availability_evidence (
 CREATE INDEX ix_evidence_unit ON availability_evidence (unit_id, captured_at);
 
 -- --------------------------------------------------------------------------
--- Supplier block proofs (ADR-0073) — the booking-scoped half of ADR-0069
--- --------------------------------------------------------------------------
--- ADR-0069 said a `CONFIRMED` booking needs "the villa's block proof", and pointed at
--- `availability_evidence`. That table answers a *unit-level* question ("is this villa free
--- right now?"); it carries no booking, no stay window and no supplier. So an AVAILABLE
--- answer for the unit could close a booking for dates nobody blocked, and the same answer
--- could close two bookings. This table is the missing join: one row binds one authenticated
--- supply-side answer to one booking, one unit, one stay window and one authorised supplier
--- relationship, verified by a named human.
---
--- Deliberate choices:
---   * Nothing is updated in place. A proof is written once; a wrong proof is revoked with a
---     reason (`revoked_at`/`revoked_by`/`revoke_reason`), which the CHECK forces to be
---     complete or absent. Correction is a new row, so the audit trail keeps both.
---   * `uq_sbp_evidence` (UNIQUE on evidence_id) makes reuse structurally impossible: one
---     availability answer can back exactly one booking, ever. That is the "general AVAILABLE
---     result must not authorise a second booking" rule as a database constraint rather than
---     a reviewer's memory.
---   * `ux_sbp_active_booking` is a partial unique index: at most one *live* proof per booking,
---     while revoked rows stay behind as history.
---   * The stay window is copied from the booking and re-checked against it in the kernel, so
---     a proof for different dates can exist but can never close this booking.
---   * The human verifier is mandatory. An uploaded document (`evidence_object_id`, optional)
---     is provenance, never verification: no row can be written without `verified_by`,
---     `verification_method` and `verified_at`.
-CREATE TABLE supplier_block_proofs (
-    proof_id            TEXT    NOT NULL,
-    agency_id           TEXT    NOT NULL DEFAULT 'agency_default',
-    booking_id          TEXT    NOT NULL,
-    unit_id             TEXT    NOT NULL,
-    check_in            TEXT    NOT NULL,
-    check_out           TEXT    NOT NULL,
-    supplier_id         TEXT    NOT NULL,
-    relationship_id     TEXT    NOT NULL,
-    evidence_id         TEXT    NOT NULL,
-    evidence_object_id  TEXT,
-    verification_method TEXT    NOT NULL CHECK (verification_method IN (
-                            'SUPPLIER_PORTAL','SUPPLIER_API','SUPPLIER_EMAIL',
-                            'MANAGER_CALL','MANAGER_WRITTEN')),
-    verified_by         TEXT    NOT NULL CHECK (length(verified_by) >= 3),
-    verified_at         TEXT    NOT NULL,
-    expires_at          TEXT    NOT NULL,
-    notes               TEXT,
-    revoked_at          TEXT,
-    revoked_by          TEXT,
-    revoke_reason       TEXT,
-    created_at          TEXT    NOT NULL,
-    CONSTRAINT pk_supplier_block_proofs PRIMARY KEY (proof_id),
-    CONSTRAINT fk_sbp_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
-    CONSTRAINT fk_sbp_booking FOREIGN KEY (booking_id) REFERENCES bookings (booking_id),
-    CONSTRAINT fk_sbp_unit FOREIGN KEY (unit_id) REFERENCES units (unit_id),
-    CONSTRAINT fk_sbp_supplier FOREIGN KEY (supplier_id) REFERENCES suppliers (supplier_id),
-    CONSTRAINT fk_sbp_relationship FOREIGN KEY (relationship_id)
-        REFERENCES villa_supplier_relationships (villa_supplier_relationship_id),
-    CONSTRAINT fk_sbp_evidence FOREIGN KEY (evidence_id)
-        REFERENCES availability_evidence (evidence_id),
-    CONSTRAINT fk_sbp_evidence_object FOREIGN KEY (evidence_object_id)
-        REFERENCES evidence_objects (evidence_id),
-    CONSTRAINT ck_sbp_stay_window CHECK (check_in < check_out),
-    CONSTRAINT ck_sbp_expiry_after_verification CHECK (expires_at > verified_at),
-    CONSTRAINT ck_sbp_revocation_complete CHECK (
-        revoked_at IS NULL OR (revoked_by IS NOT NULL AND length(revoke_reason) >= 3)),
-    CONSTRAINT uq_sbp_evidence UNIQUE (evidence_id)
-);
-CREATE UNIQUE INDEX ux_sbp_active_booking ON supplier_block_proofs (booking_id)
-    WHERE revoked_at IS NULL;
-CREATE INDEX ix_sbp_booking ON supplier_block_proofs (agency_id, booking_id);
-CREATE INDEX ix_sbp_unit_window ON supplier_block_proofs (agency_id, unit_id, check_in, check_out);
-
--- --------------------------------------------------------------------------
 -- Availability checks (§7): the request half of CHECK AVAILABILITY
 -- --------------------------------------------------------------------------
 -- §7 opens with CLIENT INQUIRY -> CHECK AVAILABILITY, and Appendix A lists
@@ -2254,6 +2184,115 @@ CREATE TABLE agency_role_holders (
     CONSTRAINT uq_agency_role_holders UNIQUE (agency_id, role_id, holder_ref)
 );
 CREATE INDEX ix_agency_role_holders_ref ON agency_role_holders (agency_id, holder_ref, status);
+
+-- --------------------------------------------------------------------------
+-- Supplier block proofs (ADR-0073) — the booking-scoped half of ADR-0069
+-- --------------------------------------------------------------------------
+-- ADR-0069 said a `CONFIRMED` booking needs "the villa's block proof", and pointed at
+-- `availability_evidence`. That table answers a *unit-level* question ("is this villa free
+-- right now?"); it carries no booking, no stay window and no supplier. So an AVAILABLE
+-- answer for the unit could close a booking for dates nobody blocked, and the same answer
+-- could close two bookings. This table is the missing join: one row binds one authenticated
+-- supply-side answer to one booking, one unit, one stay window and one authorised supplier
+-- relationship, verified by a named human.
+--
+-- Deliberate choices:
+--   * Nothing is updated in place. A proof is written once; a wrong proof is revoked with a
+--     reason (`revoked_at`/`revoked_by`/`revoke_reason`), which the CHECK forces to be
+--     complete or absent. Correction is a new row, so the audit trail keeps both.
+--   * `uq_sbp_evidence` (UNIQUE on evidence_id) makes reuse structurally impossible: one
+--     availability answer can back exactly one booking, ever. That is the "general AVAILABLE
+--     result must not authorise a second booking" rule as a database constraint rather than
+--     a reviewer's memory.
+--   * `ux_sbp_active_booking` is a partial unique index: at most one *live* proof per booking,
+--     while revoked rows stay behind as history.
+--   * The stay window is copied from the booking and re-checked against it in the kernel, so
+--     a proof for different dates can exist but can never close this booking.
+--   * The human verifier is mandatory. An uploaded document (`evidence_object_id`, optional)
+--     is provenance, never verification: no row can be written without `verified_by`,
+--     `verification_method` and `verified_at`.
+CREATE TABLE supplier_block_proofs (
+    proof_id            TEXT    NOT NULL,
+    agency_id           TEXT    NOT NULL DEFAULT 'agency_default',
+    booking_id          TEXT    NOT NULL,
+    unit_id             TEXT    NOT NULL,
+    check_in            TEXT    NOT NULL,
+    check_out           TEXT    NOT NULL,
+    supplier_id         TEXT    NOT NULL,
+    relationship_id     TEXT    NOT NULL,
+    evidence_id         TEXT    NOT NULL,
+    evidence_object_id  TEXT,
+    verification_method TEXT    NOT NULL CHECK (verification_method IN (
+                            'SUPPLIER_PORTAL','SUPPLIER_API','SUPPLIER_EMAIL',
+                            'MANAGER_CALL','MANAGER_WRITTEN')),
+    verified_by         TEXT    NOT NULL CHECK (length(verified_by) >= 3),
+    verified_at         TEXT    NOT NULL,
+    expires_at          TEXT    NOT NULL,
+    notes               TEXT,
+    revoked_at          TEXT,
+    revoked_by          TEXT,
+    revoke_reason       TEXT,
+    created_at          TEXT    NOT NULL,
+    CONSTRAINT pk_supplier_block_proofs PRIMARY KEY (proof_id),
+    CONSTRAINT fk_sbp_agency FOREIGN KEY (agency_id) REFERENCES agencies (agency_id),
+    CONSTRAINT fk_sbp_booking FOREIGN KEY (booking_id) REFERENCES bookings (booking_id),
+    CONSTRAINT fk_sbp_unit FOREIGN KEY (unit_id) REFERENCES units (unit_id),
+    CONSTRAINT fk_sbp_supplier FOREIGN KEY (supplier_id) REFERENCES suppliers (supplier_id),
+    CONSTRAINT fk_sbp_relationship FOREIGN KEY (relationship_id)
+        REFERENCES villa_supplier_relationships (villa_supplier_relationship_id),
+    CONSTRAINT fk_sbp_evidence FOREIGN KEY (evidence_id)
+        REFERENCES availability_evidence (evidence_id),
+    CONSTRAINT fk_sbp_evidence_object FOREIGN KEY (evidence_object_id)
+        REFERENCES evidence_objects (evidence_id),
+    CONSTRAINT ck_sbp_stay_window CHECK (check_in < check_out),
+    CONSTRAINT ck_sbp_expiry_after_verification CHECK (expires_at > verified_at),
+    CONSTRAINT ck_sbp_revocation_complete CHECK (
+        revoked_at IS NULL OR (revoked_by IS NOT NULL AND length(revoke_reason) >= 3)),
+    CONSTRAINT uq_sbp_evidence UNIQUE (evidence_id)
+);
+CREATE UNIQUE INDEX ux_sbp_active_booking ON supplier_block_proofs (booking_id)
+    WHERE revoked_at IS NULL;
+CREATE INDEX ix_sbp_booking ON supplier_block_proofs (agency_id, booking_id);
+CREATE INDEX ix_sbp_unit_window ON supplier_block_proofs (agency_id, unit_id, check_in, check_out);
+
+-- A proof may not be rewritten. The only permitted UPDATE is the one-way move from
+-- "live" to "revoked", and even that may not touch any other column — otherwise a
+-- plain UPDATE could re-point a live proof at another booking and reuse prevention
+-- would hold only for INSERTs.
+-- twin:revoke-only
+CREATE TRIGGER trg_supplier_block_proofs_revoke_only
+BEFORE UPDATE ON supplier_block_proofs
+BEGIN
+    SELECT RAISE(ABORT, 'supplier_block_proofs is immutable except revocation')
+    WHERE NOT (
+        OLD.revoked_at IS NULL
+        AND NEW.revoked_at IS NOT NULL
+        AND NEW.revoked_by IS NOT NULL
+        AND NEW.revoke_reason IS NOT NULL
+        AND NEW.proof_id IS OLD.proof_id
+        AND NEW.agency_id IS OLD.agency_id
+        AND NEW.booking_id IS OLD.booking_id
+        AND NEW.unit_id IS OLD.unit_id
+        AND NEW.check_in IS OLD.check_in
+        AND NEW.check_out IS OLD.check_out
+        AND NEW.supplier_id IS OLD.supplier_id
+        AND NEW.relationship_id IS OLD.relationship_id
+        AND NEW.evidence_id IS OLD.evidence_id
+        AND NEW.evidence_object_id IS OLD.evidence_object_id
+        AND NEW.verification_method IS OLD.verification_method
+        AND NEW.verified_by IS OLD.verified_by
+        AND NEW.verified_at IS OLD.verified_at
+        AND NEW.expires_at IS OLD.expires_at
+        AND NEW.notes IS OLD.notes
+        AND NEW.created_at IS OLD.created_at
+    );
+END;
+
+CREATE TRIGGER trg_supplier_block_proofs_no_delete
+BEFORE DELETE ON supplier_block_proofs
+BEGIN
+    SELECT RAISE(ABORT, 'supplier_block_proofs is append-only (DELETE rejected)');
+END;
 
 INSERT INTO agencies (agency_id, name, status, created_at, updated_at)
 VALUES ('agency_default', 'Default Agency', 'ACTIVE', '2026-09-21T00:00:00+00:00', '2026-09-21T00:00:00+00:00');

@@ -45,6 +45,9 @@ HEADER = """\
 --     with the SAME name, table and event, calling the shared plpgsql function
 --     villa_reject_mutation(). The function is created once, before the first
 --     trigger.
+--   * Revocation guards: a SQLite trigger marked `twin:revoke-only` becomes the
+--     same trigger calling villa_revoke_only(), which permits the NULL -> value
+--     move of revoked_at/revoked_by/revoke_reason and refuses every other UPDATE.
 --   * "PRAGMA foreign_keys = ON" is SQLite-only (PostgreSQL enforces foreign
 --     keys natively).
 -- Everything else — tables, column order, nullability, defaults, primary keys,
@@ -61,6 +64,30 @@ BEGIN
 END;
 $$"""
 
+# Triggers whose SQLite body carries the marker `twin:revoke-only` allow exactly one
+# transition: the three revocation columns move from NULL to a value and nothing else
+# changes. The PostgreSQL twin of that rule compares the rows with the revocation
+# columns removed, so the guard does not have to enumerate every table's columns.
+REVOKE_ONLY_MARKER = "twin:revoke-only"
+REVOKE_ONLY_FUNCTION = """\
+CREATE FUNCTION villa_revoke_only() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    allowed boolean;
+BEGIN
+    allowed := OLD.revoked_at IS NULL
+        AND NEW.revoked_at IS NOT NULL
+        AND NEW.revoked_by IS NOT NULL
+        AND NEW.revoke_reason IS NOT NULL
+        AND (to_jsonb(NEW) - 'revoked_at' - 'revoked_by' - 'revoke_reason')
+          = (to_jsonb(OLD) - 'revoked_at' - 'revoked_by' - 'revoke_reason');
+    IF NOT allowed THEN
+        RAISE EXCEPTION 'table % is immutable except revocation', TG_TABLE_NAME
+            USING ERRCODE = 'raise_exception';
+    END IF;
+    RETURN NEW;
+END;
+$$"""
+
 _TRIGGER_RE = re.compile(
     r"CREATE\s+TRIGGER\s+([A-Za-z_][A-Za-z0-9_]*)\s+"
     r"(BEFORE|AFTER)\s+(INSERT|UPDATE|DELETE)\s+ON\s+([A-Za-z_][A-Za-z0-9_]*)",
@@ -74,13 +101,15 @@ def _split_leading_comments(raw: str) -> tuple[str, str]:
     return raw[: len(raw) - len(body)], body
 
 
-def _pg_trigger(name: str, timing: str, event: str, table: str) -> str:
+def _pg_trigger(
+    name: str, timing: str, event: str, table: str, function: str = "villa_reject_mutation"
+) -> str:
     # PostgreSQL requires an explicit timing keyword (BEFORE / AFTER / INSTEAD OF);
     # the SQLite source already carries it, so it is copied verbatim.
     return (
         f"CREATE TRIGGER {name}\n"
         f"    {timing.upper()} {event.upper()} ON {table}\n"
-        f"    FOR EACH ROW EXECUTE FUNCTION villa_reject_mutation()"
+        f"    FOR EACH ROW EXECUTE FUNCTION {function}()"
     )
 
 
@@ -88,6 +117,7 @@ def generate(sqlite_sql: str) -> str:
     """Return the PostgreSQL twin text for ``sqlite_sql``."""
     out: list[str] = [HEADER]
     reject_emitted = False
+    revoke_only_emitted = False
     stats = {"tables": 0, "indexes": 0, "triggers": 0, "inserts": 0}
 
     for raw in split_statements(sqlite_sql):
@@ -113,7 +143,15 @@ def generate(sqlite_sql: str) -> str:
             if not reject_emitted:
                 out.append(REJECT_FUNCTION)
                 reject_emitted = True
-            out.append(f"{comments}{_pg_trigger(name, timing, event, table)}")
+            if REVOKE_ONLY_MARKER in comments:
+                if not revoke_only_emitted:
+                    out.append(REVOKE_ONLY_FUNCTION)
+                    revoke_only_emitted = True
+                out.append(
+                    f"{comments}{_pg_trigger(name, timing, event, table, 'villa_revoke_only')}"
+                )
+            else:
+                out.append(f"{comments}{_pg_trigger(name, timing, event, table)}")
             stats["triggers"] += 1
             continue
 

@@ -15,6 +15,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 
@@ -39,7 +41,7 @@ def _run(*args: str, env: dict | None = None) -> subprocess.CompletedProcess:
     )
 
 
-def _old_database(path: Path) -> None:
+def _old_database(path: Path, *, skip_statements_mentioning: tuple[str, ...] = ()) -> None:
     """A database as it looked before the migration's rows reached the schema.
 
     ``policy_defs`` is append-only (a trigger rejects DELETE), so an old database cannot be
@@ -62,9 +64,18 @@ def _old_database(path: Path) -> None:
         and not line.strip().startswith(("latitude ", "longitude "))
         and not line.startswith("-- Migration 017")
     ]
+    statements = SL.split_statements("\n".join(kept))
+    if skip_statements_mentioning:
+        # Whole statements, not lines: a later migration's table spans many lines and
+        # pruning its header alone would leave orphan columns behind.
+        statements = [
+            statement
+            for statement in statements
+            if not any(marker in statement for marker in skip_statements_mentioning)
+        ]
     conn = sqlite3.connect(str(path))
     try:
-        for statement in SL.split_statements("\n".join(kept)):
+        for statement in statements:
             conn.execute(statement)
         conn.commit()
     finally:
@@ -171,3 +182,80 @@ class TestMigrationRunner:
 
         kernel = RK.ReservationKernel.open(str(db), agency_id="agency_default")
         kernel.close()
+
+
+def _build_from_schema(path: Path) -> None:
+    conn = sqlite3.connect(str(path))
+    try:
+        for statement in SL.split_statements(SL.read_schema("sqlite")):
+            conn.execute(statement)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _proof_objects(path: Path) -> list[tuple[str, str, str]]:
+    """The table, its indexes and its triggers, as SQLite stored them."""
+    conn = sqlite3.connect(str(path))
+    try:
+        return [
+            (kind, name, " ".join((sql or "").split()))
+            for kind, name, sql in conn.execute(
+                "SELECT type, name, sql FROM sqlite_master"
+                " WHERE tbl_name = 'supplier_block_proofs' AND sql IS NOT NULL"
+                " ORDER BY type, name"
+            )
+        ]
+    finally:
+        conn.close()
+
+
+class TestSupplierBlockProofMigration:
+    """019 must leave a migrated database identical to one built from the schema.
+
+    ADR-0073's guarantees are structural: the unique index on evidence_id, the partial
+    unique index on a live booking, and the trigger that refuses every UPDATE except
+    revocation. If the migration produced a table without them, a migrated database would
+    accept writes the fresh one refuses — and nothing else in the suite would notice.
+    """
+
+    def test_a_migrated_database_matches_a_fresh_one(self, tmp_path):
+        migrated = tmp_path / "migrated.db"
+        _old_database(migrated, skip_statements_mentioning=("supplier_block_proofs",))
+        assert _proof_objects(migrated) == []
+
+        result = _run(env={"VILLA_DB": str(migrated)})
+        assert result.returncode == 0, result.stderr
+
+        fresh = tmp_path / "fresh.db"
+        _build_from_schema(fresh)
+
+        assert _proof_objects(migrated) == _proof_objects(fresh)
+        kinds = {kind for kind, _, _ in _proof_objects(migrated)}
+        assert {"table", "index", "trigger"} <= kinds
+
+    def test_the_migrated_table_refuses_a_repointed_proof(self, tmp_path):
+        db = tmp_path / "migrated.db"
+        _old_database(db, skip_statements_mentioning=("supplier_block_proofs",))
+        assert _run(env={"VILLA_DB": str(db)}).returncode == 0
+
+        conn = sqlite3.connect(str(db))
+        try:
+            conn.execute("PRAGMA foreign_keys = OFF")
+            conn.execute(
+                "INSERT INTO supplier_block_proofs (proof_id, booking_id, unit_id, check_in,"
+                " check_out, supplier_id, relationship_id, evidence_id, verification_method,"
+                " verified_by, verified_at, expires_at, created_at)"
+                " VALUES ('p1', 'b1', 'u1', '2026-10-01', '2026-10-03', 's1', 'r1', 'e1',"
+                " 'SUPPLIER_EMAIL', 'user:ops-1', '2026-09-01T00:00:00+00:00',"
+                " '2026-12-31T00:00:00+00:00', '2026-09-01T00:00:00+00:00')"
+            )
+            conn.commit()
+            with pytest.raises(sqlite3.IntegrityError) as ctx:
+                conn.execute("UPDATE supplier_block_proofs SET booking_id = 'b2' WHERE proof_id = 'p1'")
+            assert "immutable" in str(ctx.value)
+            conn.rollback()
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute("DELETE FROM supplier_block_proofs WHERE proof_id = 'p1'")
+        finally:
+            conn.close()

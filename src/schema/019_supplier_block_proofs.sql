@@ -4,7 +4,9 @@
 -- that already exist, because schema_loader.apply_schema refuses to re-apply the initial
 -- schema. The DDL below is copied verbatim from the initial schema so the two can never
 -- drift: a migrated database and a fresh one must be structurally identical, and
--- tests/test_schema.py compares them.
+-- tests/test_migrations.py builds a database that predates 019, applies the runner, and
+-- compares the resulting table, indexes and triggers with a database created from the
+-- initial schema.
 --
 -- Additive only. Nothing is dropped, renamed or backfilled, and no existing row is touched:
 -- a database without proofs keeps working and simply cannot confirm a booking until a proof
@@ -58,3 +60,41 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_sbp_active_booking ON supplier_block_proofs
 CREATE INDEX IF NOT EXISTS ix_sbp_booking ON supplier_block_proofs (agency_id, booking_id);
 
 CREATE INDEX IF NOT EXISTS ix_sbp_unit_window ON supplier_block_proofs (agency_id, unit_id, check_in, check_out);
+
+-- The immutability guards are part of the contract, not a kernel convention: an UPDATE
+-- that re-points a live proof at another booking would defeat uq_sbp_evidence without
+-- ever violating a constraint. Same trigger text as the initial schema, so a migrated
+-- database and a fresh one refuse the same writes.
+CREATE TRIGGER IF NOT EXISTS trg_supplier_block_proofs_revoke_only
+BEFORE UPDATE ON supplier_block_proofs
+BEGIN
+    SELECT RAISE(ABORT, 'supplier_block_proofs is immutable except revocation')
+    WHERE NOT (
+        OLD.revoked_at IS NULL
+        AND NEW.revoked_at IS NOT NULL
+        AND NEW.revoked_by IS NOT NULL
+        AND NEW.revoke_reason IS NOT NULL
+        AND NEW.proof_id IS OLD.proof_id
+        AND NEW.agency_id IS OLD.agency_id
+        AND NEW.booking_id IS OLD.booking_id
+        AND NEW.unit_id IS OLD.unit_id
+        AND NEW.check_in IS OLD.check_in
+        AND NEW.check_out IS OLD.check_out
+        AND NEW.supplier_id IS OLD.supplier_id
+        AND NEW.relationship_id IS OLD.relationship_id
+        AND NEW.evidence_id IS OLD.evidence_id
+        AND NEW.evidence_object_id IS OLD.evidence_object_id
+        AND NEW.verification_method IS OLD.verification_method
+        AND NEW.verified_by IS OLD.verified_by
+        AND NEW.verified_at IS OLD.verified_at
+        AND NEW.expires_at IS OLD.expires_at
+        AND NEW.notes IS OLD.notes
+        AND NEW.created_at IS OLD.created_at
+    );
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_supplier_block_proofs_no_delete
+BEFORE DELETE ON supplier_block_proofs
+BEGIN
+    SELECT RAISE(ABORT, 'supplier_block_proofs is append-only (DELETE rejected)');
+END;

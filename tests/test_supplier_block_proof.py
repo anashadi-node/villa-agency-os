@@ -426,3 +426,218 @@ class TestConfirmationIsAtomicAndIdempotent(SupplierProofCase):
         self.assertEqual(self.snapshots(booking.booking_id), before)
         self.assertEqual(self.kernel.get_hold(hold.hold_id)["status"], RK.HOLD_CONFIRMED)
         self.assertEqual(self.kernel.get_booking(booking.booking_id)["status"], "PAID_IN_FULL")
+
+
+class TestConfirmationDistrustsTheRow(SupplierProofCase):
+    """A proof that never went through the kernel must not close a booking.
+
+    ``record_supplier_block_proof`` refuses bad input, but the row can also arrive by a
+    stray INSERT or UPDATE — a migration script, a support console, a future service that
+    forgets the rule. The re-checks inside ``confirm_booking`` are the only defence there,
+    and until now no test executed them. These tests write the bad row with SQL and ask
+    the kernel to confirm.
+    """
+
+    def evidence_row(
+        self,
+        *,
+        evidence_id: str,
+        unit_id: str = "unit_1",
+        level: str = "B",
+        result: str = "AVAILABLE",
+        can_confirm: int = 1,
+        captured_at: str = NOW,
+        valid_until: str = "2026-12-31T00:00:00+00:00",
+    ) -> str:
+        self.kernel.conn.execute(
+            "INSERT INTO availability_evidence (evidence_id, unit_id, evidence_level,"
+            " source_type, source_ref, captured_at, valid_until, result, occupancy_ranges,"
+            " can_quote, can_hold, can_confirm, created_at)"
+            " VALUES (?, ?, ?, 'manager_written', 'villa_block_letter', ?, ?, ?, '[]', 1, 1, ?, ?)",
+            (evidence_id, unit_id, level, captured_at, valid_until, result, can_confirm, NOW),
+        )
+        self.kernel.conn.commit()
+        return evidence_id
+
+    def raw_proof(
+        self,
+        *,
+        booking_id: str,
+        evidence_id: str,
+        proof_id: str = "proof_raw_1",
+        unit_id: str = "unit_1",
+        check_in: str = "2026-10-01",
+        check_out: str = "2026-10-03",
+        expires_at: str = "2026-12-31T00:00:00+00:00",
+    ) -> str:
+        self.kernel.conn.execute(
+            "INSERT INTO supplier_block_proofs (proof_id, booking_id, unit_id, check_in,"
+            " check_out, supplier_id, relationship_id, evidence_id, verification_method,"
+            " verified_by, verified_at, expires_at, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'SUPPLIER_EMAIL', 'user:ops-1', ?, ?, ?)",
+            (
+                proof_id,
+                booking_id,
+                unit_id,
+                check_in,
+                check_out,
+                f"sup_{unit_id}",
+                f"vsr_{unit_id}",
+                evidence_id,
+                NOW,
+                expires_at,
+                NOW,
+            ),
+        )
+        self.kernel.conn.commit()
+        return proof_id
+
+    def seed_supplier(self, unit_id: str = "unit_1") -> None:
+        ensure_supplier(self.kernel, unit_id=unit_id, property_id="prop_1")
+
+    def test_confirm_refuses_a_proof_pointing_at_another_unit(self):  # re-check
+        self.seed_supplier("unit_2")
+        _, booking = self.paid()
+        evidence = self.evidence_row(evidence_id="ev_raw_unit", unit_id="unit_2")
+        proof = self.raw_proof(booking_id=booking.booking_id, evidence_id=evidence, unit_id="unit_2")
+        before = self.snapshots(booking.booking_id)
+
+        self.assertEqual(
+            self.code(
+                self.kernel.confirm_booking,
+                booking_id=booking.booking_id,
+                block_proof_id=proof,
+                command_id="cmd_raw_unit",
+            ),
+            "BLOCK_PROOF_WRONG_UNIT",
+        )
+        self.assertEqual(self.snapshots(booking.booking_id), before)
+
+    def test_confirm_refuses_a_proof_for_a_different_stay(self):
+        self.seed_supplier()
+        _, booking = self.paid()
+        evidence = self.evidence_row(evidence_id="ev_raw_dates")
+        proof = self.raw_proof(
+            booking_id=booking.booking_id,
+            evidence_id=evidence,
+            check_in="2026-10-02",
+            check_out="2026-10-04",
+        )
+
+        self.assertEqual(
+            self.code(
+                self.kernel.confirm_booking,
+                booking_id=booking.booking_id,
+                block_proof_id=proof,
+                command_id="cmd_raw_dates",
+            ),
+            "BLOCK_PROOF_WRONG_DATES",
+        )
+        self.assertEqual(self.kernel.get_booking(booking.booking_id)["status"], "PAID_IN_FULL")
+
+    def test_confirm_refuses_evidence_that_may_not_confirm(self):
+        self.seed_supplier()
+        _, booking = self.paid()
+        evidence = self.evidence_row(evidence_id="ev_raw_weak", level="C", can_confirm=0)
+        proof = self.raw_proof(booking_id=booking.booking_id, evidence_id=evidence)
+
+        self.assertEqual(
+            self.code(
+                self.kernel.confirm_booking,
+                booking_id=booking.booking_id,
+                block_proof_id=proof,
+                command_id="cmd_raw_weak",
+            ),
+            "BLOCK_PROOF_NOT_AUTHORITATIVE",
+        )
+
+    def test_confirm_refuses_evidence_older_than_the_booking(self):
+        self.seed_supplier()
+        _, booking = self.paid()
+        evidence = self.evidence_row(
+            evidence_id="ev_raw_old", captured_at="2026-08-01T00:00:00+00:00"
+        )
+        proof = self.raw_proof(booking_id=booking.booking_id, evidence_id=evidence)
+
+        self.assertEqual(
+            self.code(
+                self.kernel.confirm_booking,
+                booking_id=booking.booking_id,
+                block_proof_id=proof,
+                command_id="cmd_raw_old",
+            ),
+            "BLOCK_PROOF_PREDATES_BOOKING",
+        )
+
+    def test_a_restricted_answer_is_not_a_block(self):
+        """AVAILABLE_BUT_RESTRICTED says the dates carry conditions. It must not close."""
+        self.seed_supplier()
+        _, booking = self.paid()
+        evidence = self.kernel.record_evidence(
+            unit_id="unit_1",
+            source_type="manager_written",
+            evidence_level="B",
+            result="AVAILABLE_BUT_RESTRICTED",
+            restrictions={"min_stay_nights": 5},
+            can_confirm=True,
+            source_ref="villa_block_letter",
+        )
+
+        self.assertEqual(
+            self.code(
+                self.kernel.record_supplier_block_proof,
+                booking_id=booking.booking_id,
+                evidence_id=evidence,
+                supplier_id="sup_unit_1",
+                relationship_id="vsr_unit_1",
+                check_in=booking.check_in,
+                check_out=booking.check_out,
+                verification_method="MANAGER_WRITTEN",
+                verified_by="user:ops-1",
+            ),
+            "BLOCK_PROOF_DATES_RESTRICTED",
+        )
+
+    def test_a_live_proof_cannot_be_repointed_by_sql(self):
+        """uq_sbp_evidence only guards INSERT; the trigger guards the row."""
+        self.seed_supplier()
+        _, first = self.paid(key="idem_e_keep")
+        proof = supplier_block_proof(self.kernel, first.booking_id)
+        _, second = self.paid(key="idem_e_steal", check_in="2026-11-01", check_out="2026-11-03")
+
+        with self.assertRaises(sqlite3.IntegrityError) as ctx:
+            self.kernel.conn.execute(
+                "UPDATE supplier_block_proofs SET booking_id = ? WHERE proof_id = ?",
+                (second.booking_id, proof),
+            )
+        self.assertIn("immutable", str(ctx.exception))
+        self.kernel.conn.rollback()
+        self.assertEqual(self.kernel.get_supplier_block_proof(proof)["booking_id"], first.booking_id)
+
+    def test_a_proof_cannot_be_deleted(self):
+        self.seed_supplier()
+        _, booking = self.paid()
+        proof = supplier_block_proof(self.kernel, booking.booking_id)
+
+        with self.assertRaises(sqlite3.IntegrityError) as ctx:
+            self.kernel.conn.execute("DELETE FROM supplier_block_proofs WHERE proof_id = ?", (proof,))
+        self.assertIn("append-only", str(ctx.exception))
+        self.kernel.conn.rollback()
+        self.assertIsNotNone(self.kernel.get_supplier_block_proof(proof))
+
+    def test_revocation_is_the_only_update_the_row_allows(self):
+        self.seed_supplier()
+        _, booking = self.paid()
+        proof = supplier_block_proof(self.kernel, booking.booking_id)
+
+        self.kernel.revoke_supplier_block_proof(proof_id=proof, reason="supplier pulled the block")
+        row = self.kernel.get_supplier_block_proof(proof)
+        self.assertIsNotNone(row["revoked_at"])
+        self.assertEqual(row["revoke_reason"], "supplier pulled the block")
+
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.kernel.conn.execute(
+                "UPDATE supplier_block_proofs SET revoke_reason = 'rewritten' WHERE proof_id = ?",
+                (proof,),
+            )
+        self.kernel.conn.rollback()

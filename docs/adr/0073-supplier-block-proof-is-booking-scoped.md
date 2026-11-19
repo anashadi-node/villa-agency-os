@@ -81,3 +81,43 @@ sebagai HIGH, bukan mengeksposnya.
 - Requirement kandidat (PROPOSED, belum dipromosikan): FR-905 bukti blok supplier
   per-booking · DATA-214 tabel `supplier_block_proofs` · SEC-131 verifikasi manusia wajib
   untuk bukti blok · UX-88 panel konfirmasi di kalender unit · TEST-402 acceptance A–S.
+
+## Review independen (2026-11-19) dan perbaikan
+
+Satu review terbatas dijalankan model **Claude Sonnet 5.5** (konteks terbatas: diff
+kernel, DDL, migrasi 019, `confirm_booking`, ADR ini, daftar tes). Temuan yang
+terverifikasi di repo, dan yang diubah karena itu:
+
+1. **HIGH — jawaban restricted diterima sebagai blok.** `record_supplier_block_proof`
+   dan `confirm_booking` menerima `AVAILABLE_BUT_RESTRICTED`, padahal jawaban itu justru
+   menyatakan tanggal membawa syarat yang belum disetujui supplier. Sekarang hanya
+   `AVAILABLE` yang dihitung sebagai bukti blok; jawaban lain ditolak dengan
+   `BLOCK_PROOF_DATES_RESTRICTED`. `occupancy_ranges` tidak dipakai untuk keputusan ini
+   karena belum ada produsen maupun kontrak kunci untuk kolom itu (dicatat
+   `src/revenue_bi_agent.py`), jadi menafsirkannya akan mengarang arti.
+2. **HIGH — "immutable" hanya konvensi.** Tidak ada trigger pada tabel ini sementara
+   tabel append-only lain punya 66. Satu `UPDATE` bisa memindahkan bukti hidup ke booking
+   lain tanpa melanggar `uq_sbp_evidence`. Sekarang `trg_supplier_block_proofs_revoke_only`
+   (satu-satunya UPDATE yang sah: tiga kolom pencabutan, NULL → isi, kolom lain tidak
+   berubah) dan `trg_supplier_block_proofs_no_delete` dipasang di initial schema, di
+   migrasi 019, dan di twin PostgreSQL lewat fungsi `villa_revoke_only()`
+   (`scripts/generate_pg_twin.py` mengenali penanda `twin:revoke-only`).
+3. **HIGH — pertahanan sisi konfirmasi tidak diuji.** Empat kode penolakan
+   (`BLOCK_PROOF_WRONG_UNIT`, `WRONG_DATES`, `NOT_AUTHORITATIVE`, `PREDATES_BOOKING`)
+   hanya diuji di jalur perekaman, sehingga re-check di `confirm_booking` tidak pernah
+   dieksekusi. Sekarang `TestConfirmationDistrustsTheRow` menulis baris menyimpang lewat
+   SQL lalu memanggil konfirmasi, ditambah tes trigger dan tes restricted.
+4. **MEDIUM — klaim tes yang tidak ada.** Header migrasi 019 menyebut
+   `tests/test_schema.py` membandingkan DB hasil migrasi dengan DB baru; klaim itu tidak
+   benar. Sekarang klaimnya sesuai kenyataan dan tesnya benar-benar ada:
+   `TestSupplierBlockProofMigration` membangun DB pra-019, menjalankan runner, lalu
+   membandingkan tabel, indeks, dan trigger dengan DB dari initial schema.
+
+Temuan yang **tidak** diubah di sini dan tetap terbuka: tidak ada runner migrasi
+PostgreSQL untuk DB yang sudah ada (`apply_pg_schema` menolak DB non-kosong) sehingga PG
+existing belum mendapat tabel ini — bagian dari blocker produksi PostgreSQL yang sudah
+dicatat; `confirm_booking` tidak memeriksa `actor_role` (otorisasi masih di lapisan
+halaman, sama seperti operasi kernel lain); `expires_at` belum dinormalisasi ke ISO UTC
+dan tidak ada pemeriksaan "stay masih di masa depan"; `record_supplier_block_proof`
+belum menerima idempotency key. Jumlah tes acceptance file ini kini 27 (A–P pada
+kontrak awal, ditambah 8 tes sisi konfirmasi dan trigger).

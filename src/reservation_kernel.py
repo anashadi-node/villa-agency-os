@@ -998,13 +998,21 @@ class ReservationKernel:
             if (
                 evidence["evidence_level"] not in ("A", "B")
                 or not int(evidence["can_confirm"])
-                or evidence["result"] not in ("AVAILABLE", "AVAILABLE_BUT_RESTRICTED")
             ):
                 raise DomainError(
                     "block proof must be level A/B evidence that authorises confirmation",
                     code="BLOCK_PROOF_NOT_AUTHORITATIVE",
                     evidence_level=evidence["evidence_level"],
                     can_confirm=int(evidence["can_confirm"]),
+                )
+            # A restricted answer says the dates carry conditions the supplier has not
+            # cleared. Treating it as a block would let confirmation rest on evidence
+            # that, read plainly, does not promise the stay. Only AVAILABLE counts.
+            if evidence["result"] != "AVAILABLE":
+                raise DomainError(
+                    "a restricted supplier answer does not prove these dates were blocked",
+                    code="BLOCK_PROOF_DATES_RESTRICTED",
+                    result=evidence["result"],
                 )
             if evidence["captured_at"] < booking["created_at"]:
                 raise DomainError(
@@ -2355,13 +2363,21 @@ class ReservationKernel:
             if (
                 evidence["evidence_level"] not in ("A", "B")
                 or not int(evidence["can_confirm"])
-                or evidence["result"] not in ("AVAILABLE", "AVAILABLE_BUT_RESTRICTED")
             ):
                 raise DomainError(
                     "block proof must be level A/B evidence that authorises confirmation",
                     code="BLOCK_PROOF_NOT_AUTHORITATIVE",
                     evidence_level=evidence["evidence_level"],
                     can_confirm=int(evidence["can_confirm"]),
+                )
+            # A restricted answer says the dates carry conditions the supplier has not
+            # cleared. Treating it as a block would let confirmation rest on evidence
+            # that, read plainly, does not promise the stay. Only AVAILABLE counts.
+            if evidence["result"] != "AVAILABLE":
+                raise DomainError(
+                    "a restricted supplier answer does not prove these dates were blocked",
+                    code="BLOCK_PROOF_DATES_RESTRICTED",
+                    result=evidence["result"],
                 )
             if evidence["captured_at"] < booking["created_at"]:
                 raise DomainError(
