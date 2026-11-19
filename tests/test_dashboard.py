@@ -210,6 +210,9 @@ class DbReader:
 class Live:
     """A dashboard served over HTTP by another thread, plus a reader connection."""
 
+    #: Raw session tokens minted for this database, by identity (set by the fixture).
+    session_tokens: dict = {}
+
     def __init__(self, client: Client, db: DbReader) -> None:
         self.client = client
         self.db = db
@@ -232,10 +235,15 @@ class Live:
 
 
 @contextmanager
-def live_dashboard(db_path, clock, *, seed_data: bool):
+def live_dashboard(db_path, clock, *, seed_data: bool, sessions: tuple = ()):
     setup = connect_sqlite(db_path)
     if seed_data:
         seed(setup, clock)
+    opened = {
+        identity: identity_module.SessionService(setup, clock=clock).open_session(identity, role)
+        for identity, role in sessions
+    }
+    setup.commit()
     setup.close()
     box: dict = {}
     ready = threading.Event()
@@ -257,7 +265,9 @@ def live_dashboard(db_path, clock, *, seed_data: bool):
     server = box["server"]
     reader = DbReader(connect_sqlite(db_path))
     try:
-        yield Live(Client(f"http://127.0.0.1:{server.server_address[1]}"), reader)
+        live = Live(Client(f"http://127.0.0.1:{server.server_address[1]}"), reader)
+        live.session_tokens = {identity: result.token for identity, result in opened.items()}
+        yield live
     finally:
         server.shutdown()
         server.server_close()
@@ -3369,7 +3379,7 @@ def test_confirmation_is_offered_only_with_a_live_supplier_proof(seeded_http):
     assert 'data-proof-state="VERIFIED"' in proven
     assert 'action="/bookings/confirm"' in proven
     assert "proof-e1" in proven and "user:ops-1" in proven
-    assert 'data-proof-state="MISSING"' in unproven
+    assert 'data-proof-state="EVIDENCE_MISSING"' in unproven
     assert 'data-note="confirmation-blocked"' in unproven
     assert 'action="/bookings/confirm"' not in unproven
 
@@ -3539,3 +3549,583 @@ def test_a_second_confirmation_replays_instead_of_double_journalling(seeded_http
         " WHERE entity_id = 'booking-e1' AND action = 'booking.confirmed'"
     ).fetchone()[0]
     assert (events, audits) == (1, 1)
+
+
+# --------------------------------------------------------------------------- #
+# Stage E2: recording the supplier block — a human signs, the kernel decides
+# --------------------------------------------------------------------------- #
+BLOCK_PROOF_FORM = 'data-form="record-block-proof"'
+E2_EVIDENCE = "evid-e2-1"
+E2_CAPTURED = "2026-09-21T09:00:00Z"
+E2_VALID_UNTIL = "2027-06-01T00:00:00Z"
+
+
+def _seed_block_supplier(db) -> None:
+    """The supplier and the active relationship covering the booking's unit."""
+    stamp = "2026-09-02T00:00:00Z"
+    db.execute(
+        "INSERT OR IGNORE INTO suppliers (supplier_id, name, status, created_at, updated_at)"
+        " VALUES ('sup-1', 'Villa manager', 'ACTIVE', ?, ?)",
+        (stamp, stamp),
+    )
+    db.execute(
+        "INSERT OR IGNORE INTO villa_supplier_relationships"
+        " (villa_supplier_relationship_id, supplier_id, property_id, unit_id, status,"
+        " created_at, updated_at) VALUES ('vsr-1', 'sup-1', 'prop-1', 'unit-2', 'ACTIVE', ?, ?)",
+        (stamp, stamp),
+    )
+
+
+def _seed_block_evidence(
+    db,
+    *,
+    evidence_id: str = E2_EVIDENCE,
+    unit_id: str = "unit-2",
+    level: str = "B",
+    result: str = "AVAILABLE",
+    can_confirm: int = 1,
+    restrictions=None,
+    captured_at: str = E2_CAPTURED,
+    valid_until: str = E2_VALID_UNTIL,
+) -> None:
+    """A supplier answer as the ingest path would store it — a row, not a claim."""
+    db.execute(
+        "INSERT INTO availability_evidence (evidence_id, unit_id, evidence_level, source_type,"
+        " source_ref, captured_at, valid_until, result, restrictions, occupancy_ranges,"
+        " can_quote, can_hold, can_confirm, created_at)"
+        " VALUES (?, ?, ?, 'manager_written', 'block_letter_email', ?, ?, ?, ?, '[]', 1, 1, ?, ?)",
+        (
+            evidence_id,
+            unit_id,
+            level,
+            captured_at,
+            valid_until,
+            result,
+            restrictions,
+            can_confirm,
+            captured_at,
+        ),
+    )
+
+
+def _block_proof_token(live, booking_id: str, *, token: str) -> str:
+    page = live.get("/inventory", token=token)
+    assert page.status == 200, (page.status, page.text[:400])
+    start = page.text.find(f'action="/bookings/{booking_id}/block-proof"')
+    assert start != -1, "the block-proof form was not rendered"
+    match = BOOKING_TOKEN_PATTERN.search(page.text, start)
+    assert match, "the block-proof form carries no token"
+    return match.group(1)
+
+
+def _post_block_proof(live, *, token=None, booking_id: str = "booking-e1", **fields):
+    payload = {
+        "evidence_id": E2_EVIDENCE,
+        "relationship_id": "vsr-1",
+        "verification_method": "SUPPLIER_EMAIL",
+    }
+    payload.update(fields)
+    return live.post(f"/bookings/{booking_id}/block-proof", token=token, form=payload)
+
+
+def _proof_rows(live) -> list:
+    return list(
+        live.db.execute(
+            "SELECT proof_id, booking_id, check_in, check_out, evidence_id, verified_by,"
+            " verification_method, revoked_at FROM supplier_block_proofs"
+        ).fetchall()
+    )
+
+
+@pytest.fixture()
+def block_proof_http(tmp_path, clock):
+    """Seeded dashboard, a paid booking, and two real session principals."""
+    with live_dashboard(
+        tmp_path / "block-proof.db",
+        clock,
+        seed_data=True,
+        sessions=(
+            ("verifier-1", "reservation_agent"),
+            ("verifier-2", "reservation_agent"),
+            ("ai:planner-1", "reservation_agent"),
+        ),
+    ) as live:
+        _seed_stage_e_paid_booking(live.db)
+        yield live
+
+
+def test_a_signed_in_human_records_the_block_and_unlocks_confirmation(block_proof_http):
+    live = block_proof_http
+    token = live.session_tokens["verifier-1"]
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+    form_token = _block_proof_token(live, "booking-e1", token=token)
+
+    response = _post_block_proof(live, token=token, form_token=form_token)
+
+    assert response.status == 200, response.text[-1200:]
+    assert 'data-banner="block-proof-recorded"' in response.text
+    assert 'data-replayed="0"' in response.text
+    assert 'data-verified-by="human:verifier-1"' in response.text
+    rows = _proof_rows(live)
+    assert len(rows) == 1
+    proof = rows[0]
+    assert proof["booking_id"] == "booking-e1"
+    assert proof["verified_by"] == "human:verifier-1"
+    assert proof["verification_method"] == "SUPPLIER_EMAIL"
+    assert proof["evidence_id"] == E2_EVIDENCE
+    assert proof["revoked_at"] is None
+    # The booking is still paid, not confirmed: recording is not confirming.
+    status = live.db.execute(
+        "SELECT status FROM bookings WHERE booking_id = 'booking-e1'"
+    ).fetchone()["status"]
+    assert status == "PAID_IN_FULL"
+    # ... and confirmation, still a separate action, now has its proof.
+    confirm_token = _confirm_token(live)
+    confirmed = live.post(
+        "/bookings/confirm",
+        token="tok-reservation",
+        form={
+            "form_token": confirm_token,
+            "booking_id": "booking-e1",
+            "block_proof_id": proof["proof_id"],
+            "idempotency_key": "idem-e2-confirm-1",
+        },
+    )
+    assert confirmed.status == 200, confirmed.text[-1200:]
+    assert 'data-banner="booking-confirmed"' in confirmed.text
+
+
+def test_block_proof_requires_authentication(block_proof_http):
+    response = _post_block_proof(block_proof_http, token=None)
+    assert response.status == 401
+    assert _proof_rows(block_proof_http) == []
+
+
+def test_block_proof_refuses_a_role_that_cannot_see_inventory(block_proof_http):
+    response = _post_block_proof(block_proof_http, token="tok-finance")
+    assert response.status == 403
+    assert _proof_rows(block_proof_http) == []
+
+
+def test_block_proof_refuses_a_shared_role_token_as_the_verifier(block_proof_http):
+    live = block_proof_http
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+
+    response = _post_block_proof(live, token="tok-reservation")
+
+    assert response.status == 403
+    assert "HUMAN_SESSION_REQUIRED" in response.text
+    assert _proof_rows(live) == []
+
+
+def test_block_proof_refuses_a_machine_principal_as_the_verifier(block_proof_http):
+    live = block_proof_http
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+
+    response = _post_block_proof(live, token=live.session_tokens["ai:planner-1"])
+
+    assert response.status == 403
+    assert "MACHINE_PRINCIPAL_REFUSED" in response.text
+    assert _proof_rows(live) == []
+
+
+def test_block_proof_refuses_a_forged_verifier_name(block_proof_http):
+    live = block_proof_http
+    token = live.session_tokens["verifier-1"]
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+    form_token = _block_proof_token(live, "booking-e1", token=token)
+
+    response = _post_block_proof(
+        live, token=token, form_token=form_token, verified_by="human:owner-anas"
+    )
+
+    assert response.status >= 400
+    assert "BLOCK_PROOF_VERIFIER_FORGED" in response.text
+    assert _proof_rows(live) == []
+
+
+def test_block_proof_requires_a_valid_form_token(block_proof_http):
+    live = block_proof_http
+    token = live.session_tokens["verifier-1"]
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+
+    response = _post_block_proof(live, token=token, form_token="not-a-token")
+
+    assert response.status == 403
+    assert _proof_rows(live) == []
+
+
+def test_block_proof_refuses_evidence_from_another_unit(block_proof_http):
+    live = block_proof_http
+    token = live.session_tokens["verifier-1"]
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+    _seed_block_evidence(live.db, evidence_id="evid-other-unit", unit_id="unit-1")
+    form_token = _block_proof_token(live, "booking-e1", token=token)
+
+    response = _post_block_proof(
+        live, token=token, form_token=form_token, evidence_id="evid-other-unit"
+    )
+
+    assert response.status >= 400
+    assert "BLOCK_PROOF_WRONG_UNIT" in response.text
+    assert _proof_rows(live) == []
+
+
+def test_block_proof_ignores_dates_supplied_by_the_form(block_proof_http):
+    """The stay is the server's fact: a form cannot move the proof to other nights."""
+    live = block_proof_http
+    token = live.session_tokens["verifier-1"]
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+    form_token = _block_proof_token(live, "booking-e1", token=token)
+
+    response = _post_block_proof(
+        live,
+        token=token,
+        form_token=form_token,
+        check_in="2027-01-01",
+        check_out="2027-01-02",
+        unit_id="unit-1",
+        verified_by="human:verifier-1",
+    )
+
+    assert response.status == 200, response.text[-1200:]
+    proof = _proof_rows(live)[0]
+    assert proof["check_in"] == "2026-12-10"
+    assert proof["check_out"] == "2026-12-13"
+
+
+def test_block_proof_refuses_a_restricted_answer(block_proof_http):
+    live = block_proof_http
+    token = live.session_tokens["verifier-1"]
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+    _seed_block_evidence(
+        live.db,
+        evidence_id="evid-e2-restricted",
+        result="AVAILABLE_BUT_RESTRICTED",
+        restrictions='{"min_stay_nights": 5}',
+    )
+    form_token = _block_proof_token(live, "booking-e1", token=token)
+
+    response = _post_block_proof(
+        live, token=token, form_token=form_token, evidence_id="evid-e2-restricted"
+    )
+
+    assert response.status >= 400
+    assert "BLOCK_PROOF_DATES_RESTRICTED" in response.text
+    assert _proof_rows(live) == []
+
+
+def test_block_proof_refuses_evidence_that_is_not_authoritative(block_proof_http):
+    live = block_proof_http
+    token = live.session_tokens["verifier-1"]
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+    _seed_block_evidence(live.db, evidence_id="evid-e2-level-c", level="C", can_confirm=0)
+    form_token = _block_proof_token(live, "booking-e1", token=token)
+
+    response = _post_block_proof(
+        live, token=token, form_token=form_token, evidence_id="evid-e2-level-c"
+    )
+
+    assert response.status >= 400
+    assert "BLOCK_PROOF_NOT_AUTHORITATIVE" in response.text
+    assert _proof_rows(live) == []
+
+
+def test_block_proof_refuses_evidence_that_expired(block_proof_http):
+    live = block_proof_http
+    token = live.session_tokens["verifier-1"]
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+    _seed_block_evidence(
+        live.db,
+        evidence_id="evid-e2-stale",
+        captured_at="2026-09-18T00:00:00Z",
+        valid_until="2026-09-20T00:00:00Z",
+    )
+    form_token = _block_proof_token(live, "booking-e1", token=token)
+
+    response = _post_block_proof(
+        live, token=token, form_token=form_token, evidence_id="evid-e2-stale"
+    )
+
+    assert response.status >= 400
+    assert "BLOCK_PROOF_EXPIRED" in response.text
+    assert _proof_rows(live) == []
+
+
+def test_block_proof_requires_the_supplier_answer(block_proof_http):
+    live = block_proof_http
+    token = live.session_tokens["verifier-1"]
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+    form_token = _block_proof_token(live, "booking-e1", token=token)
+
+    response = _post_block_proof(live, token=token, form_token=form_token, evidence_id="")
+
+    assert response.status == 400
+    assert _proof_rows(live) == []
+
+
+def test_block_proof_replay_reports_the_existing_proof_without_writing_twice(block_proof_http):
+    live = block_proof_http
+    token = live.session_tokens["verifier-1"]
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+    form_token = _block_proof_token(live, "booking-e1", token=token)
+
+    first = _post_block_proof(live, token=token, form_token=form_token)
+    second = _post_block_proof(live, token=token, form_token=form_token)
+
+    assert first.status == 200 and second.status == 200
+    assert 'data-replayed="0"' in first.text
+    assert 'data-replayed="1"' in second.text
+    assert len(_proof_rows(live)) == 1
+
+
+def test_block_proof_refuses_to_replace_a_live_proof_with_other_evidence(block_proof_http):
+    live = block_proof_http
+    token = live.session_tokens["verifier-1"]
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+    _seed_block_evidence(live.db, evidence_id="evid-e2-2", captured_at="2026-09-21T10:00:00Z")
+    form_token = _block_proof_token(live, "booking-e1", token=token)
+
+    assert _post_block_proof(live, token=token, form_token=form_token).status == 200
+    second = _post_block_proof(
+        live, token=token, form_token=form_token, evidence_id="evid-e2-2"
+    )
+
+    assert second.status >= 400
+    assert "BLOCK_PROOF_ALREADY_RECORDED" in second.text
+    assert len(_proof_rows(live)) == 1
+
+
+def test_a_revoked_proof_does_not_authorize_confirmation(block_proof_http):
+    live = block_proof_http
+    _seed_stage_e_proof(live.db, revoked=True)
+
+    page = live.get("/inventory", token="tok-reservation")
+
+    assert page.status == 200
+    assert 'data-proof-state="REVOKED"' in page.text
+    assert 'action="/bookings/confirm"' not in page.text
+    assert 'data-note="confirmation-blocked"' in page.text
+
+
+def test_a_refused_block_proof_leaves_no_partial_write(block_proof_http):
+    live = block_proof_http
+    token = live.session_tokens["verifier-1"]
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+    _seed_block_evidence(live.db, evidence_id="evid-other-unit", unit_id="unit-1")
+    form_token = _block_proof_token(live, "booking-e1", token=token)
+    before = live.counts()
+
+    response = _post_block_proof(
+        live, token=token, form_token=form_token, evidence_id="evid-other-unit"
+    )
+
+    assert response.status >= 400
+    assert live.counts() == before
+
+
+def test_the_recording_form_appears_only_for_a_caller_who_can_be_the_verifier(block_proof_http):
+    """A shared role token can read the workspace but cannot act inside it."""
+    live = block_proof_http
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+
+    human_page = live.get("/inventory", token=live.session_tokens["verifier-1"])
+    static_page = live.get("/inventory", token="tok-reservation")
+
+    assert 'data-proof-state="AWAITING_VERIFICATION"' in human_page.text
+    assert BLOCK_PROOF_FORM in human_page.text
+    assert 'data-proof-state="AWAITING_VERIFICATION"' in static_page.text
+    assert BLOCK_PROOF_FORM not in static_page.text
+    assert 'data-note="confirmation-blocked"' in static_page.text
+
+
+def test_block_proof_cannot_touch_a_booking_of_another_agency(block_proof_http):
+    live = block_proof_http
+    token = live.session_tokens["verifier-1"]
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+    form_token = _block_proof_token(live, "booking-e1", token=token)
+
+    response = _post_block_proof(
+        live, token=token, booking_id="booking-of-agency-b", form_token=form_token
+    )
+
+    assert response.status >= 400
+    assert "BOOKING_NOT_FOUND" in response.text
+    assert _proof_rows(live) == []
+
+
+def test_block_proof_refuses_evidence_owned_by_another_agency(block_proof_http):
+    live = block_proof_http
+    token = live.session_tokens["verifier-1"]
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+    stamp = "2026-09-02T00:00:00Z"
+    live.db.execute(
+        "INSERT INTO agencies (agency_id, name, status, created_at, updated_at)"
+        " VALUES ('agency_b', 'Agency B', 'ACTIVE', ?, ?)",
+        (stamp, stamp),
+    )
+    live.db.execute(
+        "INSERT INTO availability_evidence (evidence_id, agency_id, unit_id, evidence_level,"
+        " source_type, source_ref, captured_at, valid_until, result, occupancy_ranges,"
+        " can_quote, can_hold, can_confirm, created_at)"
+        " VALUES ('evid-agency-b', 'agency_b', 'unit-2', 'B', 'manager_written',"
+        " 'other_agency_letter', ?, ?, 'AVAILABLE', '[]', 1, 1, 1, ?)",
+        (E2_CAPTURED, E2_VALID_UNTIL, E2_CAPTURED),
+    )
+    form_token = _block_proof_token(live, "booking-e1", token=token)
+
+    response = _post_block_proof(
+        live, token=token, form_token=form_token, evidence_id="evid-agency-b"
+    )
+
+    assert response.status >= 400
+    assert "BLOCK_PROOF" in response.text
+    assert _proof_rows(live) == []
+
+
+def test_a_second_person_cannot_replay_the_first_persons_verification(block_proof_http):
+    """Resubmitting someone else's proof is not your verification."""
+    live = block_proof_http
+    first = live.session_tokens["verifier-1"]
+    second = live.session_tokens["verifier-2"]
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+
+    second_token = _block_proof_token(live, "booking-e1", token=second)
+    assert _post_block_proof(
+        live, token=first, form_token=_block_proof_token(live, "booking-e1", token=first)
+    ).status == 200
+    # The form is gone from the page now; the token is per person and still valid.
+    response = _post_block_proof(live, token=second, form_token=second_token)
+
+    assert response.status >= 400
+    assert "BLOCK_PROOF_ALREADY_RECORDED" in response.text
+    rows = _proof_rows(live)
+    assert len(rows) == 1 and rows[0]["verified_by"] == "human:verifier-1"
+
+
+def test_a_form_token_minted_for_one_person_is_refused_for_another(block_proof_http):
+    live = block_proof_http
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+    stolen = _block_proof_token(live, "booking-e1", token=live.session_tokens["verifier-1"])
+
+    response = _post_block_proof(
+        live, token=live.session_tokens["verifier-2"], form_token=stolen
+    )
+
+    assert response.status == 403
+    assert "FORM_TOKEN_INVALID" in response.text
+    assert _proof_rows(live) == []
+
+
+def test_a_machine_session_is_not_offered_the_form(block_proof_http):
+    live = block_proof_http
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+
+    page = live.get("/inventory", token=live.session_tokens["ai:planner-1"])
+
+    assert page.status == 200
+    assert 'data-proof-state="AWAITING_VERIFICATION"' in page.text
+    assert BLOCK_PROOF_FORM not in page.text
+
+
+def test_block_proof_refuses_an_inactive_supplier_relationship(block_proof_http):
+    live = block_proof_http
+    token = live.session_tokens["verifier-1"]
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+    form_token = _block_proof_token(live, "booking-e1", token=token)
+    live.db.execute(
+        "UPDATE villa_supplier_relationships SET status = 'SUSPENDED'"
+        " WHERE villa_supplier_relationship_id = 'vsr-1'"
+    )
+
+    response = _post_block_proof(live, token=token, form_token=form_token)
+
+    assert response.status >= 400
+    assert "BLOCK_PROOF_SUPPLIER_NOT_AUTHORIZED" in response.text
+    assert _proof_rows(live) == []
+
+
+def test_block_proof_refuses_a_booking_that_is_not_paid(block_proof_http):
+    live = block_proof_http
+    token = live.session_tokens["verifier-1"]
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+    _seed_stage_d_booking(
+        live.db,
+        booking_id="booking-pending",
+        quote_id="quote-pending",
+        status="PAYMENT_PENDING",
+        check_in="2026-12-15",
+        check_out="2026-12-18",
+        amount_paid_minor=0,
+        payment_status="UNPAID",
+    )
+    form_token = _block_proof_token(live, "booking-e1", token=token)
+
+    response = _post_block_proof(
+        live, token=token, booking_id="booking-pending", form_token=form_token
+    )
+
+    assert response.status >= 400
+    assert "BLOCK_PROOF_BOOKING_NOT_PAYABLE" in response.text
+    assert _proof_rows(live) == []
+
+
+def test_block_proof_refuses_an_over_long_note(block_proof_http):
+    live = block_proof_http
+    token = live.session_tokens["verifier-1"]
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+    form_token = _block_proof_token(live, "booking-e1", token=token)
+
+    response = _post_block_proof(
+        live, token=token, form_token=form_token, notes="x" * 201
+    )
+
+    assert response.status == 400
+    assert _proof_rows(live) == []
+
+
+def test_an_expired_live_proof_is_not_reported_as_a_fresh_replay(block_proof_http):
+    live = block_proof_http
+    token = live.session_tokens["verifier-1"]
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+    # The token has to be taken while the page still offers the form; the expired
+    # proof lands afterwards, the way time would have moved in production.
+    form_token = _block_proof_token(live, "booking-e1", token=token)
+    _seed_stage_e_proof(
+        live.db,
+        evidence_id="evid-e2-expired",
+        captured_at="2026-09-18T00:00:00Z",
+        expires_at="2026-09-20T00:00:00Z",
+    )
+
+    response = _post_block_proof(
+        live, token=token, form_token=form_token, evidence_id="evid-e2-expired"
+    )
+
+    assert response.status >= 400
+    assert "BLOCK_PROOF_ALREADY_RECORDED" in response.text
+    assert 'data-banner="block-proof-recorded"' not in response.text

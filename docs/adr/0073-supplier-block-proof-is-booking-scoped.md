@@ -121,3 +121,52 @@ halaman, sama seperti operasi kernel lain); `expires_at` belum dinormalisasi ke 
 dan tidak ada pemeriksaan "stay masih di masa depan"; `record_supplier_block_proof`
 belum menerima idempotency key. Jumlah tes acceptance file ini kini 27 (A–P pada
 kontrak awal, ditambah 8 tes sisi konfirmasi dan trigger).
+
+## Access control for the recording step (2026-11-19, Stage E2)
+
+The operator workspace makes the proof reachable from the dashboard, and the
+decision that a proof names a **person** is what shapes the access rule:
+
+1. **A per-person session is required; a shared role token is not enough.** The
+   dashboard accepts two carriers: static per-role tokens (`X-Dashboard-Token`) and
+   per-person session tokens minted by `identity.SessionService` after the role's
+   MFA requirement is met. A static token maps to a deployment default identity
+   (`owner:anas`, `reservation:agent`), which every holder shares — it proves a
+   role, not a person. `POST /bookings/<id>/block-proof` therefore refuses a token
+   principal with `HUMAN_SESSION_REQUIRED`, and the page does not render the form
+   for one. The read-only view remains available to both carriers.
+2. **A machine principal cannot sign.** Even holding a session, an identity that
+   `supplier_route.is_machine_actor()` classifies as machine (`ai:*`, `system:*`,
+   `service:*`, or `ai_service`/`system_service`/`system` roles) is refused with
+   `MACHINE_PRINCIPAL_REFUSED`. The dashboard path always writes
+   `verified_by = "human:<session identity>"`, composed by the server — a second
+   caller of the kernel (a script, a service route) is not constrained by this
+   prefix, so it is a label of provenance, not an enforced invariant.
+3. **The form cannot name the verifier, the stay, or the unit.** `verified_by` is
+   derived from the session; a supplied value that differs is refused
+   (`BLOCK_PROOF_VERIFIER_FORGED`), never silently rewritten. `check_in`/`check_out`
+   come from the booking row, so a form cannot move a proof onto other nights.
+   `supplier_id` is resolved from the selected relationship server-side.
+4. **No new idempotency parameter; replay is content equality.** The kernel still
+   has no `idempotency_key` on `record_supplier_block_proof`, and this slice does not
+   claim one (that needs a kernel change and is reported as a dependency). Two
+   guarantees cover double submission: a repeat of the *same* submission (evidence,
+   relationship, method **and** the same verifier, still unexpired) returns the
+   existing proof with `data-replayed="1"` and writes nothing; anything else — a
+   different evidence, a different verifier, or an expired live proof — is refused.
+   A second live proof is refused by
+   `ux_sbp_active_booking` and by the kernel's own `BLOCK_PROOF_ALREADY_RECORDED`.
+   Neither path deletes or rewrites an existing proof.
+5. **Recording does not confirm.** The write path ends at
+   `ReservationKernel.record_supplier_block_proof()`; confirmation stays a separate
+   action with its own gates, and the new proof only makes the confirm form eligible.
+6. **States are named, not implied.** The table distinguishes
+   `AWAITING_VERIFICATION` (a usable answer exists, no proof yet),
+   `EVIDENCE_MISSING` (no answer on file), `VERIFIED`, `EXPIRED` and `REVOKED`, and
+   states, per row, why confirmation is blocked. A booking that has been confirmed
+   leaves the table by its own status filter.
+
+Still open after this slice: `record_supplier_block_proof` has no idempotency key;
+the session contract has no password factor (see `scripts/session_token.py`), so the
+verifier's identity rests on per-person enrolment plus TOTP and on possession of
+local operator access.

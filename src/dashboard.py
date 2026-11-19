@@ -1026,6 +1026,11 @@ class Principal:
     identity: str
     role: str
     agency_id: str = DEFAULT_AGENCY_ID
+    #: How this caller proved who it is. ``token`` is a static per-role dashboard
+    #: token: a shared secret that says a role, not a person. ``session`` is a
+    #: per-person token minted by :mod:`identity` after an MFA check, so it can
+    #: carry a human's name into a record that must name one.
+    authenticated_via: str = "token"
 
     def __post_init__(self) -> None:
         require_ref(self.identity, "identity")
@@ -1369,7 +1374,10 @@ class Dashboard:
         if page_role is None or session.agency_id != self.agency_id:
             return None
         return Principal(
-            identity=session.identity, role=page_role, agency_id=session.agency_id
+            identity=session.identity,
+            role=page_role,
+            agency_id=session.agency_id,
+            authenticated_via="session",
         )
 
     def authenticate(self, headers: Any) -> Principal:
@@ -2223,19 +2231,115 @@ class Dashboard:
             f"</tr></thead><tbody>{body}</tbody></table>"
         )
 
-    # -- Stage E: the supplier block, and the confirmation it authorises ---- #
-    def _confirmation_table(self, principal: Principal) -> Markup:
-        """Paid bookings with their supplier block proof, and the confirm action.
+    # -- Stage E/E2: the supplier block, who records it, who confirms -------- #
+    def _block_proof_candidates(self, row: Mapping[str, Any]) -> list[Any]:
+        """Evidence that could prove a block for *this* booking, tenant-scoped.
 
-        Every cell is read from the database: the proof, the evidence under it, the
-        supplier that issued it and the human who verified it. A booking whose proof is
-        missing, expired or revoked shows why the button is absent rather than a button
-        the kernel would refuse.
+        The filter mirrors the kernel's own conditions, so the operator is never
+        offered a value the kernel would refuse: the booking's unit, level A/B, may
+        confirm, an unqualified ``AVAILABLE`` answer (a restricted answer promises
+        nothing), captured after the booking existed, still valid, and never used as
+        a proof before — one answer backs one booking, ever.
+        """
+        return self._rows(
+            "SELECT e.evidence_id, e.evidence_level, e.source_type, e.source_ref,"
+            " e.captured_at, e.valid_until FROM availability_evidence e"
+            " WHERE e.agency_id = ? AND e.unit_id = ?"
+            "  AND e.evidence_level IN ('A','B') AND e.can_confirm = 1"
+            "  AND e.result = 'AVAILABLE' AND e.captured_at >= ? AND e.valid_until > ?"
+            "  AND NOT EXISTS (SELECT 1 FROM supplier_block_proofs p"
+            "   WHERE p.evidence_id = e.evidence_id)"
+            " ORDER BY e.captured_at DESC LIMIT 20",
+            (self.agency_id, row["unit_id"], row["created_at"], to_iso(self.clock.now())),
+        )
+
+    def _active_supplier_relationships(self, row: Mapping[str, Any]) -> list[Any]:
+        """Active suppliers whose active relationship covers this booking's unit."""
+        return self._rows(
+            "SELECT r.villa_supplier_relationship_id AS relationship_id, r.supplier_id,"
+            " s.name AS supplier_name FROM villa_supplier_relationships r"
+            " JOIN suppliers s ON s.supplier_id = r.supplier_id AND s.agency_id = r.agency_id"
+            " WHERE r.agency_id = ? AND r.status = 'ACTIVE' AND s.status = 'ACTIVE'"
+            "  AND (r.unit_id = ? OR (r.unit_id IS NULL AND r.property_id = ?))"
+            " ORDER BY s.name",
+            (self.agency_id, row["unit_id"], row["property_id"]),
+        )
+
+    def _block_proof_methods(self) -> tuple[str, ...]:
+        from reservation_kernel import BLOCK_PROOF_METHODS
+
+        return BLOCK_PROOF_METHODS
+
+    def _block_proof_form(
+        self,
+        principal: Principal,
+        row: Mapping[str, Any],
+        candidates: Sequence[Any],
+        relationships: Sequence[Any],
+    ) -> str:
+        """The recording form, offering only what the kernel would accept.
+
+        No date or unit input: those come from the booking row, because they are the
+        server's facts about the stay, not the operator's claim about it.
+        """
+        if not candidates:
+            return (
+                '<span class="muted" data-note="block-proof-evidence-missing">'
+                "No supplier answer on file for this stay. Record the supplier's written "
+                "block first.</span>"
+            )
+        if not relationships:
+            return (
+                '<span class="muted" data-note="block-proof-supplier-missing">'
+                "No active supplier relationship covers this unit.</span>"
+            )
+        options = "".join(
+            f'<option value="{escape_value(item["evidence_id"])}">'
+            f'{escape_value(item["evidence_id"])} ({escape_value(item["evidence_level"])}, '
+            f'{escape_value(item["source_type"])} / {escape_value(item["source_ref"])}, '
+            f"captured {escape_value(_time_label(item['captured_at']))})</option>"
+            for item in candidates
+        )
+        supplier_options = "".join(
+            f'<option value="{escape_value(item["relationship_id"])}">'
+            f'{escape_value(item["supplier_name"])} — {escape_value(item["supplier_id"])} '
+            f'({escape_value(item["relationship_id"])})</option>'
+            for item in relationships
+        )
+        method_options = "".join(
+            f'<option value="{escape_value(method)}">{escape_value(method)}</option>'
+            for method in self._block_proof_methods()
+        )
+        return (
+            '<form method="post" data-write-form="1" data-form="record-block-proof"'
+            f' action="/bookings/{escape_value(row["booking_id"])}/block-proof">'
+            f'<input type="hidden" name="{FORM_TOKEN_FIELD}"'
+            f' value="{escape_value(self.form_token_for(principal))}">'
+            '<label>Supplier answer <select name="evidence_id">'
+            f"{options}</select></label> "
+            '<label>Supplier <select name="relationship_id">'
+            f"{supplier_options}</select></label> "
+            '<label>Method <select name="verification_method">'
+            f"{method_options}</select></label> "
+            '<label>Note <input name="notes" maxlength="200"></label> '
+            '<button type="submit">Record supplier block</button></form>'
+        )
+
+    def _confirmation_table(self, principal: Principal) -> Markup:
+        """Paid bookings, their supplier block, and the step that is still missing.
+
+        Every cell is read from the database. The recording form appears only for a
+        caller who can actually be the named verifier — a per-person session, not a
+        shared role token — and it offers only evidence and suppliers the kernel would
+        accept. This panel never writes; ``POST /bookings/<id>/block-proof`` does.
         """
         rows = self._rows(
-            "SELECT b.booking_id, b.unit_id, b.check_in, b.check_out, b.status,"
-            " b.currency, b.total_minor, p.proof_id, p.verification_method, p.verified_by,"
-            " p.expires_at, p.evidence_id, e.source_ref, e.evidence_level, e.captured_at,"
+            "SELECT b.booking_id, b.unit_id, b.property_id, b.check_in, b.check_out,"
+            " b.status, b.currency, b.total_minor, b.created_at,"
+            " p.proof_id, p.verification_method, p.verified_by, p.verified_at,"
+            " p.expires_at, p.evidence_id, p.supplier_id AS proof_supplier_id,"
+            " p.relationship_id AS proof_relationship_id, ps.name AS proof_supplier_name,"
+            " e.source_ref, e.source_type, e.evidence_level, e.captured_at,"
             " (SELECT COUNT(*) FROM supplier_block_proofs r"
             "  WHERE r.booking_id = b.booking_id AND r.agency_id = b.agency_id"
             "  AND r.revoked_at IS NOT NULL) AS revoked_count"
@@ -2244,6 +2348,8 @@ class Dashboard:
             "  AND p.agency_id = b.agency_id AND p.revoked_at IS NULL"
             " LEFT JOIN availability_evidence e ON e.evidence_id = p.evidence_id"
             "  AND e.agency_id = b.agency_id"
+            " LEFT JOIN suppliers ps ON ps.supplier_id = p.supplier_id"
+            "  AND ps.agency_id = p.agency_id"
             " WHERE b.agency_id = ? AND b.status IN ('DEPOSIT_PAID','PAID_IN_FULL')"
             " ORDER BY b.created_at DESC",
             (self.agency_id,),
@@ -2254,30 +2360,51 @@ class Dashboard:
                 "for confirmation.</p>"
             )
         now = to_iso(self.clock.now())
+        may_verify = self._can_be_verifier(principal)
         body_rows = []
         for row in rows:
+            candidates = self._block_proof_candidates(row)
+            relationships = self._active_supplier_relationships(row)
             proof_id = row["proof_id"]
             if proof_id is None:
-                state = "REVOKED" if int(row["revoked_count"] or 0) else "MISSING"
-                proof_cell = (
-                    "revoked — record a fresh proof"
-                    if state == "REVOKED"
-                    else "no supplier block on record"
+                supplier_cell = (
+                    f"{relationships[0]['supplier_name']} "
+                    f"({relationships[0]['supplier_id']} / {relationships[0]['relationship_id']})"
+                    if relationships
+                    else "no active relationship covers this unit"
                 )
-                evidence_cell, verified_cell = "—", "—"
+            else:
+                supplier_cell = (
+                    f"{row['proof_supplier_name']} ({row['proof_supplier_id']} / "
+                    f"{row['proof_relationship_id']})"
+                )
+            if proof_id is None:
+                if int(row["revoked_count"] or 0):
+                    state = "REVOKED"
+                elif candidates:
+                    state = "AWAITING_VERIFICATION"
+                else:
+                    state = "EVIDENCE_MISSING"
+                proof_cell = "no live supplier block on record"
+                evidence_cell, method_cell, verified_cell = "—", "—", "—"
             elif str(row["expires_at"]) <= now:
                 state = "EXPIRED"
                 proof_cell = f"{row['proof_id']} — expired {_time_label(row['expires_at'])}"
-                evidence_cell = f"{row['evidence_id']} ({row['evidence_level']})"
-                verified_cell = f"{row['verified_by']} via {row['verification_method']}"
+                evidence_cell = (
+                    f"{row['evidence_id']} ({row['evidence_level']}, {row['source_type']} / "
+                    f"{row['source_ref']}, captured {_time_label(row['captured_at'])})"
+                )
+                method_cell = str(row["verification_method"])
+                verified_cell = f"{row['verified_by']} at {_time_label(row['verified_at'])}"
             else:
                 state = "VERIFIED"
                 proof_cell = f"{row['proof_id']} — valid to {_time_label(row['expires_at'])}"
                 evidence_cell = (
-                    f"{row['evidence_id']} ({row['evidence_level']}, "
+                    f"{row['evidence_id']} ({row['evidence_level']}, {row['source_type']} / "
                     f"{row['source_ref']}, captured {_time_label(row['captured_at'])})"
                 )
-                verified_cell = f"{row['verified_by']} via {row['verification_method']}"
+                method_cell = str(row["verification_method"])
+                verified_cell = f"{row['verified_by']} at {_time_label(row['verified_at'])}"
             if state == "VERIFIED" and principal.may_write:
                 action = (
                     '<form method="post" action="/bookings/confirm" data-write-form="1"'
@@ -2297,11 +2424,25 @@ class Dashboard:
                     '<span class="muted" data-note="confirmation-readonly">read-only role; '
                     "confirmation belongs to Reservation or Operations</span>"
                 )
+            elif may_verify and proof_id is None:
+                action = self._block_proof_form(principal, row, candidates, relationships)
+            elif state == "EXPIRED":
+                action = (
+                    '<span class="muted" data-note="confirmation-blocked"'
+                    ' data-reason="EXPIRED">confirmation blocked: the supplier answer '
+                    "expired; revoke the old proof, then record a fresh one</span>"
+                )
             else:
+                reason = {
+                    "AWAITING_VERIFICATION": "record the supplier block",
+                    "EVIDENCE_MISSING": "no supplier answer on file",
+                    "REVOKED": "the previous proof was withdrawn",
+                }.get(state, "a live proof is required")
                 action = (
                     f'<span class="muted" data-note="confirmation-blocked"'
                     f' data-reason="{escape_value(state)}">confirmation blocked: '
-                    f"{escape_value(state.lower())}</span>"
+                    f"{escape_value(reason)}; a signed-in human verifier records the "
+                    "supplier block</span>"
                 )
             body_rows.append(
                 f'<tr data-booking-id="{escape_value(row["booking_id"])}"'
@@ -2311,17 +2452,20 @@ class Dashboard:
                 f"<td>{escape_value(row['unit_id'])}</td>"
                 f"<td>{escape_value(row['check_in'])} → {escape_value(row['check_out'])}</td>"
                 f"<td>{escape_value(row['status'])}</td>"
-                f"<td>{escape_value(proof_cell)}</td>"
+                f"<td>{escape_value(supplier_cell)}</td>"
                 f"<td>{escape_value(evidence_cell)}</td>"
+                f"<td>{escape_value(method_cell)}</td>"
                 f"<td>{escape_value(verified_cell)}</td>"
+                f"<td>{escape_value(proof_cell)}</td>"
                 f"<td>{action}</td>"
                 "</tr>"
             )
         return Markup(
             "<h3>Paid bookings awaiting the supplier block</h3>"
             '<table data-table="confirmation"><thead><tr>'
-            "<th>Booking</th><th>Unit</th><th>Dates</th><th>Status</th>"
-            "<th>Supplier proof</th><th>Evidence</th><th>Verified by</th><th>Action</th>"
+            "<th>Booking</th><th>Unit</th><th>Stay</th><th>Payment</th>"
+            "<th>Supplier</th><th>Evidence</th><th>Method</th><th>Verification</th>"
+            "<th>Supplier proof</th><th>Action</th>"
             f"</tr></thead><tbody>{''.join(body_rows)}</tbody></table>"
         )
 
@@ -3515,6 +3659,9 @@ class Dashboard:
         if segments == ["bookings", "confirm"]:
             self.require_page("inventory", principal)
             return self.post_confirm_request(request, principal)
+        if len(segments) == 3 and segments[0] == "bookings" and segments[2] == "block-proof":
+            self.require_page("inventory", principal)
+            return self.post_block_proof_request(request, principal, segments[1])
         if segments == ["invoices"]:
             self.require_page("finance", principal)
             return self.post_invoice_request(request, principal)
@@ -3531,6 +3678,7 @@ class Dashboard:
                 "POST /holds",
                 "POST /bookings",
                 "POST /bookings/confirm",
+                "POST /bookings/<id>/block-proof",
                 "POST /invoices",
                 "POST /payments/mark-paid",
             ],
@@ -3878,6 +4026,294 @@ class Dashboard:
             f"{' Audit ' + escape_value(audit_ref) + '.' if audit_ref else ''}</p>"
         )
         return _Response(200, self.render("inventory", principal, context), page="inventory")
+
+    # ------------------------------------------------------------------ #
+    # Stage E2: recording the supplier block (human verification)
+    # ------------------------------------------------------------------ #
+    def _verifier_label(self, principal: Principal) -> str:
+        """The name the proof carries: the person, marked as a person."""
+        return f"human:{principal.identity}"
+
+    def _is_machine_principal(self, principal: Principal) -> bool:
+        """Machine identities never sign a human verification.
+
+        The identity prefixes are the reliable signal here: a canonical machine role
+        has no page role, so it cannot become a :class:`Principal` at all. The role
+        comparison stays as the second net for a future page mapping.
+        """
+        from supplier_route import MACHINE_ACTOR_PREFIXES, MACHINE_ROLES
+
+        actor = str(principal.identity).strip().casefold()
+        return principal.role in MACHINE_ROLES or any(
+            actor.startswith(prefix) for prefix in MACHINE_ACTOR_PREFIXES
+        )
+
+    def _can_be_verifier(self, principal: Principal) -> bool:
+        """One rule for the form and the write path: a signed-in human, able to write."""
+        return (
+            principal.may_write
+            and principal.authenticated_via == "session"
+            and not self._is_machine_principal(principal)
+        )
+
+    def _require_human_verifier(self, principal: Principal) -> None:
+        """A supplier block names a human, so the caller must be one.
+
+        Two refusals, both fail-closed. A static role token proves a role, not a
+        person — its identity is the deployment default that every holder shares — so
+        it cannot sign a record that must name who verified. A machine principal may
+        not speak for a human even when it holds a session-shaped token.
+        """
+        if principal.authenticated_via != "session":
+            raise Forbidden(
+                "recording a supplier block requires a signed-in human verifier, not a "
+                "shared role token",
+                reason="HUMAN_SESSION_REQUIRED",
+                role=principal.role,
+            )
+        if self._is_machine_principal(principal):
+            raise Forbidden(
+                "a machine principal cannot act as the human verifier of a supplier block",
+                reason="MACHINE_PRINCIPAL_REFUSED",
+                role=principal.role,
+            )
+
+    def _block_proof_response(
+        self, principal: Principal, banner: Markup, *, status: int = 200
+    ) -> _Response:
+        context = self.view_inventory(principal)
+        context["banner"] = banner
+        return _Response(status, self.render("inventory", principal, context), page="inventory")
+
+    def _block_proof_refusal(self, principal: Principal, exc: DomainError) -> _Response:
+        return self._block_proof_response(
+            principal,
+            Markup(
+                f'<p class="err" role="alert" data-banner="block-proof-refused"'
+                f' data-code="{escape_value(exc.code)}">'
+                f"No supplier block was recorded: {escape_value(exc.message)} "
+                f"(code {escape_value(exc.code)}). The booking is unchanged.</p>"
+            ),
+            status=status_for(exc),
+        )
+
+    def post_block_proof_request(
+        self, request: "_Request", principal: Principal, booking_id: str
+    ) -> _Response:
+        """Bind one supplier answer to one booking, verified by the signed-in human.
+
+        The route owns authentication, the human check, the form token and the
+        references. It does not decide whether the evidence proves a block: the kernel
+        re-reads the booking, the evidence, the supplier relationship and the expiry
+        under its own transaction. The stay and the unit come from the booking row, so
+        a form cannot move the proof to other dates, and ``verified_by`` is composed
+        here from the session identity — a form that tries to name someone else is
+        refused, not quietly rewritten.
+        """
+        if not principal.may_write:
+            raise Forbidden("this role is read-only", role=principal.role)
+        self._require_human_verifier(principal)
+        self._require_form_token(request, principal)
+        booking_id = str(booking_id or "").strip()
+        if not booking_id:
+            raise InvalidInput("booking is required", field="booking_id")
+        verifier = self._verifier_label(principal)
+        forged = str(request.option("verified_by") or "").strip()
+        if forged and forged != verifier:
+            return self._block_proof_refusal(
+                principal,
+                DomainError(
+                    "the verifier is the signed-in caller; a form cannot name someone else",
+                    code="BLOCK_PROOF_VERIFIER_FORGED",
+                ),
+            )
+        evidence_id = str(request.option("evidence_id") or "").strip()
+        relationship_id = str(request.option("relationship_id") or "").strip()
+        method = str(request.option("verification_method") or "").strip().upper()
+        notes = str(request.option("notes") or "").strip()
+        if len(notes) > 200:
+            raise InvalidInput("the note is longer than 200 characters", field="notes")
+        missing = [
+            name
+            for name, value in (
+                ("evidence_id", evidence_id),
+                ("relationship_id", relationship_id),
+                ("verification_method", method),
+            )
+            if not value
+        ]
+        if missing:
+            raise InvalidInput("supplier block fields are incomplete", missing=missing)
+        booking_rows = self._rows(
+            "SELECT booking_id, unit_id, property_id, check_in, check_out, status FROM bookings"
+            " WHERE booking_id = ? AND agency_id = ?",
+            (booking_id, self.agency_id),
+        )
+        if not booking_rows:
+            return self._block_proof_refusal(
+                principal,
+                DomainError("unknown booking for this agency", code="BOOKING_NOT_FOUND"),
+            )
+        booking = booking_rows[0]
+        if str(booking["status"]) not in ("DEPOSIT_PAID", "PAID_IN_FULL"):
+            return self._block_proof_refusal(
+                principal,
+                DomainError(
+                    "only a paid booking can carry a supplier block",
+                    code="BLOCK_PROOF_BOOKING_NOT_PAYABLE",
+                    status=str(booking["status"]),
+                ),
+            )
+        relationships = self._rows(
+            "SELECT r.supplier_id FROM villa_supplier_relationships r"
+            " JOIN suppliers s ON s.supplier_id = r.supplier_id AND s.agency_id = r.agency_id"
+            " WHERE r.villa_supplier_relationship_id = ? AND r.agency_id = ?"
+            "  AND r.status = 'ACTIVE' AND s.status = 'ACTIVE'"
+            "  AND (r.unit_id = ? OR (r.unit_id IS NULL AND r.property_id = ?))",
+            (relationship_id, self.agency_id, booking["unit_id"], booking["property_id"]),
+        )
+        if not relationships:
+            return self._block_proof_refusal(
+                principal,
+                DomainError(
+                    "that supplier relationship does not cover this unit, or is not active",
+                    code="BLOCK_PROOF_SUPPLIER_NOT_AUTHORIZED",
+                ),
+            )
+        supplier_id = str(relationships[0]["supplier_id"])
+        existing = self._live_proof(booking_id)
+        if existing is not None:
+            return self._replay_or_refuse(
+                principal,
+                booking,
+                existing,
+                evidence_id=evidence_id,
+                relationship_id=relationship_id,
+                method=method,
+                verifier=verifier,
+            )
+        try:
+            proof_id = self._reservation_kernel(principal).record_supplier_block_proof(
+                booking_id=booking_id,
+                evidence_id=evidence_id,
+                supplier_id=supplier_id,
+                relationship_id=relationship_id,
+                check_in=booking["check_in"],
+                check_out=booking["check_out"],
+                verification_method=method,
+                verified_by=verifier,
+                notes=notes or None,
+            )
+        except DomainError as exc:
+            return self._block_proof_refusal(principal, exc)
+        except sqlite3.IntegrityError:
+            # Two submissions raced. Read the winner and answer from what exists;
+            # never report a write that did not happen.
+            existing = self._live_proof(booking_id)
+            if existing is not None:
+                return self._replay_or_refuse(
+                    principal,
+                    booking,
+                    existing,
+                    evidence_id=evidence_id,
+                    relationship_id=relationship_id,
+                    method=method,
+                    verifier=verifier,
+                )
+            return self._block_proof_refusal(
+                principal,
+                DomainError(
+                    "this booking already carries a live supplier block",
+                    code="BLOCK_PROOF_ALREADY_RECORDED",
+                ),
+            )
+        return self._block_proof_recorded(
+            principal,
+            booking,
+            proof_id=proof_id,
+            evidence_id=evidence_id,
+            verifier=verifier,
+            replayed=False,
+        )
+
+    def _live_proof(self, booking_id: str) -> Any:
+        rows = self._rows(
+            "SELECT proof_id, evidence_id, relationship_id, verification_method, verified_by,"
+            " expires_at FROM supplier_block_proofs"
+            " WHERE booking_id = ? AND agency_id = ? AND revoked_at IS NULL",
+            (booking_id, self.agency_id),
+        )
+        return rows[0] if rows else None
+
+    def _replay_or_refuse(
+        self,
+        principal: Principal,
+        booking: Any,
+        proof: Any,
+        *,
+        evidence_id: str,
+        relationship_id: str,
+        method: str,
+        verifier: str,
+    ) -> _Response:
+        """A repeat of the *same* submission is a replay; anything else is a refusal.
+
+        Sameness includes the verifier: person B resubmitting person A's proof is not
+        B's verification, so the banner must never put B's name on A's row.
+        """
+        identical = (
+            str(proof["evidence_id"]) == evidence_id
+            and str(proof["relationship_id"]) == relationship_id
+            and str(proof["verification_method"]) == method
+            and str(proof["verified_by"]) == verifier
+            and str(proof["expires_at"]) > to_iso(self.clock.now())
+        )
+        if identical:
+            return self._block_proof_recorded(
+                principal,
+                booking,
+                proof_id=str(proof["proof_id"]),
+                evidence_id=evidence_id,
+                verifier=str(proof["verified_by"]),
+                replayed=True,
+            )
+        return self._block_proof_refusal(
+            principal,
+            DomainError(
+                "a different live supplier block already exists for this booking",
+                code="BLOCK_PROOF_ALREADY_RECORDED",
+            ),
+        )
+
+    def _block_proof_recorded(
+        self,
+        principal: Principal,
+        booking: Any,
+        *,
+        proof_id: str,
+        evidence_id: str,
+        verifier: str,
+        replayed: bool,
+    ) -> _Response:
+        return self._block_proof_response(
+            principal,
+            Markup(
+                f'<p class="ok" role="status" data-banner="block-proof-recorded"'
+                f' data-booking-id="{escape_value(booking["booking_id"])}"'
+                f' data-proof-id="{escape_value(proof_id)}"'
+                f' data-evidence-id="{escape_value(evidence_id)}"'
+                f' data-verified-by="{escape_value(verifier)}"'
+                f' data-booking-status="{escape_value(booking["status"])}"'
+                f' data-replayed="{int(replayed)}">'
+                f"Supplier block {escape_value(proof_id)} recorded for booking "
+                f"{escape_value(booking['booking_id'])} — "
+                f"{escape_value(booking['unit_id'])} "
+                f"{escape_value(booking['check_in'])} → {escape_value(booking['check_out'])}. "
+                f"Verified by {escape_value(verifier)}"
+                f"{' (replay — nothing was written twice)' if replayed else ''}. "
+                "Confirmation is still a separate step.</p>"
+            ),
+        )
 
     # ------------------------------------------------------------------ #
     # Stage D writes: invoice issuance and Finance's mark-paid
