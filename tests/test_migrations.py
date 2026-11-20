@@ -268,6 +268,10 @@ _MIGRATION_020_OBJECTS = (
     "ux_vsr_agency_supplier_rel",
     "ux_evidence_agency_unit",
     "ux_bookings_agency_booking",
+    # G1: the parent keys and the event-kind/stay pins the attribution now relies on
+    "uq_sce_event_contact_kind",
+    "uq_bk_agency_stay",
+    "ux_evidence_callback_contact",
 )
 
 
@@ -336,5 +340,58 @@ class TestSupplierContactsMigration:
         try:
             assert conn.execute("SELECT * FROM availability_evidence").fetchall() == before
             assert conn.execute("SELECT COUNT(*) FROM evidence_supplier_attributions").fetchone()[0] == 0
+        finally:
+            conn.close()
+
+    def test_the_migrated_database_enforces_the_attribution_pins(self, tmp_path):
+        """G1: after 020 the pins must exist in the migrated file, not only in the source."""
+        db = tmp_path / "pins.db"
+        _old_database(db, skip_statements_mentioning=_MIGRATION_020_OBJECTS)
+        assert _run(env={"VILLA_DB": str(db)}).returncode == 0
+
+        conn = sqlite3.connect(str(db))
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+            columns = {row[1]: row for row in conn.execute(
+                "PRAGMA table_info(evidence_supplier_attributions)"
+            )}
+            assert columns["contact_event_kind"][3] == 1, "contact_event_kind must be NOT NULL"
+            assert "VERIFIED" in (columns["contact_event_kind"][4] or ""), (
+                "contact_event_kind must be CHECKed to VERIFIED, got "
+                f"{columns['contact_event_kind'][4]!r}"
+            )
+
+            foreign_keys = list(conn.execute(
+                "PRAGMA foreign_key_list(evidence_supplier_attributions)"
+            ))
+            targets = {row[2] for row in foreign_keys}
+            assert {"supplier_contact_events", "bookings"} <= targets, targets
+            by_parent: dict[str, list[dict]] = {}
+            for row in foreign_keys:
+                by_parent.setdefault(row[2], []).append(dict(zip(
+                    ("id", "seq", "table", "from", "to", "on_update", "on_delete", "match"),
+                    row,
+                )))
+            event_from = sorted(fk["from"] for fk in by_parent["supplier_contact_events"])
+            assert event_from == ["contact_event_id", "contact_event_kind", "contact_id"], event_from
+            stay_pairs = {(fk["from"], fk["to"]) for fk in by_parent["bookings"]}
+            assert {
+                ("agency_id", "agency_id"),
+                ("booking_id", "booking_id"),
+                ("unit_id", "unit_id"),
+                ("block_start", "check_in"),
+                ("block_end", "check_out"),
+            } <= stay_pairs, stay_pairs
+
+            indexes = {row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            )}
+            assert {"uq_sce_event_contact_kind", "uq_bk_agency_stay"} <= indexes
+            assert list(conn.execute("PRAGMA foreign_key_check")) == []
+
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute(
+                    "INSERT INTO evidence_supplier_attributions (evidence_id) VALUES ('bare')"
+                )
         finally:
             conn.close()

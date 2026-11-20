@@ -369,6 +369,12 @@ CREATE TABLE availability_evidence (
     evidence_level TEXT    NOT NULL CHECK (evidence_level IN ('A','B','C','D')),
     source_type    TEXT    NOT NULL CHECK (source_type IN ('property_api','booking_engine','manager_written','ical','memory','manual_ops')),
     source_ref     TEXT    NOT NULL CHECK (length(source_ref) >= 1),
+    -- The contact this capture is a callback for, derived from the capture's own source
+    -- reference. It exists so an attribution can be pinned to evidence that is genuinely
+    -- a supplier callback for that contact, rather than to any other row of the same unit.
+    callback_verified_contact TEXT GENERATED ALWAYS AS (
+        CASE WHEN source_ref LIKE 'callback_verified:%' THEN substr(source_ref, 19) END
+    ) STORED,
     captured_at    TEXT    NOT NULL,
     valid_until    TEXT    NOT NULL,
     result         TEXT    NOT NULL CHECK (result IN ('AVAILABLE','NOT_AVAILABLE','AVAILABLE_BUT_RESTRICTED','UNKNOWN')),
@@ -388,6 +394,11 @@ CREATE TABLE availability_evidence (
 );
 
 CREATE INDEX ix_evidence_unit ON availability_evidence (unit_id, captured_at);
+
+-- Parent key for the attribution's contact pin: (evidence, contact) is unique only when
+-- the evidence is a callback capture, so a NULL derived value can never satisfy the FK.
+CREATE UNIQUE INDEX ux_evidence_callback_contact
+    ON availability_evidence (evidence_id, callback_verified_contact);
 
 -- --------------------------------------------------------------------------
 -- Availability checks (§7): the request half of CHECK AVAILABILITY
@@ -2343,6 +2354,16 @@ CREATE TABLE supplier_contact_events (
 
 CREATE UNIQUE INDEX ux_sce_one_verified ON supplier_contact_events (contact_id) WHERE kind = 'VERIFIED';
 
+-- Parent key for the attribution's event pin: an attribution may only name a VERIFIED
+-- event, and SQLite/PostgreSQL require a UNIQUE key over exactly the referenced columns.
+CREATE UNIQUE INDEX uq_sce_event_contact_kind
+    ON supplier_contact_events (event_id, contact_id, kind);
+
+-- Parent key for the attribution's stay pin: the block window it claims must be the
+-- booking's own stay, so an assertion for one booking cannot be filed under another.
+CREATE UNIQUE INDEX uq_bk_agency_stay
+    ON bookings (agency_id, booking_id, unit_id, check_in, check_out);
+
 CREATE TRIGGER trg_supplier_contact_events_no_update
     BEFORE UPDATE ON supplier_contact_events
     FOR EACH ROW EXECUTE FUNCTION villa_reject_mutation();
@@ -2366,6 +2387,10 @@ CREATE TABLE evidence_supplier_attributions (
     relationship_id       TEXT    NOT NULL,
     contact_id            TEXT    NOT NULL,
     contact_event_id      TEXT    NOT NULL,
+    -- The event pin carries the kind, so the foreign key below can require VERIFIED: a
+    -- suspended or merely registered contact cannot be the source of an attribution.
+    contact_event_kind    TEXT    NOT NULL DEFAULT 'VERIFIED'
+                                  CHECK (contact_event_kind = 'VERIFIED'),
     source_kind           TEXT    NOT NULL CHECK (source_kind IN ('CALLBACK_VERIFIED')),
     block_start           TEXT    NOT NULL,
     block_end             TEXT    NOT NULL,
@@ -2377,6 +2402,10 @@ CREATE TABLE evidence_supplier_attributions (
     CONSTRAINT pk_evidence_supplier_attributions PRIMARY KEY (evidence_id),
     CONSTRAINT fk_esa_evidence FOREIGN KEY (agency_id, evidence_id, unit_id)
         REFERENCES availability_evidence (agency_id, evidence_id, unit_id),
+    -- The capture must be a callback capture *for this contact*: the parent's derived
+    -- column is NULL for any other evidence row, so no FK match exists.
+    CONSTRAINT fk_esa_evidence_capture FOREIGN KEY (evidence_id, contact_id)
+        REFERENCES availability_evidence (evidence_id, callback_verified_contact),
     CONSTRAINT fk_esa_booking FOREIGN KEY (agency_id, booking_id)
         REFERENCES bookings (agency_id, booking_id),
     CONSTRAINT fk_esa_supplier FOREIGN KEY (agency_id, supplier_id)
@@ -2385,8 +2414,14 @@ CREATE TABLE evidence_supplier_attributions (
         REFERENCES villa_supplier_relationships (agency_id, supplier_id, villa_supplier_relationship_id),
     CONSTRAINT fk_esa_contact FOREIGN KEY (contact_id, agency_id, supplier_id)
         REFERENCES supplier_contacts (contact_id, agency_id, supplier_id),
-    CONSTRAINT fk_esa_contact_event FOREIGN KEY (contact_event_id, contact_id)
-        REFERENCES supplier_contact_events (event_id, contact_id),
+    CONSTRAINT fk_esa_contact_event FOREIGN KEY (contact_event_id, contact_id, contact_event_kind)
+        REFERENCES supplier_contact_events (event_id, contact_id, kind),
+    -- The block window must be the booking's own stay for its own unit: this is the
+    -- structural version of "the assertion is about this booking", so a correct-looking
+    -- assertion cannot be filed under a different stay.
+    CONSTRAINT fk_esa_booking_stay FOREIGN KEY
+        (agency_id, booking_id, unit_id, block_start, block_end)
+        REFERENCES bookings (agency_id, booking_id, unit_id, check_in, check_out),
     CONSTRAINT ck_esa_block_window CHECK (block_start < block_end),
     CONSTRAINT ck_esa_callback_after_confirmation CHECK (callback_at >= supplier_confirmed_at)
 );

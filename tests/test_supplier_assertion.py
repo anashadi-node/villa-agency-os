@@ -842,3 +842,165 @@ class TestOperatorReadModels(AssertionCase):
             booking_id=booking.booking_id, session_token=self.rm()
         )
         self.assertEqual(expired["state"], "EXPIRED")
+
+
+# --------------------------------------------------------------------------- #
+# Checkpoint G1: the database boundary enforces the attribution contract
+# --------------------------------------------------------------------------- #
+class TestDatabaseBoundary(AssertionCase):
+    """Raw SQL against the schema, with the kernel's own rows as the reference.
+
+    These tests bypass ``record_supplier_assertion`` on purpose: the question is not
+    whether the service refuses to write a wrong row (it does, tested above) but whether
+    the database refuses it when the service is not the writer. Every case starts from a
+    real, kernel-produced attribution and changes exactly one field.
+    """
+
+    def setUp(self):
+        super().setUp()
+        _, self.booking, self.evidence, _ = self.ready()
+        self.contact = self.kernel.conn.execute(
+            "SELECT contact_id FROM evidence_supplier_attributions WHERE evidence_id = ?",
+            (self.evidence,),
+        ).fetchone()[0]
+
+    # -- fixtures ---------------------------------------------------------- #
+    def _columns(self, table: str) -> list[str]:
+        return [row[1] for row in self.kernel.conn.execute(f"PRAGMA table_info({table})")]
+
+    def _valid(self) -> dict:
+        columns = self._columns("evidence_supplier_attributions")
+        row = self.kernel.conn.execute(
+            f"SELECT {', '.join(columns)} FROM evidence_supplier_attributions WHERE evidence_id = ?",
+            (self.evidence,),
+        ).fetchone()
+        self.assertIsNotNone(row, "the kernel did not write the attribution this test mutates")
+        return dict(zip(columns, row))
+
+    def _plant_evidence(self, evidence_id: str, *, unit_id: str | None = None, source_ref: str | None = None) -> None:
+        """A second evidence row, so a negative case fails on its own FK and not on the PK."""
+        columns = self._columns("availability_evidence")
+        row = self.kernel.conn.execute(
+            f"SELECT {', '.join(columns)} FROM availability_evidence WHERE evidence_id = ?",
+            (self.evidence,),
+        ).fetchone()
+        values = dict(zip(columns, row))
+        values["evidence_id"] = evidence_id
+        if unit_id is not None:
+            values["unit_id"] = unit_id
+        if source_ref is not None:
+            values["source_ref"] = source_ref
+        self.kernel.conn.execute(
+            f"INSERT INTO availability_evidence ({', '.join(columns)})"
+            f" VALUES ({', '.join('?' for _ in columns)})",
+            tuple(values[c] for c in columns),
+        )
+
+    def _write(self, evidence_id: str, **over) -> None:
+        values = self._valid()
+        values["evidence_id"] = evidence_id
+        values.update(over)
+        self.kernel.conn.execute(
+            f"INSERT INTO evidence_supplier_attributions ({', '.join(values)})"
+            f" VALUES ({', '.join('?' for _ in values)})",
+            tuple(values.values()),
+        )
+
+    def _refused_by_database(self, evidence_id: str, **over) -> str:
+        with self.assertRaises(sqlite3.IntegrityError) as ctx:
+            self._write(evidence_id, **over)
+        self.kernel.conn.rollback()
+        return str(ctx.exception)
+
+    # -- A / E: the referenced evidence must be the capture that was attributed -- #
+    def test_evidence_of_another_unit_is_refused(self):
+        self._plant_evidence("evd_other_unit")
+        message = self._refused_by_database("evd_other_unit", unit_id="unit_9")
+        self.assertIn("FOREIGN KEY", message.upper())
+
+    def test_a_nonexistent_evidence_capture_is_refused(self):
+        message = self._refused_by_database("evd_does_not_exist")
+        self.assertIn("FOREIGN KEY", message.upper())
+
+    # -- B: the source event must be a VERIFIED event, not merely an existing one -- #
+    def test_the_kind_column_refuses_anything_but_verified(self):
+        self._plant_evidence("evd_kind")
+        message = self._refused_by_database("evd_kind", contact_event_kind="SUSPENDED")
+        self.assertIn("CHECK", message.upper())
+
+    def test_a_suspended_event_cannot_be_the_source_of_an_attribution(self):
+        gm = self.login("gm-1", "gm")
+        suspended = self.kernel.suspend_supplier_contact(
+            contact_id=self.contact, reason="owner withdrew the number", session_token=gm,
+            idempotency_key="idem_suspend_g1",
+        )
+        self._plant_evidence("evd_suspended")
+        message = self._refused_by_database("evd_suspended", contact_event_id=suspended)
+        self.assertIn("FOREIGN KEY", message.upper())
+
+    def test_a_nonexistent_event_is_refused(self):
+        self._plant_evidence("evd_no_event")
+        message = self._refused_by_database("evd_no_event", contact_event_id="sce_missing")
+        self.assertIn("FOREIGN KEY", message.upper())
+
+    # -- D: no NULL may switch a foreign key off (SQLite skips NULL composites) -- #
+    def test_a_null_event_kind_is_refused(self):
+        self._plant_evidence("evd_null_kind")
+        message = self._refused_by_database("evd_null_kind", contact_event_kind=None)
+        self.assertIn("NOT NULL", message.upper())
+
+    def test_a_null_event_id_is_refused(self):
+        self._plant_evidence("evd_null_event")
+        message = self._refused_by_database("evd_null_event", contact_event_id=None)
+        self.assertIn("NOT NULL", message.upper())
+
+    # -- C: another tenant cannot be named, even with a valid local row -- #
+    def test_a_cross_tenant_attribution_is_refused(self):
+        self._plant_evidence("evd_tenant")
+        message = self._refused_by_database("evd_tenant", agency_id="agency_other")
+        self.assertIn("FOREIGN KEY", message.upper())
+
+    # -- A, second half: the block window must be this booking's own stay -- #
+    def test_the_block_window_must_be_the_bookings_stay(self):
+        self._plant_evidence("evd_stay")
+        message = self._refused_by_database(
+            "evd_stay", block_start="2030-01-01", block_end="2030-01-03"
+        )
+        self.assertIn("FOREIGN KEY", message.upper())
+
+    # -- F: an attribution cannot be rewritten once written -- #
+    def test_an_attribution_cannot_be_rewritten(self):
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.kernel.conn.execute(
+                "UPDATE evidence_supplier_attributions SET callback_by = 'someone-else'"
+                " WHERE evidence_id = ?",
+                (self.evidence,),
+            )
+        self.kernel.conn.rollback()
+        self.assertEqual(self._valid()["callback_by"], "rm-1")
+
+    # -- A, core: the capture must be a callback capture for *this* contact -- #
+    def test_evidence_that_is_not_a_supplier_callback_is_refused(self):
+        self._plant_evidence("evd_plain_note", source_ref="letter-from-owner")
+        message = self._refused_by_database("evd_plain_note")
+        self.assertIn("FOREIGN KEY", message.upper())
+
+    def test_evidence_for_a_different_contact_is_refused(self):
+        self._plant_evidence("evd_other_contact", source_ref="callback_verified:ctc_someone_else")
+        message = self._refused_by_database("evd_other_contact")
+        self.assertIn("FOREIGN KEY", message.upper())
+
+    # -- the happy path still works, and the tree stays clean -- #
+    def test_a_complete_row_still_inserts_and_the_tree_is_fk_clean(self):
+        self._plant_evidence("evd_happy")
+        self._write("evd_happy")
+        stored = self.kernel.conn.execute(
+            "SELECT contact_event_kind, source_kind FROM evidence_supplier_attributions"
+            " WHERE evidence_id = ?",
+            ("evd_happy",),
+        ).fetchone()
+        self.assertEqual(tuple(stored), ("VERIFIED", "CALLBACK_VERIFIED"))
+        self.assertEqual(
+            list(self.kernel.conn.execute("PRAGMA foreign_key_check")), [],
+            "the attribution left a dangling reference somewhere in the tree",
+        )
