@@ -237,7 +237,10 @@ class TestTheProofMustStillBeGood(SupplierProofCase):
         _, booking = self.paid()
         proof = supplier_block_proof(self.kernel, booking.booking_id)
         self.kernel.revoke_supplier_block_proof(
-            proof_id=proof, reason="villa withdrew the block", actor="user:manager_1"
+            proof_id=proof,
+            reason="villa withdrew the block",
+            actor="user:manager_1",
+            actor_role="reservation_manager",
         )
         self.assertEqual(
             self.code(
@@ -412,7 +415,12 @@ class TestConfirmationIsAtomicAndIdempotent(SupplierProofCase):
     def test_a_refused_confirmation_leaves_no_partial_state(self):  # M, O
         hold, booking = self.paid()
         other = supplier_block_proof(self.kernel, booking.booking_id)
-        self.kernel.revoke_supplier_block_proof(proof_id=other, reason="wrong dates on the letter")
+        self.kernel.revoke_supplier_block_proof(
+            proof_id=other,
+            reason="wrong dates on the letter",
+            actor="user:ops-1",
+            actor_role="reservation_agent",
+        )
         before = self.snapshots(booking.booking_id)
         self.assertEqual(
             self.code(
@@ -594,6 +602,9 @@ class TestConfirmationDistrustsTheRow(SupplierProofCase):
                 check_out=booking.check_out,
                 verification_method="MANAGER_WRITTEN",
                 verified_by="user:ops-1",
+                actor="user:ops-1",
+                verifier_role="reservation_agent",
+                idempotency_key="idem_restricted_0001",
             ),
             "BLOCK_PROOF_DATES_RESTRICTED",
         )
@@ -630,7 +641,12 @@ class TestConfirmationDistrustsTheRow(SupplierProofCase):
         _, booking = self.paid()
         proof = supplier_block_proof(self.kernel, booking.booking_id)
 
-        self.kernel.revoke_supplier_block_proof(proof_id=proof, reason="supplier pulled the block")
+        self.kernel.revoke_supplier_block_proof(
+            proof_id=proof,
+            reason="supplier pulled the block",
+            actor="user:ops-1",
+            actor_role="reservation_agent",
+        )
         row = self.kernel.get_supplier_block_proof(proof)
         self.assertIsNotNone(row["revoked_at"])
         self.assertEqual(row["revoke_reason"], "supplier pulled the block")
@@ -641,3 +657,407 @@ class TestConfirmationDistrustsTheRow(SupplierProofCase):
                 (proof,),
             )
         self.kernel.conn.rollback()
+
+
+class TestTheWriteHasAnOwnerAndAKey(SupplierProofCase):
+    """E3: who may sign, what a retry means, and what the trail records."""
+
+    def _seed(self) -> None:
+        ensure_supplier(self.kernel, unit_id="unit_1", property_id="prop_1")
+
+    def _prove(self, booking, *, key="idem_e3_0001", **overrides):
+        options = dict(
+            booking_id=booking.booking_id,
+            evidence_id=overrides.pop("evidence_id", None) or block_proof(self.kernel, "unit_1"),
+            supplier_id="sup_unit_1",
+            relationship_id="vsr_unit_1",
+            check_in=booking.check_in,
+            check_out=booking.check_out,
+            verification_method="MANAGER_WRITTEN",
+            verified_by="user:ops-1",
+            actor="user:ops-1",
+            verifier_role="reservation_agent",
+            idempotency_key=key,
+        )
+        options.update(overrides)
+        return self.kernel.record_supplier_block_proof(**options)
+
+    def _audit(self, action: str):
+        return [
+            row for row in self.kernel.audit_trail() if row["action"] == action
+        ]
+
+    def test_a_machine_principal_cannot_sign_a_human_verification(self):
+        self._seed()
+        _, booking = self.paid()
+        self.assertEqual(
+            self.code(self._prove, booking, verifier_role="ai_service"),
+            "BLOCK_PROOF_MACHINE_VERIFIER",
+        )
+        self.assertEqual(
+            self.code(
+                self._prove, booking, actor="ai:planner", verified_by="ai:planner",
+                idempotency_key="idem_e3_0002",
+            ),
+            "BLOCK_PROOF_MACHINE_VERIFIER",
+        )
+        self.assertEqual(
+            self.kernel.conn.execute(
+                "SELECT COUNT(*) FROM supplier_block_proofs"
+            ).fetchone()[0],
+            0,
+        )
+
+    def test_verified_by_must_name_the_acting_human(self):
+        self._seed()
+        _, booking = self.paid()
+        self.assertEqual(
+            self.code(self._prove, booking, verified_by="user:someone_else"),
+            "BLOCK_PROOF_VERIFIER_MISMATCH",
+        )
+
+    def test_an_unnamed_role_cannot_verify(self):
+        self._seed()
+        _, booking = self.paid()
+        for role in ("kernel", "root", "banana"):
+            self.assertEqual(
+                self.code(self._prove, booking, verifier_role=role),
+                "BLOCK_PROOF_VERIFIER_ROLE_UNKNOWN",
+                role,
+            )
+        # ``system`` is a machine id, so the machine refusal speaks first.
+        self.assertEqual(
+            self.code(self._prove, booking, verifier_role="system"),
+            "BLOCK_PROOF_MACHINE_VERIFIER",
+        )
+
+    def test_the_same_key_and_payload_replays_instead_of_writing_twice(self):
+        self._seed()
+        _, booking = self.paid()
+        evidence = block_proof(self.kernel, "unit_1")
+        first = self._prove(booking, evidence_id=evidence, key="idem_e3_replay")
+        second = self._prove(booking, evidence_id=evidence, key="idem_e3_replay")
+
+        self.assertEqual(first, second)
+        self.assertEqual(
+            self.kernel.conn.execute(
+                "SELECT COUNT(*) FROM supplier_block_proofs"
+            ).fetchone()[0],
+            1,
+        )
+        self.assertEqual(len(self._audit("supplier_block.recorded")), 1)
+
+    def test_the_same_key_with_a_different_payload_is_refused(self):
+        self._seed()
+        _, booking = self.paid()
+        self._prove(booking, key="idem_e3_conflict")
+        self.assertEqual(
+            self.code(
+                self._prove,
+                booking,
+                key="idem_e3_conflict",
+                verification_method="MANAGER_CALL",
+            ),
+            "IDEMPOTENCY_CONFLICT",
+        )
+
+    def test_recording_leaves_one_audit_row_and_a_valid_chain(self):
+        self._seed()
+        _, booking = self.paid()
+        proof = self._prove(booking)
+
+        rows = self._audit("supplier_block.recorded")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["entity_id"], proof)
+        self.assertTrue(self.kernel.verify_audit_chain())
+
+    def test_revocation_is_audited_once_and_retrying_is_a_no_op(self):
+        self._seed()
+        _, booking = self.paid()
+        proof = self._prove(booking)
+
+        self.kernel.revoke_supplier_block_proof(
+            proof_id=proof,
+            reason="villa pulled the block",
+            actor="user:ops-1",
+            actor_role="reservation_agent",
+        )
+        self.kernel.revoke_supplier_block_proof(
+            proof_id=proof,
+            reason="villa pulled the block",
+            actor="user:ops-1",
+            actor_role="reservation_agent",
+        )
+
+        rows = self._audit("supplier_block.revoked")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["entity_id"], proof)
+        self.assertTrue(self.kernel.verify_audit_chain())
+
+    def test_a_machine_principal_cannot_revoke(self):
+        self._seed()
+        _, booking = self.paid()
+        proof = self._prove(booking)
+        self.assertEqual(
+            self.code(
+                self.kernel.revoke_supplier_block_proof,
+                proof_id=proof,
+                reason="not yours to revoke",
+                actor="ai:planner",
+                actor_role="ai_service",
+            ),
+            "BLOCK_PROOF_MACHINE_VERIFIER",
+        )
+        self.assertIsNone(self.kernel.get_supplier_block_proof(proof)["revoked_at"])
+
+    def test_a_machine_principal_cannot_confirm_a_booking(self):
+        self._seed()
+        _, booking = self.paid()
+        proof = self._prove(booking)
+        self.assertEqual(
+            self.code(
+                self.kernel.confirm_booking,
+                booking_id=booking.booking_id,
+                block_proof_id=proof,
+                command_id="cmd_machine_confirm",
+                actor="ai:planner",
+                actor_role="ai_service",
+            ),
+            "MACHINE_PRINCIPAL_REFUSED",
+        )
+        self.assertNotEqual(
+            self.kernel.get_booking(booking.booking_id)["status"], "CONFIRMED"
+        )
+
+
+class TestExpiryIsInstantsNotStrings(SupplierProofCase):
+    """E3-F: a timestamp is a moment, not a byte string."""
+
+    def _seed(self):
+        ensure_supplier(self.kernel, unit_id="unit_1", property_id="prop_1")
+
+    def _proof(self, booking, expires_at, *, key):
+        return self.kernel.record_supplier_block_proof(
+            booking_id=booking.booking_id,
+            evidence_id=block_proof(
+                self.kernel, valid_until="2027-06-01T00:00:00+00:00"
+            ),
+            supplier_id="sup_unit_1",
+            relationship_id="vsr_unit_1",
+            check_in=booking.check_in,
+            check_out=booking.check_out,
+            verification_method="MANAGER_WRITTEN",
+            verified_by="user:ops-1",
+            actor="user:ops-1",
+            verifier_role="reservation_agent",
+            idempotency_key=key,
+            expires_at=expires_at,
+        )
+
+    def test_an_offset_expiry_is_the_same_instant_as_utc(self):
+        self._seed()
+        _, booking = self.paid()
+        # Evidence runs to 2027-06-01T00:00:00+00:00; this is exactly that instant,
+        # written in another offset. A byte comparison would call it *after* it.
+        proof = self._proof(booking, "2027-05-31T19:00:00-05:00", key="idem_tz_0001")
+        row = self.kernel.get_supplier_block_proof(proof)
+        self.assertEqual(row["expires_at"], "2027-06-01T00:00:00+00:00")
+
+    def test_an_offset_expiry_past_the_evidence_is_refused(self):
+        self._seed()
+        _, booking = self.paid()
+        self.assertEqual(
+            self.code(self._proof, booking, "2027-06-01T09:00:01+09:00", key="idem_tz_0002"),
+            "BLOCK_PROOF_INVALID_EXPIRY",
+        )
+
+    def test_a_malformed_expiry_is_refused(self):
+        self._seed()
+        _, booking = self.paid()
+        for bad in ("next tuesday", "", "2027-06-01", "2027-06-01T00:00:00"):
+            with self.assertRaises(DomainError, msg=bad):
+                self._proof(booking, bad, key=f"idem_tz_bad_{len(bad)}_{bad[:2]}")
+        self.assertEqual(
+            self.kernel.conn.execute(
+                "SELECT COUNT(*) FROM supplier_block_proofs"
+            ).fetchone()[0],
+            0,
+        )
+
+    def test_revoking_expired_and_replacing_still_needs_a_valid_answer(self):
+        self._seed()
+        _, booking = self.paid()
+        proof = self._proof(booking, "2027-06-01T00:00:00+00:00", key="idem_tz_0003")
+        self.kernel.revoke_supplier_block_proof(
+            proof_id=proof, reason="wrong letter", actor="user:ops-1",
+            actor_role="reservation_agent",
+        )
+        replacement = self._proof(booking, "2027-06-01T00:00:00+00:00", key="idem_tz_0004")
+        self.assertNotEqual(proof, replacement)
+        self.assertEqual(
+            self.kernel.conn.execute(
+                "SELECT COUNT(*) FROM supplier_block_proofs WHERE revoked_at IS NULL"
+            ).fetchone()[0],
+            1,
+        )
+
+
+class TestAKernelCannotLendSomebodyElsesAuthority(SupplierProofCase):
+    """E3-B: the identity is the one the kernel is bound to, not one a call supplies."""
+
+    def _reprove(self, kernel, booking, *, key, **overrides):
+        options = dict(
+            booking_id=booking.booking_id,
+            evidence_id=block_proof(kernel, unit_id=booking.unit_id),
+            supplier_id="sup_unit_1",
+            relationship_id="vsr_unit_1",
+            check_in=booking.check_in,
+            check_out=booking.check_out,
+            verification_method="MANAGER_WRITTEN",
+            verified_by="user:ops-1",
+            idempotency_key=key,
+        )
+        options.update(overrides)
+        return kernel.record_supplier_block_proof(**options)
+
+    def test_a_machine_bound_kernel_cannot_sign_with_human_arguments(self):
+        ensure_supplier(self.kernel, unit_id="unit_1", property_id="prop_1")
+        _, booking = self.paid()
+        machine = RK.ReservationKernel(
+            self.kernel.conn,
+            clock=self.kernel.clock,
+            ids=self.kernel.ids,
+            actor="ai:planner",
+            actor_role="ai_service",
+        )
+        self.assertEqual(
+            self.code(
+                self._reprove,
+                machine,
+                booking,
+                key="idem_bound_machine",
+                actor="user:ops-1",
+                verifier_role="reservation_agent",
+            ),
+            "BLOCK_PROOF_MACHINE_VERIFIER",
+        )
+        self.assertEqual(
+            self.kernel.conn.execute(
+                "SELECT COUNT(*) FROM supplier_block_proofs"
+            ).fetchone()[0],
+            0,
+        )
+
+    def test_a_bound_kernel_cannot_sign_as_somebody_else(self):
+        ensure_supplier(self.kernel, unit_id="unit_1", property_id="prop_1")
+        _, booking = self.paid()
+        bound = RK.ReservationKernel(
+            self.kernel.conn,
+            clock=self.kernel.clock,
+            ids=self.kernel.ids,
+            actor="user:ops-1",
+            actor_role="reservation_agent",
+        )
+        self.assertEqual(
+            self.code(
+                self._reprove,
+                bound,
+                booking,
+                key="idem_bound_third_party",
+                verified_by="user:someone_else",
+                actor="user:someone_else",
+                verifier_role="reservation_manager",
+            ),
+            "BLOCK_PROOF_ACTOR_NOT_BOUND",
+        )
+
+    def test_a_machine_bound_kernel_cannot_confirm_even_without_arguments(self):
+        ensure_supplier(self.kernel, unit_id="unit_1", property_id="prop_1")
+        _, booking = self.paid()
+        proof = supplier_block_proof(self.kernel, booking.booking_id)
+        machine = RK.ReservationKernel(
+            self.kernel.conn,
+            clock=self.kernel.clock,
+            ids=self.kernel.ids,
+            actor="ai:planner",
+            actor_role="ai_service",
+        )
+        self.assertEqual(
+            self.code(
+                machine.confirm_booking,
+                booking_id=booking.booking_id,
+                block_proof_id=proof,
+                command_id="cmd_machine_bound_confirm",
+            ),
+            "MACHINE_PRINCIPAL_REFUSED",
+        )
+
+    def test_a_proof_signed_by_a_machine_cannot_unlock_confirmation(self):
+        ensure_supplier(self.kernel, unit_id="unit_1", property_id="prop_1")
+        _, booking = self.paid()
+        proof = supplier_block_proof(self.kernel, booking.booking_id)
+        # A row that arrived another way — a direct INSERT, or data written before this
+        # contract. The confirmation gate reads what the row *says*, not what the writer
+        # meant, and it must not accept a machine's signature. The kernel-written proof
+        # is revoked first so the one-live-proof index still holds.
+        self.kernel.revoke_supplier_block_proof(
+            proof_id=proof,
+            reason="replaced by a pre-contract row",
+            actor="user:ops-1",
+            actor_role="reservation_agent",
+        )
+        stamp = "2026-09-21T08:00:00+00:00"
+        self.kernel.conn.execute(
+            "INSERT INTO supplier_block_proofs (proof_id, agency_id, booking_id, unit_id,"
+            " check_in, check_out, supplier_id, relationship_id, evidence_id,"
+            " verification_method, verified_by, verified_at, expires_at, created_at)"
+            " VALUES ('proof_legacy_machine', ?, ?, ?, ?, ?, 'sup_unit_1', 'vsr_unit_1', ?,"
+            " 'MANAGER_WRITTEN', 'ai:planner', ?, ?, ?)",
+            (
+                self.kernel.agency_id,
+                booking.booking_id,
+                booking.unit_id,
+                booking.check_in,
+                booking.check_out,
+                self.kernel.conn.execute(
+                    "SELECT evidence_id FROM availability_evidence LIMIT 1"
+                ).fetchone()[0],
+                stamp,
+                "2027-06-01T00:00:00+00:00",
+                stamp,
+            ),
+        )
+        self.kernel.conn.commit()
+
+        self.assertEqual(
+            self.code(
+                self.kernel.confirm_booking,
+                booking_id=booking.booking_id,
+                block_proof_id="proof_legacy_machine",
+                command_id="cmd_machine_signed_confirm",
+            ),
+            "BLOCK_PROOF_VERIFIER_NOT_HUMAN",
+        )
+
+    def test_a_retry_after_the_booking_moved_on_answers_with_the_original_proof(self):
+        ensure_supplier(self.kernel, unit_id="unit_1", property_id="prop_1")
+        _, booking = self.paid()
+        evidence = block_proof(self.kernel, unit_id="unit_1")
+        proof = self._reprove(
+            self.kernel, booking, key="idem_after_confirm", evidence_id=evidence,
+            actor="user:ops-1", verifier_role="reservation_agent",
+        )
+        self.kernel.confirm_booking(
+            booking_id=booking.booking_id,
+            block_proof_id=proof,
+            command_id="cmd_confirm_before_retry",
+            actor="user:reservation-1",
+            actor_role="reservation_agent",
+        )
+
+        replay = self._reprove(
+            self.kernel, booking, key="idem_after_confirm", evidence_id=evidence,
+            actor="user:ops-1", verifier_role="reservation_agent",
+        )
+
+        self.assertEqual(replay, proof)

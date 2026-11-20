@@ -37,6 +37,8 @@ __all__ = [
     "HUMAN_ROLE_IDS",
     "MONEY_OUT_APPROVER_ROLES",
     "MFA_REQUIRED_ROLES",
+    "PAGE_ROLE_BY_CANONICAL",
+    "PAGE_ROLE_IDS",
     "ROLE_ALIASES",
     "ROLE_CAPABILITIES",
     "ROLE_IDS",
@@ -45,7 +47,12 @@ __all__ = [
     "approval_ladder",
     "canonical_role",
     "is_ai_role",
+    "MACHINE_ACTOR_PREFIXES",
+    "MACHINE_ROLE_IDS",
     "is_known_role",
+    "is_machine_identity",
+    "is_machine_role",
+    "is_named_human_role",
     "may",
     "role_rank",
 ]
@@ -181,6 +188,27 @@ ROLE_CAPABILITIES: Mapping[str, frozenset[str]] = MappingProxyType(
     }
 )
 
+#: The inverse of the canonical ids: a session carries a canonical role (ADR-0035), and
+#: the dashboard needs the page word before it can ask a page anything. One canonical
+#: authority maps to exactly one page set — ``auditor`` is here because the page role
+#: exists even though it never approves anything. Canonical roles with no page set
+#: (``system_admin``, ``commercial_manager``, …) get **no** dashboard access rather than
+#: a guess. It lives in this module because the kernel now needs the same vocabulary to
+#: answer "is this a named human role?" without importing the dashboard.
+PAGE_ROLE_BY_CANONICAL: Mapping[str, str] = MappingProxyType(
+    {
+        "owner": "owner",
+        "gm": "gm",
+        "finance_manager": "finance",
+        "reservation_manager": "operations",
+        "reservation_agent": "reservation",
+        "auditor": "auditor",
+    }
+)
+
+#: Every page word above, as a set to test against.
+PAGE_ROLE_IDS: frozenset[str] = frozenset(PAGE_ROLE_BY_CANONICAL.values())
+
 #: Roles whose approval is required before money leaves (ADR-0036's ladder, minus the AI
 #: maker and the human hand that executes).
 MONEY_OUT_APPROVER_ROLES: frozenset[str] = frozenset(
@@ -213,6 +241,54 @@ def canonical_role(role: Any) -> Optional[str]:
 def is_known_role(role: Any) -> bool:
     """True when ``role`` is a canonical id or a known legacy alias."""
     return canonical_role(role) is not None
+
+
+#: Role words that name a machine principal, whatever capability it holds. ``ai_service``
+#: is ADR-0018's maker; ``system_service`` and ``system`` are plumbing. A machine is
+#: refused the role outright rather than asked to clear a permission it must never hold
+#: (ADR-0036: an AI prepares, a human decides).
+MACHINE_ROLE_IDS: tuple[str, ...] = ("ai_service", "system_service", "system")
+
+#: Identity prefixes that mark a machine actor even when the role string looks human.
+#: Kept here next to :data:`MACHINE_ROLE_IDS` so one vocabulary answers "is this a human?".
+MACHINE_ACTOR_PREFIXES: tuple[str, ...] = ("ai:", "system:", "service:")
+
+
+def is_machine_role(role: Any) -> bool:
+    """True for a role that belongs to a machine principal."""
+    name = canonical_role(role)
+    if name is not None:
+        return name in MACHINE_ROLE_IDS
+    return isinstance(role, str) and role.strip().casefold() in MACHINE_ROLE_IDS
+
+
+def is_machine_identity(actor: Any) -> bool:
+    """True for a machine actor: a machine prefix, or a bare machine word.
+
+    The prefix test catches ``ai:planner``; the exact-word test catches ``system`` or
+    ``ai_service`` written without one, which is how a caller looks innocent.
+    """
+    if not isinstance(actor, str):
+        return False
+    name = actor.strip().casefold()
+    if name.startswith(MACHINE_ACTOR_PREFIXES):
+        return True
+    return name in MACHINE_ROLE_IDS or name == "kernel"
+
+
+def is_named_human_role(role: Any) -> bool:
+    """True when ``role`` names a person's role — canonical id, alias, or page word.
+
+    ``kernel`` and ``system`` are deliberately **not** human: they are the vocabulary a
+    direct caller reaches for when it wants to look like the platform itself.
+    """
+    if is_machine_role(role):
+        return False
+    if canonical_role(role) is not None:
+        return True
+    if not isinstance(role, str):
+        return False
+    return role.strip().casefold() in set(PAGE_ROLE_BY_CANONICAL.values())
 
 
 def is_ai_role(role: Any) -> bool:

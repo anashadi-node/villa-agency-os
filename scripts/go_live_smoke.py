@@ -590,6 +590,9 @@ class Smoke:
                 check_out=str(booking["check_out"]),
                 verification_method="MANAGER_WRITTEN",
                 verified_by=MANAGER,
+                actor=MANAGER,
+                verifier_role="reservation_manager",
+                idempotency_key="idem_smoke_stale_proof",
             )
         except DomainError:
             refused = True
@@ -607,6 +610,9 @@ class Smoke:
             check_out=str(booking["check_out"]),
             verification_method="MANAGER_WRITTEN",
             verified_by=MANAGER,
+            actor=MANAGER,
+            verifier_role="reservation_manager",
+            idempotency_key="idem_smoke_block_proof",
         )
         outcome = self.kernel.confirm_booking(
             booking_id=self.facts["booking_id"],

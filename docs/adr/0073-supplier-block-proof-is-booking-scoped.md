@@ -170,3 +170,71 @@ Still open after this slice: `record_supplier_block_proof` has no idempotency ke
 the session contract has no password factor (see `scripts/session_token.py`), so the
 verifier's identity rests on per-person enrolment plus TOTP and on possession of
 local operator access.
+
+## Lifecycle, authority, audit and replay (2026-11-19, E3)
+
+The recording step now has a lifecycle, and each part of it answers a question the
+Stage E2 slice left open.
+
+1. **Who may sign is decided by the kernel, not by the caller's arguments.** A kernel
+   is either *bound* to a principal (`actor` + `actor_role`, which the dashboard sets
+   from the signed-in session) or *unbound* (the `system:kernel` / `kernel` sentinel
+   used by internal code). A bound kernel may only act as itself: a supplied actor has
+   to be its own identity or that identity's `human:` label, and a supplied role has to
+   be its own role (`BLOCK_PROOF_ACTOR_NOT_BOUND` otherwise). An unbound kernel must
+   name an explicit human actor **and** role (`BLOCK_PROOF_VERIFIER_REQUIRED`), because
+   plumbing has nobody's authority to lend. A machine identity or machine role is
+   refused on both paths (`BLOCK_PROOF_MACHINE_VERIFIER`), and the role has to be a
+   named human role (`BLOCK_PROOF_VERIFIER_ROLE_UNKNOWN` — `kernel`, `system`,
+   `system_admin` are not).
+2. **Confirmation is a human decision and reads the row, not the caller.** A
+   machine-bound kernel cannot confirm, and neither can a call that names a machine in
+   `actor` or `actor_role` (`MACHINE_PRINCIPAL_REFUSED`). A proof whose `verified_by`
+   is machine-shaped is refused at confirmation even if it reached the table by a
+   direct INSERT or predates this contract (`BLOCK_PROOF_VERIFIER_NOT_HUMAN`), so an old
+   row cannot launder a machine signature into a booking.
+3. **Audit is written where the state changes.** `supplier_block.recorded` and
+   `supplier_block.revoked` are appended through `audit.append_event` inside the same
+   transaction as the row (`_audit`), so a rollback leaves neither. A replay that
+   writes nothing adds no audit row, and a revocation that loses a race writes neither
+   the update nor the event.
+4. **Revocation is atomic and says whether it wrote.** The UPDATE carries
+   `AND revoked_at IS NULL` and is judged by `rowcount`; losing the race returns
+   `False`, which the dashboard renders as "already revoked" (no second audit row, no
+   rewritten `revoked_by`). Revocation requires the same human authority as recording,
+   a reason of 3–200 characters, and a proof that belongs to that booking in that
+   agency.
+5. **Replay is an explicit contract.** `record_supplier_block_proof` requires an
+   `idempotency_key` (8+ characters) and records it in the existing `idempotency_keys`
+   ledger with a request hash over the booking, evidence, supplier, relationship, stay,
+   method, verifier, **the normalised expiry instant**, the evidence object and the
+   note. Same key + same hash returns the same `proof_id` without a second row or a
+   second audit event; same key + different payload is `IDEMPOTENCY_CONFLICT`; a key
+   whose proof has since been revoked is `BLOCK_PROOF_REPLAY_STALE`. The lookup happens
+   before the booking-status check, so a retry after the booking moved on answers with
+   the original proof instead of looking like a failed write. `ux_sbp_active_booking`
+   and `uq_sbp_evidence` remain the structural backstops.
+6. **Expiry is an instant.** `expires_at`, the evidence's `valid_until` and "now" are
+   parsed with `primitives.parse_iso` and compared as datetimes, then stored in the
+   canonical UTC form; a naive or malformed timestamp is refused, and an offset-bearing
+   value is the same instant as its UTC spelling (tested with `-05:00` and `+09:00`
+   boundaries). Historical rows are not rewritten.
+
+### Open, not silently filled: where an answer came from
+
+`availability_evidence` carries `agency_id`, `unit_id`, level, source type and a free
+text `source_ref` — **no supplier and no relationship**. The proof therefore asserts a
+link the evidence table cannot corroborate, so "this answer came from *this* supplier"
+is not yet establishable from the data. E3-A is stopped rather than invented, and the
+smallest contract change is:
+
+- add nullable `supplier_id` and `villa_supplier_relationship_id` to
+  `availability_evidence` (migration 020 + PG twin), captured by `record_evidence`;
+- in `record_supplier_block_proof`, require
+  `evidence.relationship_id == proof.relationship_id` (and the supplier that
+  relationship points at), refusing `BLOCK_PROOF_EVIDENCE_NOT_FROM_SUPPLIER`;
+- grandfather existing rows (nullable) and require attribution for new answers, so no
+  historical fact is rewritten and no current proof is invalidated.
+
+That is a schema and capture-path decision (who asserts the attribution, and what an
+unattributed legacy answer may still support), so it needs Owner approval before code.

@@ -85,7 +85,9 @@ def pay_booking(kernel: Any, booking_id: str, *, amount_minor: Optional[int] = N
     return str(intent.payment_id)
 
 
-def block_proof(kernel: Any, unit_id: str, *, level: str = "B") -> str:
+def block_proof(
+    kernel: Any, unit_id: str = "unit_1", *, level: str = "B", **evidence_options: Any
+) -> str:
     """The villa's written confirmation that the unit is blocked for the agency.
 
     This returns an ``availability_evidence`` id — a *unit-level* answer. Since
@@ -101,6 +103,7 @@ def block_proof(kernel: Any, unit_id: str, *, level: str = "B") -> str:
         can_hold=True,
         can_confirm=True,
         source_ref="villa_block_letter",
+        **evidence_options,
     )
 
 
@@ -140,6 +143,9 @@ def supplier_block_proof(
     expires_at: Optional[str] = None,
     verification_method: str = "SUPPLIER_EMAIL",
     verified_by: str = "user:ops-1",
+    verifier_role: str = "reservation_agent",
+    actor: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
     **evidence_options: Any,
 ) -> str:
     """Record the booking-scoped proof ADR-0073 requires (one booking, one unit, one stay).
@@ -175,6 +181,9 @@ def supplier_block_proof(
         check_out=check_out or str(booking["check_out"]),
         verification_method=verification_method,
         verified_by=verified_by,
+        actor=actor or verified_by,
+        verifier_role=verifier_role,
+        idempotency_key=idempotency_key or f"sbp_{booking_id}_{evidence}",
         expires_at=expires_at,
     )
 

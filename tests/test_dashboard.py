@@ -2980,7 +2980,7 @@ def test_invoice_issuance_replays_instead_of_double_billing(seeded_http):
     first = seeded_http.post("/invoices", token="tok-finance", form=form)
     second = seeded_http.post("/invoices", token="tok-finance", form=form)
 
-    assert first.status == 200 and second.status == 200
+    assert first.status == 200 and second.status == 200, (first.status, second.status, second.text[-900:])
     assert 'data-replayed="0"' in first.text
     assert 'data-replayed="1"' in second.text
     assert len([row for row in _invoice_rows(seeded_http) if row[1] == "booking-d1"]) == 1
@@ -3623,6 +3623,7 @@ def _post_block_proof(live, *, token=None, booking_id: str = "booking-e1", **fie
         "evidence_id": E2_EVIDENCE,
         "relationship_id": "vsr-1",
         "verification_method": "SUPPLIER_EMAIL",
+        "idempotency_key": "idem-form-0001",
     }
     payload.update(fields)
     return live.post(f"/bookings/{booking_id}/block-proof", token=token, form=payload)
@@ -3885,7 +3886,7 @@ def test_block_proof_replay_reports_the_existing_proof_without_writing_twice(blo
     first = _post_block_proof(live, token=token, form_token=form_token)
     second = _post_block_proof(live, token=token, form_token=form_token)
 
-    assert first.status == 200 and second.status == 200
+    assert first.status == 200 and second.status == 200, (first.status, second.status, second.text[-900:])
     assert 'data-replayed="0"' in first.text
     assert 'data-replayed="1"' in second.text
     assert len(_proof_rows(live)) == 1
@@ -4129,3 +4130,191 @@ def test_an_expired_live_proof_is_not_reported_as_a_fresh_replay(block_proof_htt
     assert response.status >= 400
     assert "BLOCK_PROOF_ALREADY_RECORDED" in response.text
     assert 'data-banner="block-proof-recorded"' not in response.text
+
+
+# --------------------------------------------------------------------------- #
+# E3: revoking a supplier block from the workspace
+# --------------------------------------------------------------------------- #
+
+REVOKE_FORM = 'data-form="revoke-block-proof"'
+
+
+def _revoke_form_token(live, booking_id: str, *, token: str) -> str:
+    page = live.get("/inventory", token=token)
+    assert page.status == 200, page.status
+    start = page.text.find(f'action="/bookings/{booking_id}/block-proof/revoke"')
+    assert start != -1, "the revoke form was not rendered"
+    token_at = page.text.find('name="form_token"', start)
+    assert token_at != -1
+    value_at = page.text.find('value="', token_at) + len('value="')
+    return page.text[value_at : page.text.find('"', value_at)]
+
+
+def _revoke(
+    live,
+    *,
+    token: str | None = None,
+    booking_id: str = "booking-e1",
+    **fields,
+):
+    payload = {"proof_id": "proof-e1", "reason": "villa withdrew the block"}
+    payload.update(fields)
+    return live.post(
+        f"/bookings/{booking_id}/block-proof/revoke", token=token, form=payload
+    )
+
+
+def _audit_count(live, action: str) -> int:
+    return int(
+        live.db.execute(
+            "SELECT COUNT(*) FROM audit_events WHERE action = ?", (action,)
+        ).fetchone()[0]
+    )
+
+
+def _verified_booking(live) -> str:
+    """The fixture's paid booking, given a live proof; returns a verifier's token."""
+    _seed_stage_e_proof(live.db)
+    return live.session_tokens["verifier-1"]
+
+
+def test_an_operator_revokes_a_block_and_the_trail_records_it(block_proof_http):
+    live = block_proof_http
+    token = _verified_booking(live)
+    form_token = _revoke_form_token(live, "booking-e1", token=token)
+
+    response = _revoke(
+        live,
+        token=token,
+        form_token=form_token,
+        proof_id="proof-e1",
+        reason="supplier pulled the block",
+        idempotency_key="idem-revoke-01",
+    )
+
+    assert response.status == 200, response.text[-900:]
+    assert 'data-banner="block-proof-revoked"' in response.text
+    row = live.db.execute(
+        "SELECT revoked_at, revoked_by, revoke_reason FROM supplier_block_proofs"
+        " WHERE proof_id = 'proof-e1'"
+    ).fetchone()
+    assert row["revoked_at"] is not None
+    assert row["revoked_by"] == "human:verifier-1"
+    assert row["revoke_reason"] == "supplier pulled the block"
+    assert _audit_count(live, "supplier_block.revoked") == 1
+    assert 'action="/bookings/confirm"' not in response.text
+
+
+def test_revoking_twice_writes_once_and_says_so(block_proof_http):
+    live = block_proof_http
+    token = _verified_booking(live)
+    form_token = _revoke_form_token(live, "booking-e1", token=token)
+    first = _revoke(live, token=token, form_token=form_token, reason="pulled")
+
+    again = _revoke(live, token=token, form_token=form_token, reason="pulled")
+
+    assert first.status == 200 and again.status == 200
+    assert 'data-replayed="1"' in again.text
+    assert _audit_count(live, "supplier_block.revoked") == 1
+
+
+def test_revocation_needs_a_reason_and_writes_nothing_without_one(block_proof_http):
+    live = block_proof_http
+    token = _verified_booking(live)
+    form_token = _revoke_form_token(live, "booking-e1", token=token)
+
+    response = _revoke(live, token=token, form_token=form_token, reason="  ")
+
+    assert response.status >= 400
+    assert "BLOCK_PROOF_REVOCATION_NEEDS_REASON" in response.text
+    row = live.db.execute(
+        "SELECT revoked_at FROM supplier_block_proofs WHERE proof_id = 'proof-e1'"
+    ).fetchone()
+    assert row["revoked_at"] is None
+    assert _audit_count(live, "supplier_block.revoked") == 0
+
+
+def test_revocation_cannot_reach_another_bookings_proof(block_proof_http):
+    live = block_proof_http
+    token = _verified_booking(live)
+    _seed_stage_d_booking(
+        live.db,
+        booking_id="booking-other",
+        quote_id="quote-other",
+        check_in="2026-12-20",
+        check_out="2026-12-22",
+    )
+    # The token is per person, not per form: take it where a form exists, then
+    # point the request at a booking whose proof belongs to someone else.
+    form_token = _revoke_form_token(live, "booking-e1", token=token)
+
+    response = _revoke(
+        live, token=token, booking_id="booking-other", form_token=form_token,
+        proof_id="proof-e1",
+    )
+
+    assert response.status >= 400
+    assert "BLOCK_PROOF_NOT_FOR_BOOKING" in response.text
+    row = live.db.execute(
+        "SELECT revoked_at FROM supplier_block_proofs WHERE proof_id = 'proof-e1'"
+    ).fetchone()
+    assert row["revoked_at"] is None
+
+
+def test_a_shared_role_token_cannot_revoke(block_proof_http):
+    live = block_proof_http
+    _verified_booking(live)
+    page = live.get("/inventory", token="tok-reservation")
+
+    assert REVOKE_FORM not in page.text
+    response = _revoke(live, token="tok-reservation", form_token="bogus-token")
+    assert response.status == 403
+    assert "HUMAN_SESSION_REQUIRED" in response.text
+
+
+def test_a_machine_session_cannot_revoke(block_proof_http):
+    live = block_proof_http
+    _verified_booking(live)
+
+    response = _revoke(
+        live, token=live.session_tokens["ai:planner-1"], form_token="bogus-token"
+    )
+
+    assert response.status == 403
+    assert "MACHINE_PRINCIPAL_REFUSED" in response.text
+
+
+def test_a_revoked_proof_leaves_room_for_a_replacement(block_proof_http):
+    live = block_proof_http
+    token = _verified_booking(live)
+    form_token = _revoke_form_token(live, "booking-e1", token=token)
+    _revoke(live, token=token, form_token=form_token, reason="wrong letter")
+    _seed_block_supplier(live.db)
+    _seed_block_evidence(live.db)
+
+    response = _post_block_proof(
+        live, token=token, form_token=_block_proof_token(live, "booking-e1", token=token)
+    )
+
+    assert response.status == 200, response.text[-900:]
+    assert 'data-banner="block-proof-recorded"' in response.text
+    live_rows = live.db.execute(
+        "SELECT COUNT(*) FROM supplier_block_proofs WHERE revoked_at IS NULL"
+    ).fetchone()[0]
+    assert live_rows == 1
+    assert _audit_count(live, "supplier_block.revoked") == 1
+    assert _audit_count(live, "supplier_block.recorded") == 1
+
+
+def test_revocation_needs_the_form_token(block_proof_http):
+    live = block_proof_http
+    token = _verified_booking(live)
+
+    response = _revoke(live, token=token, form_token="bogus-token")
+
+    assert response.status == 403
+    assert "FORM_TOKEN_INVALID" in response.text
+    row = live.db.execute(
+        "SELECT revoked_at FROM supplier_block_proofs WHERE proof_id = 'proof-e1'"
+    ).fetchone()
+    assert row["revoked_at"] is None

@@ -45,6 +45,7 @@ import geo
 import matching as MATCHING
 import policy_engine as PE
 import quote_calculator as QC
+import roles as ROLES
 
 from ai_service import require_tool_authority
 from audit import AuditLog, append_event
@@ -105,6 +106,7 @@ __all__ = [
     "BOOKING_STATES",
     "OCCUPYING_BOOKING_STATES",
     "BACKING_BOOKING_STATES",
+    "DEFAULT_ACTOR",
     "DEFAULT_ROLE",
 ]
 
@@ -212,6 +214,9 @@ BLOCK_PROOF_BOOKING_STATES: tuple[str, ...] = (
 )
 
 DEFAULT_ROLE = "kernel"
+
+#: The constructor's default actor: the "nobody in particular" sentinel, not a person.
+DEFAULT_ACTOR = "system:kernel"
 
 #: The availability-check vocabulary (§7), mirroring the schema CHECK verbatim —
 #: the same pairing ``EVIDENCE_RESULTS``/``SOURCE_RESULTS`` already has.
@@ -338,7 +343,7 @@ class ReservationKernel:
         *,
         clock: Any = None,
         ids: Optional[IdFactory] = None,
-        actor: str = "system:kernel",
+        actor: str = DEFAULT_ACTOR,
         actor_role: str = DEFAULT_ROLE,
         agency_id: str = "agency_default",
         transition_gate: Optional[Callable[[str, str, str], bool]] = None,
@@ -363,7 +368,7 @@ class ReservationKernel:
         *,
         clock: Any = None,
         ids: Optional[IdFactory] = None,
-        actor: str = "system:kernel",
+        actor: str = DEFAULT_ACTOR,
         actor_role: str = DEFAULT_ROLE,
         agency_id: str = "agency_default",
         transition_gate: Optional[Callable[[str, str, str], bool]] = None,
@@ -909,6 +914,9 @@ class ReservationKernel:
         check_out: str,
         verification_method: str,
         verified_by: str,
+        idempotency_key: str,
+        actor: Optional[str] = None,
+        verifier_role: Optional[str] = None,
         expires_at: Optional[str] = None,
         evidence_object_id: Optional[str] = None,
         notes: Optional[str] = None,
@@ -932,10 +940,20 @@ class ReservationKernel:
         * one availability answer backs one booking, ever (``uq_sbp_evidence``), and a
           booking carries at most one live proof (``ux_sbp_active_booking``);
         * ``expires_at`` may shorten the evidence's own validity but never extend it —
-          a proof is not fresher than the answer under it.
+          a proof is not fresher than the answer under it, and both timestamps are
+          parsed as ISO-8601 and compared as instants, not as strings;
+        * the verifier must be the acting human: ``verified_by`` has to name the same
+          actor that calls, the role must be a named human role, and a machine
+          principal (``ai_service``, ``system_*``, ``ai:``/``system:``/``service:``
+          identities) is refused outright — a proof is not a thing a machine signs on
+          a person's behalf;
+        * ``idempotency_key`` makes the write replayable: the same key with the same
+          payload returns the proof that already exists, and the same key with a
+          different payload is refused (``IDEMPOTENCY_CONFLICT``).
 
         The row is immutable afterwards. A wrong proof is revoked with a reason, and
-        the replacement is a new row, so both stay in the trail.
+        the replacement is a new row, so both stay in the trail. The audit chain gets
+        one row per accepted write, in the same transaction as the row itself.
         """
         booking_id = require_ref(booking_id, "booking_id")
         evidence_id = require_ref(evidence_id, "evidence_id")
@@ -948,6 +966,16 @@ class ReservationKernel:
             raise DomainError(
                 "a supplier block is verified by a named human, not by a blank string",
                 code="BLOCK_PROOF_VERIFIER_REQUIRED",
+            )
+        idempotency_key = require_ref(idempotency_key, "idempotency_key")
+        _require_min_length(idempotency_key, "idempotency_key", 8)
+        actor_name, role = self._require_human_verifier_principal(actor, verifier_role)
+        if verified_by not in (actor_name, f"human:{actor_name}"):
+            raise DomainError(
+                "verified_by must name the acting human, not a third party",
+                code="BLOCK_PROOF_VERIFIER_MISMATCH",
+                verified_by=verified_by,
+                actor=actor_name,
             )
         method = str(verification_method).strip().upper()
         if method not in BLOCK_PROOF_METHODS:
@@ -963,8 +991,48 @@ class ReservationKernel:
                 check_in=check_in,
                 check_out=check_out,
             )
+        # Everything that changes the meaning of the write, and nothing that does not:
+        # a retry of the same request hashes the same, a different one does not.
+        # Normalise the expiry *before* hashing: the same instant written as
+        # ``...Z`` and ``...+07:00`` must replay, not collide as a different payload.
+        normalised_expiry = "" if expires_at is None else to_iso(parse_iso(expires_at))
+        request_hash = sha256_hex(
+            "record_supplier_block_proof",
+            booking_id,
+            evidence_id,
+            supplier_id,
+            relationship_id,
+            check_in,
+            check_out,
+            method,
+            verified_by,
+            actor_name,
+            str(role),
+            normalised_expiry,
+            evidence_object_id or "",
+            notes or "",
+        )
         with self.transaction() as conn:
             booking = self._require_booking(conn, booking_id)
+            # A retry of a request that already succeeded answers with that proof even
+            # if the booking has moved on since; it must not look like a failed write.
+            replayed = self._idempotent_lookup(
+                conn, "record_supplier_block_proof", idempotency_key, request_hash
+            )
+            if replayed is not None:
+                live = conn.execute(
+                    "SELECT revoked_at FROM supplier_block_proofs"
+                    " WHERE proof_id = ? AND agency_id = ?",
+                    (replayed, self.agency_id),
+                ).fetchone()
+                if live is None or live["revoked_at"] is not None:
+                    raise DomainError(
+                        "this idempotency key belongs to a proof that no longer stands;"
+                        " record a fresh one under a new key",
+                        code="BLOCK_PROOF_REPLAY_STALE",
+                        proof_id=replayed,
+                    )
+                return replayed
             if booking["status"] not in BLOCK_PROOF_BOOKING_STATES:
                 raise DomainError(
                     "a supplier block is recorded only for a booking that is still live",
@@ -1022,11 +1090,13 @@ class ReservationKernel:
                     booking_created_at=booking["created_at"],
                 )
             now = self._now()
-            if evidence["valid_until"] <= now:
+            now_moment = parse_iso(now)
+            evidence_until = parse_iso(evidence["valid_until"])
+            if evidence_until <= now_moment:
                 raise DomainError(
                     "the supplier answer has expired; ask for a fresh block",
                     code="BLOCK_PROOF_EXPIRED",
-                    valid_until=evidence["valid_until"],
+                    valid_until=to_iso(evidence_until),
                     now=now,
                 )
             supplier = conn.execute(
@@ -1080,21 +1150,27 @@ class ReservationKernel:
                     code="BLOCK_PROOF_ALREADY_RECORDED",
                     booking_id=booking_id,
                 )
-            expires = evidence["valid_until"] if expires_at is None else expires_at
-            if expires > evidence["valid_until"]:
+            # Parsed as instants, never compared as strings: an offset-bearing timestamp
+            # ("2027-06-01T07:00:00+07:00") is the same moment as "2027-06-01T00:00:00Z",
+            # and a string comparison would call one of them later than the other.
+            expires_moment = parse_iso(
+                evidence["valid_until"] if expires_at is None else expires_at
+            )
+            if expires_moment > evidence_until:
                 raise DomainError(
                     "a proof cannot outlive the supplier answer it rests on",
                     code="BLOCK_PROOF_INVALID_EXPIRY",
-                    expires_at=expires,
-                    valid_until=evidence["valid_until"],
+                    expires_at=to_iso(expires_moment),
+                    valid_until=to_iso(evidence_until),
                 )
-            if expires <= now:
+            if expires_moment <= now_moment:
                 raise DomainError(
                     "a proof must still be valid when it is recorded",
                     code="BLOCK_PROOF_EXPIRED",
-                    expires_at=expires,
+                    expires_at=to_iso(expires_moment),
                     now=now,
                 )
+            expires = to_iso(expires_moment)
             if evidence_object_id is not None:
                 document = conn.execute(
                     "SELECT status FROM evidence_objects"
@@ -1136,6 +1212,30 @@ class ReservationKernel:
                     now,
                 ),
             )
+            self._audit(
+                conn,
+                action="supplier_block.recorded",
+                entity_type="supplier_block_proof",
+                entity_id=proof_id,
+                before=None,
+                after={
+                    "booking_id": booking_id,
+                    "unit_id": booking["unit_id"],
+                    "supplier_id": supplier_id,
+                    "relationship_id": relationship_id,
+                    "evidence_id": evidence_id,
+                    "verification_method": method,
+                    "verifier_role": str(role),
+                    "expires_at": expires,
+                },
+                reason=None,
+                policy_version_id=None,
+                evidence_ref=evidence_id,
+                actor=actor_name,
+            )
+            self._record_idempotency(
+                conn, "record_supplier_block_proof", idempotency_key, request_hash, proof_id
+            )
         return proof_id
 
     def get_supplier_block_proof(self, proof_id: str) -> sqlite3.Row:
@@ -1161,7 +1261,12 @@ class ReservationKernel:
         ).fetchone()
 
     def revoke_supplier_block_proof(
-        self, *, proof_id: str, reason: str, actor: Optional[str] = None
+        self,
+        *,
+        proof_id: str,
+        reason: str,
+        actor: Optional[str] = None,
+        actor_role: Optional[str] = None,
     ) -> None:
         """Retire a live proof, keeping the row and the reason it was retired.
 
@@ -1177,6 +1282,7 @@ class ReservationKernel:
             raise DomainError(
                 "a proof is revoked with a reason", code="BLOCK_PROOF_REVOCATION_NEEDS_REASON"
             )
+        actor_name, _role = self._require_human_verifier_principal(actor, actor_role)
         with self.transaction() as conn:
             row = conn.execute(
                 "SELECT revoked_at FROM supplier_block_proofs WHERE proof_id = ? AND agency_id = ?",
@@ -1190,10 +1296,29 @@ class ReservationKernel:
                 )
             if row["revoked_at"] is not None:
                 return
-            conn.execute(
+            revoked_at = self._now()
+            # ``AND revoked_at IS NULL`` is the race guard: the row can move from live
+            # to revoked between the read above and this write, and losing that race
+            # must not rewrite the first revocation nor add a second audit row.
+            cursor = conn.execute(
                 "UPDATE supplier_block_proofs SET revoked_at = ?, revoked_by = ?,"
-                " revoke_reason = ? WHERE proof_id = ? AND agency_id = ?",
-                (self._now(), actor or self.actor, text, proof_id, self.agency_id),
+                " revoke_reason = ? WHERE proof_id = ? AND agency_id = ?"
+                " AND revoked_at IS NULL",
+                (revoked_at, actor_name, text, proof_id, self.agency_id),
+            )
+            if cursor.rowcount == 0:
+                return False
+            self._audit(
+                conn,
+                action="supplier_block.revoked",
+                entity_type="supplier_block_proof",
+                entity_id=proof_id,
+                before={"revoked_at": None},
+                after={"revoked_at": revoked_at, "revoke_reason": text},
+                reason=text,
+                policy_version_id=None,
+                evidence_ref=None,
+                actor=actor_name,
             )
 
     # -- availability checks (§7) ------------------------------------------- #
@@ -2266,6 +2391,24 @@ class ReservationKernel:
         block_proof_id = require_ref(block_proof_id, "block_proof_id")
         command_id = require_ref(command_id, "command_id")
         _require_min_length(command_id, "command_id", 8)
+        # Confirmation is a human decision (ADR-0033/0036). A machine principal may not
+        # take it even by naming itself in ``actor_role`` or ``actor``; the default
+        # internal actor is plumbing, not a claim, so only what the caller *supplies*
+        # is judged here.
+        bound_machine = self._bound_principal() and (
+            ROLES.is_machine_role(self.actor_role) or ROLES.is_machine_identity(self.actor)
+        )
+        if (
+            bound_machine
+            or (actor_role is not None and ROLES.is_machine_role(actor_role))
+            or (actor is not None and ROLES.is_machine_identity(actor))
+        ):
+            raise DomainError(
+                "a machine principal cannot confirm a booking; confirmation is a human decision",
+                code="MACHINE_PRINCIPAL_REFUSED",
+                actor=actor or self.actor,
+                actor_role=actor_role or self.actor_role,
+            )
         with self.transaction() as conn:
             booking = self._require_booking(conn, booking_id)
             current = booking["status"]
@@ -2300,6 +2443,15 @@ class ReservationKernel:
                     revoked_at=proof["revoked_at"],
                     revoke_reason=proof["revoke_reason"],
                 )
+            if ROLES.is_machine_identity(proof["verified_by"]) or ROLES.is_machine_role(
+                proof["verified_by"]
+            ):
+                raise DomainError(
+                    "the block proof was signed by a machine; it cannot authorise a"
+                    " human confirmation",
+                    code="BLOCK_PROOF_VERIFIER_NOT_HUMAN",
+                    verified_by=proof["verified_by"],
+                )
             if proof["unit_id"] != booking["unit_id"]:
                 raise DomainError(
                     "block proof belongs to a different unit",
@@ -2314,7 +2466,7 @@ class ReservationKernel:
                     proof_window=(proof["check_in"], proof["check_out"]),
                     booking_window=(booking["check_in"], booking["check_out"]),
                 )
-            if proof["expires_at"] <= self._now():
+            if parse_iso(proof["expires_at"]) <= parse_iso(self._now()):
                 raise DomainError(
                     "block proof has expired; ask the supplier again",
                     code="BLOCK_PROOF_EXPIRED",
@@ -2919,6 +3071,85 @@ class ReservationKernel:
     # -- internals ---------------------------------------------------------- #
     def _now(self) -> str:
         return to_iso(self.clock.now())
+
+    # -- who is acting ------------------------------------------------------ #
+    def _bound_principal(self) -> bool:
+        """True when this kernel was constructed for somebody, not for plumbing.
+
+        The constructor defaults (``system:kernel`` / ``kernel``) are the internal
+        sentinel: every code path that acts for a person binds a real actor and role.
+        A caller that leaves the sentinel must name its human per call instead, so
+        "the default" can never be used to slip a machine past the check.
+        """
+        return not (self.actor == DEFAULT_ACTOR and self.actor_role == DEFAULT_ROLE)
+
+    def _require_human_verifier_principal(
+        self, actor: Optional[str], role: Optional[str], *, code_prefix: str = "BLOCK_PROOF"
+    ) -> tuple[str, str]:
+        """Resolve the acting human, refusing machines and any third party.
+
+        Two shapes. A **bound** kernel (the dashboard binds the signed-in session's
+        identity and role) may only act as itself: the supplied actor has to be the
+        bound one, or its ``human:`` label, and the supplied role has to be the bound
+        role. An **unbound** kernel must name a human explicitly, because plumbing has
+        nobody's authority to lend. Neither shape accepts a machine identity or a
+        machine role, whether bound or supplied.
+        """
+        if self._bound_principal():
+            if ROLES.is_machine_role(self.actor_role) or ROLES.is_machine_identity(self.actor):
+                raise DomainError(
+                    "this kernel is bound to a machine principal and may not verify"
+                    " or revoke a supplier block",
+                    code=f"{code_prefix}_MACHINE_VERIFIER",
+                    actor=self.actor,
+                    actor_role=str(self.actor_role),
+                )
+            resolved = actor or self.actor
+            if resolved not in (self.actor, f"human:{self.actor}"):
+                raise DomainError(
+                    "the verifier must be the principal this kernel is bound to",
+                    code="BLOCK_PROOF_ACTOR_NOT_BOUND",
+                    supplied=resolved,
+                    bound=self.actor,
+                )
+            resolved_role = role or self.actor_role
+            same_role = str(resolved_role).strip().casefold() == str(
+                self.actor_role
+            ).strip().casefold() or (
+                ROLES.canonical_role(resolved_role) is not None
+                and ROLES.canonical_role(resolved_role)
+                == ROLES.canonical_role(self.actor_role)
+            )
+            if not same_role:
+                raise DomainError(
+                    "the verifier role must be the role this kernel is bound to",
+                    code="BLOCK_PROOF_ACTOR_NOT_BOUND",
+                    supplied=str(resolved_role),
+                    bound=str(self.actor_role),
+                )
+            actor_name, resolved_role = resolved, self.actor_role
+        else:
+            if not actor or not role:
+                raise DomainError(
+                    "recording or revoking a supplier block requires an explicit human"
+                    " actor and role",
+                    code=f"{code_prefix}_VERIFIER_REQUIRED",
+                )
+            actor_name, resolved_role = str(actor).strip(), str(role).strip()
+            if ROLES.is_machine_role(resolved_role) or ROLES.is_machine_identity(actor_name):
+                raise DomainError(
+                    "a machine principal cannot verify or revoke a supplier block",
+                    code=f"{code_prefix}_MACHINE_VERIFIER",
+                    actor=actor_name,
+                    actor_role=resolved_role,
+                )
+        if not ROLES.is_named_human_role(resolved_role):
+            raise DomainError(
+                "a supplier block is verified under a named human role",
+                code=f"{code_prefix}_VERIFIER_ROLE_UNKNOWN",
+                actor_role=str(resolved_role),
+            )
+        return actor_name, str(resolved_role)
 
     def _require_hold(self, conn: sqlite3.Connection, hold_id: str) -> sqlite3.Row:
         row = conn.execute(

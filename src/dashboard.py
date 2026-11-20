@@ -86,6 +86,7 @@ from primitives import (
     IdFactory,
     Money,
     mask_sensitive_numbers,
+    parse_iso,
     SystemClock,
     require_ref,
     require_text,
@@ -157,22 +158,9 @@ APPROVAL_ROLE_BY_ROLE: Mapping[str, str] = MappingProxyType(
     }
 )
 
-#: The inverse: a session carries a canonical role (ADR-0035), and the dashboard
-#: needs the page role before it can ask ``PAGE_ROLES`` anything. One canonical
-#: authority maps to exactly one page set — ``auditor`` is here because the page
-#: role exists even though it never approves anything. Canonical roles with no
-#: page set (``system_admin``, ``commercial_manager``, …) get **no** dashboard
-#: access rather than a guess.
-PAGE_ROLE_BY_CANONICAL: Mapping[str, str] = MappingProxyType(
-    {
-        "owner": "owner",
-        "gm": "gm",
-        "finance_manager": "finance",
-        "reservation_manager": "operations",
-        "reservation_agent": "reservation",
-        "auditor": "auditor",
-    }
-)
+#: The inverse lives in :mod:`roles` so the kernel shares one vocabulary; the dashboard
+#: imports it and keeps the page question (``PAGE_ROLES``) here.
+PAGE_ROLE_BY_CANONICAL: Mapping[str, str] = roles_module.PAGE_ROLE_BY_CANONICAL
 
 #: Roles allowed to open a page. Anything not listed is refused for that role.
 PAGE_ROLES: Mapping[str, tuple[str, ...]] = MappingProxyType(
@@ -2322,7 +2310,30 @@ class Dashboard:
             '<label>Method <select name="verification_method">'
             f"{method_options}</select></label> "
             '<label>Note <input name="notes" maxlength="200"></label> '
+            f'<input type="hidden" name="idempotency_key"'
+            f' value="{escape_value(self._new_write_key())}">'
             '<button type="submit">Record supplier block</button></form>'
+        )
+
+    def _new_write_key(self) -> str:
+        """A fresh idempotency key for one rendered write form."""
+        return "form_" + secrets.token_hex(16)
+
+    def _revoke_form(self, principal: Principal, row: Mapping[str, Any], proof_id: str) -> str:
+        """Withdraw a proof, with the reason the audit row and the operator both need.
+
+        A revoked row is not deleted: the kernel flips ``revoked_at`` and the dashboard
+        writes nothing itself. The retry is safe because a second revocation is a no-op.
+        """
+        return (
+            '<form method="post" data-write-form="1" data-form="revoke-block-proof"'
+            f' action="/bookings/{escape_value(row["booking_id"])}/block-proof/revoke">'
+            f'<input type="hidden" name="{FORM_TOKEN_FIELD}"'
+            f' value="{escape_value(self.form_token_for(principal))}">'
+            f'<input type="hidden" name="proof_id" value="{escape_value(proof_id)}">'
+            '<label>Reason <input name="reason" required minlength="3" maxlength="200">'
+            "</label> "
+            '<button type="submit">Revoke supplier block</button></form>'
         )
 
     def _confirmation_table(self, principal: Principal) -> Markup:
@@ -2405,6 +2416,11 @@ class Dashboard:
                 )
                 method_cell = str(row["verification_method"])
                 verified_cell = f"{row['verified_by']} at {_time_label(row['verified_at'])}"
+            revoke = (
+                self._revoke_form(principal, row, str(proof_id))
+                if proof_id is not None and may_verify
+                else ""
+            )
             if state == "VERIFIED" and principal.may_write:
                 action = (
                     '<form method="post" action="/bookings/confirm" data-write-form="1"'
@@ -2418,7 +2434,7 @@ class Dashboard:
                     '<label>Idempotency key <input name="idempotency_key" required'
                     ' minlength="8" maxlength="64"></label> '
                     '<button type="submit">Confirm booking</button></form>'
-                )
+                ) + revoke
             elif state == "VERIFIED":
                 action = (
                     '<span class="muted" data-note="confirmation-readonly">read-only role; '
@@ -2430,7 +2446,7 @@ class Dashboard:
                 action = (
                     '<span class="muted" data-note="confirmation-blocked"'
                     ' data-reason="EXPIRED">confirmation blocked: the supplier answer '
-                    "expired; revoke the old proof, then record a fresh one</span>"
+                    "expired; revoke the old proof, then record a fresh one</span>" + revoke
                 )
             else:
                 reason = {
@@ -3659,6 +3675,14 @@ class Dashboard:
         if segments == ["bookings", "confirm"]:
             self.require_page("inventory", principal)
             return self.post_confirm_request(request, principal)
+        if (
+            len(segments) == 4
+            and segments[0] == "bookings"
+            and segments[2] == "block-proof"
+            and segments[3] == "revoke"
+        ):
+            self.require_page("inventory", principal)
+            return self.post_revoke_block_proof_request(request, principal, segments[1])
         if len(segments) == 3 and segments[0] == "bookings" and segments[2] == "block-proof":
             self.require_page("inventory", principal)
             return self.post_block_proof_request(request, principal, segments[1])
@@ -3679,6 +3703,7 @@ class Dashboard:
                 "POST /bookings",
                 "POST /bookings/confirm",
                 "POST /bookings/<id>/block-proof",
+                "POST /bookings/<id>/block-proof/revoke",
                 "POST /invoices",
                 "POST /payments/mark-paid",
             ],
@@ -4097,6 +4122,91 @@ class Dashboard:
             status=status_for(exc),
         )
 
+    def post_revoke_block_proof_request(
+        self, request: "_Request", principal: Principal, booking_id: str
+    ) -> _Response:
+        """Withdraw a supplier block. The row stays; ``revoked_at`` is set once.
+
+        Same identity rule as recording: a signed-in human, never a shared role token
+        and never a machine. The proof must be live and must belong to this booking in
+        this agency, so one tenant cannot revoke another's evidence. A retry finds it
+        already revoked and answers the same way instead of writing twice.
+        """
+        if not principal.may_write:
+            raise Forbidden("this role is read-only", role=principal.role)
+        self._require_human_verifier(principal)
+        self._require_form_token(request, principal)
+        booking_id = str(booking_id or "").strip()
+        if not booking_id:
+            raise InvalidInput("booking is required", field="booking_id")
+        proof_id = str(request.option("proof_id") or "").strip()
+        reason = str(request.option("reason") or "").strip()
+        if not proof_id:
+            raise InvalidInput("proof_id is required", field="proof_id")
+        if len(reason) < 3:
+            return self._block_proof_refusal(
+                principal,
+                DomainError(
+                    "a supplier block is revoked with a reason",
+                    code="BLOCK_PROOF_REVOCATION_NEEDS_REASON",
+                ),
+            )
+        if len(reason) > 200:
+            raise InvalidInput("the reason is longer than 200 characters", field="reason")
+        rows = self._rows(
+            "SELECT proof_id, revoked_at FROM supplier_block_proofs"
+            " WHERE proof_id = ? AND booking_id = ? AND agency_id = ?",
+            (proof_id, booking_id, self.agency_id),
+        )
+        if not rows:
+            return self._block_proof_refusal(
+                principal,
+                DomainError(
+                    "that proof does not belong to this booking in this agency",
+                    code="BLOCK_PROOF_NOT_FOR_BOOKING",
+                ),
+            )
+        if rows[0]["revoked_at"] is not None:
+            return self._block_proof_response(
+                principal,
+                Markup(
+                    f'<p class="ok" role="status" data-banner="block-proof-revoked"'
+                    f' data-replayed="1"><code>{escape_value(proof_id)}</code> was already '
+                    "revoked. Nothing was written twice.</p>"
+                ),
+            )
+        verifier = self._verifier_label(principal)
+        try:
+            wrote = self._reservation_kernel(principal).revoke_supplier_block_proof(
+                proof_id=proof_id,
+                reason=reason,
+                actor=verifier,
+                actor_role=principal.role,
+            )
+        except DomainError as exc:
+            return self._block_proof_refusal(principal, exc)
+        if not wrote:
+            # Lost a race with another revoke: nothing was written by this request.
+            return self._block_proof_response(
+                principal,
+                Markup(
+                    f'<p class="ok" role="status" data-banner="block-proof-revoked"'
+                    f' data-replayed="1"><code>{escape_value(proof_id)}</code> was already '
+                    "revoked. Nothing was written twice.</p>"
+                ),
+            )
+        return self._block_proof_response(
+            principal,
+            Markup(
+                f'<p class="ok" role="status" data-banner="block-proof-revoked"'
+                f' data-replayed="0" data-proof-id="{escape_value(proof_id)}">'
+                f"Supplier block <code>{escape_value(proof_id)}</code> revoked by "
+                f"{escape_value(verifier)}: {escape_value(reason)}. It can no longer "
+                "authorize a confirmation; a replacement must satisfy the full contract."
+                "</p>"
+            ),
+        )
+
     def post_block_proof_request(
         self, request: "_Request", principal: Principal, booking_id: str
     ) -> _Response:
@@ -4133,6 +4243,12 @@ class Dashboard:
         notes = str(request.option("notes") or "").strip()
         if len(notes) > 200:
             raise InvalidInput("the note is longer than 200 characters", field="notes")
+        idempotency_key = str(request.option("idempotency_key") or "").strip()
+        if len(idempotency_key) < 8:
+            raise InvalidInput(
+                "idempotency_key is required for this write, 8 characters or more",
+                field="idempotency_key",
+            )
         missing = [
             name
             for name, value in (
@@ -4202,6 +4318,9 @@ class Dashboard:
                 check_out=booking["check_out"],
                 verification_method=method,
                 verified_by=verifier,
+                idempotency_key=idempotency_key,
+                actor=verifier,
+                verifier_role=principal.role,
                 notes=notes or None,
             )
         except DomainError as exc:
@@ -4266,7 +4385,7 @@ class Dashboard:
             and str(proof["relationship_id"]) == relationship_id
             and str(proof["verification_method"]) == method
             and str(proof["verified_by"]) == verifier
-            and str(proof["expires_at"]) > to_iso(self.clock.now())
+            and parse_iso(str(proof["expires_at"])) > parse_iso(to_iso(self.clock.now()))
         )
         if identical:
             return self._block_proof_recorded(
