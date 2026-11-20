@@ -360,7 +360,7 @@ stand and are recorded here as residuals rather than fixed in the same commit.
 | A machine principal, wrong role or stale step-up might sign | **Refuted** | `_resolve_principal` refuses machine identity/role (`MACHINE_PRINCIPAL_REFUSED`), checks the allowed set after canonicalisation, requires an ACTIVE holder row, `mfa_satisfied_at`, and `require_step_up` inside `STEP_UP_WINDOW` |
 | A case/whitespace variant of the maker's identity could self-check | **Refuted in practice** | Binding compares `session.identity` to `holder_ref` exactly, so an identity variant holds no role and cannot reach `CONTACT_CHECKER_IS_MAKER`; revisit only if identity storage ever becomes case-insensitive |
 
-### §11.2 Residual status (G1 closed locally, G1-R and G2 open)
+### §11.2 Residual status (G1 and G1-R closed locally, G2 open)
 
 - **G1 — CLOSED by `63ac1ea` (fix committed locally, subject to independent
   verification).** The attribution is now pinned by the database: `(evidence_id,
@@ -375,18 +375,30 @@ stand and are recorded here as residuals rather than fixed in the same commit.
   row was written in the same transaction as the attribution, and that a
   `source_ref` value is an authentic supplier attestation rather than a claim. Those
   remain service and operating concerns (§11.3).
-- **G1-R — upgrade path for existing databases: OPEN — HIGH.** The fix is correct for
-  a database *created* from the current `001_initial.sql`, and there is no path for one
-  created before it. `020_supplier_contacts.sql` uses `CREATE TABLE IF NOT EXISTS` and
-  `ALTER` nothing, so on a pre-`63ac1ea` database the attribution table keeps its old
-  shape (no `contact_event_kind`, no stay pin) and the new parent-key index fails with
-  `no such column: callback_verified_contact` — measured on a database built from
-  `63ac1ea^`. SQLite cannot add a STORED generated column to an existing table, so the
-  repair is either a table rebuild in a new migration or a trigger-maintained plain
-  column plus backfill; both need schema and generator work, which this pack does not
-  authorise. The migration test did **not** catch this: its "legacy" fixture is built
-  from the current `001_initial.sql`, which already carries the new column, so the
-  fixture proves less than its name says.
+- **G1-R — upgrade path for existing databases: CLOSED by this pack (local, uncommitted
+  until the corrective commit).** The gap was real and is now measured end-to-end on a
+  disposable database whose two affected objects were downgraded to the pre-`63ac1ea`
+  shape (`cced242` DDL) while every other object stayed as it is: `020` alone failed with
+  `no such column: callback_verified_contact` (18 statements applied, 1 failed, closed).
+  `scripts/apply_migrations.py` now recognises three states before it writes anything —
+  COMPLETE (no structural work), HISTORICAL (idempotent upgrade, then `020`), UNKNOWN
+  (fail closed). The upgrade is two steps, chosen because each is provably safe on
+  SQLite: `ALTER TABLE availability_evidence ADD COLUMN callback_verified_contact …
+  VIRTUAL` (the only generated-column form SQLite can add in place), and a rebuild of
+  `evidence_supplier_attributions` only — the one table that needs new columns *and* new
+  foreign keys, and the one that nothing references — copying rows verbatim and taking
+  `contact_event_kind` from the event the row already pointed at. No authority is
+  invented: the copy refuses outright if any existing row's event is not `VERIFIED` or
+  its evidence does not name that contact (`inventing authority`), and refuses if the
+  ledger cannot be read at all. The whole upgrade plus `020` runs in one transaction
+  with `foreign_keys` off outside it, and `foreign_key_check` (no *new* violations) and
+  `integrity_check` run before `COMMIT`.
+  What this leaves open, stated plainly: the upgraded database carries the derived
+  column as VIRTUAL while a fresh one carries it STORED — same values, same parent key,
+  same refusals (a nine-case matrix gives identical outcomes on both), but not
+  byte-identical DDL; and there is still no migration runner for PostgreSQL, so the
+  *existing*-schema path is unproven on PG even though the fresh-schema twin applies
+  cleanly. Both are recorded as residual, not as tested.
 - **G2 — OPEN — HIGH / PRODUCTION BLOCKER.** Enforcement defaults to `false`. Until an
   agency sets `supplier_assertion_enforced=true` (or the cutover date in §9.6 is
   chosen), an unattributed E3 proof can still authorise a confirmation. This is the
@@ -422,10 +434,14 @@ constraint gets mistaken for a supplier's word:
   operating procedure (a human calls the number, reads it through
   `read_supplier_contact_for_callback`, and records the assertion with a fresh step-up)
   can assert that. No schema in this repository can.
-- **D. Upgrade path — refuted for existing databases (see G1-R).** A database built
-  from `63ac1ea^` and then given the current `020_supplier_contacts.sql` keeps the old
-  attribution shape and aborts the new index with
-  `no such column: callback_verified_contact` (18 statements applied, 1 failed). Fresh
-  databases are correct; migrated ones are not, and it fails closed rather than open.
+- **D. Upgrade path — repaired, and proven on a disposable legacy database.** A database
+  built from `63ac1ea^` and then given the current `020_supplier_contacts.sql` never
+  could take the new constraints: 18 statements applied, 1 failed with
+  `no such column: callback_verified_contact`, closed. The runner now upgrades such a
+  database first (see G1-R in §11.2) and the same fixture, seeded with suppliers,
+  availability evidence, a paid booking, an audit chain, a block proof and an existing
+  attribution, then reaches the fresh shape with every row intact. What is *not* proven:
+  an upgrade across a database large enough to make the single transaction impractical,
+  and the PostgreSQL equivalent (no PG runner exists).
 
 
