@@ -204,6 +204,37 @@ def cmd_rotate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_step_up(args: argparse.Namespace) -> int:
+    """Spend a fresh TOTP code to unlock a high-risk action for the step-up window.
+
+    The session is found by its token — never by an identity or a role on the command line —
+    and only that session is lifted. A code for someone else's factor cannot step this one up,
+    because ``satisfy_step_up`` verifies the factor of the session's own identity.
+    """
+    token = args.token
+    if args.token_file:
+        if args.token:
+            print("REFUSED: --token dan --token-file saling eksklusif", file=sys.stderr)
+            return 2
+        try:
+            token = Path(args.token_file).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            print(f"REFUSED: tidak bisa membaca --token-file: {exc.strerror}", file=sys.stderr)
+            return 2
+    if not token:
+        print("REFUSED: beri --token-file (disarankan) atau --token", file=sys.stderr)
+        return 2
+    conn = connect(args.db)
+    svc = service(conn, args.agency)
+    session = svc.authenticate(token, touch=False)
+    stepped = svc.satisfy_step_up(session.session_id, args.code)
+    conn.commit()
+    print(f"sesi        : {stepped.session_id} ({stepped.identity})")
+    print(f"step-up s/d : {stepped.step_up_until}")
+    print("berlaku untuk aksi berisiko tinggi selama jendela di atas; sekali pakai kode.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Sesi operator dashboard (ADR-0005).")
     common = argparse.ArgumentParser(add_help=False)
@@ -250,6 +281,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="baca token sesi lama dari berkas (mode 0600); ganti --token di mesin bersama",
     )
     rotate.set_defaults(func=cmd_rotate)
+
+    step_up = sub.add_parser(
+        "step-up", parents=[common],
+        help="buka aksi berisiko tinggi untuk jendela singkat (butuh kode TOTP sesi itu)",
+    )
+    step_up.add_argument("--token", default=None,
+                         help="token sesi; terlihat oleh pengguna lokal lewat /proc/<pid>/cmdline")
+    step_up.add_argument("--token-file", default=None, metavar="PATH",
+                         help="baca token sesi dari berkas (mode 0600); ganti --token")
+    step_up.add_argument("--code", required=True, help="kode TOTP 6 digit identitas sesi itu")
+    step_up.set_defaults(func=cmd_step_up)
     return parser
 
 

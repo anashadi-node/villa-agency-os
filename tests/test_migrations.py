@@ -259,3 +259,82 @@ class TestSupplierBlockProofMigration:
                 conn.execute("DELETE FROM supplier_block_proofs WHERE proof_id = 'p1'")
         finally:
             conn.close()
+
+
+_MIGRATION_020_OBJECTS = (
+    "supplier_contact",  # supplier_contacts, supplier_contact_events and their triggers
+    "evidence_supplier_attributions",
+    "ux_suppliers_agency_supplier",
+    "ux_vsr_agency_supplier_rel",
+    "ux_evidence_agency_unit",
+    "ux_bookings_agency_booking",
+)
+
+
+def _objects_named(path: Path, markers: tuple[str, ...]) -> list[tuple[str, str, str]]:
+    conn = sqlite3.connect(str(path))
+    try:
+        return [
+            (kind, name, " ".join((sql or "").split()))
+            for kind, name, sql in conn.execute(
+                "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name"
+            )
+            if any(marker in name for marker in markers)
+        ]
+    finally:
+        conn.close()
+
+
+class TestSupplierContactsMigration:
+    """020 (ADR-0074, PROPOSED): the migrated database must equal a fresh one, and must not
+    touch a row that already exists. Applied here to disposable files only."""
+
+    def test_a_migrated_database_matches_a_fresh_one(self, tmp_path):
+        migrated = tmp_path / "migrated.db"
+        _old_database(migrated, skip_statements_mentioning=_MIGRATION_020_OBJECTS)
+        assert _objects_named(migrated, _MIGRATION_020_OBJECTS) == []
+
+        result = _run(env={"VILLA_DB": str(migrated)})
+        assert result.returncode == 0, result.stderr
+
+        fresh = tmp_path / "fresh.db"
+        _build_from_schema(fresh)
+        got = _objects_named(migrated, _MIGRATION_020_OBJECTS)
+        assert got == _objects_named(fresh, _MIGRATION_020_OBJECTS)
+        assert {kind for kind, _, _ in got} >= {"table", "index", "trigger"}
+
+    def test_migrating_twice_changes_nothing(self, tmp_path):
+        db = tmp_path / "twice.db"
+        _old_database(db, skip_statements_mentioning=_MIGRATION_020_OBJECTS)
+        assert _run(env={"VILLA_DB": str(db)}).returncode == 0
+        once = _objects_named(db, _MIGRATION_020_OBJECTS)
+        assert _run(env={"VILLA_DB": str(db)}).returncode == 0
+        assert _objects_named(db, _MIGRATION_020_OBJECTS) == once
+
+    def test_legacy_evidence_is_left_exactly_as_it_was_and_unattributed(self, tmp_path):
+        db = tmp_path / "legacy.db"
+        _old_database(db, skip_statements_mentioning=_MIGRATION_020_OBJECTS)
+        conn = sqlite3.connect(str(db))
+        try:
+            conn.execute("PRAGMA foreign_keys = OFF")
+            conn.execute(
+                "INSERT INTO availability_evidence (evidence_id, agency_id, unit_id,"
+                " evidence_level, source_type, source_ref, captured_at, valid_until, result,"
+                " occupancy_ranges, can_quote, can_hold, can_confirm, notes, created_at)"
+                " VALUES ('legacy_1', 'agency_default', 'u1', 'B', 'manager_written', 'letter',"
+                " '2026-09-01T00:00:00+00:00', '2026-09-02T00:00:00+00:00', 'AVAILABLE', '[]',"
+                " 1, 1, 1, NULL, '2026-09-01T00:00:00+00:00')"
+            )
+            conn.commit()
+            before = conn.execute("SELECT * FROM availability_evidence").fetchall()
+        finally:
+            conn.close()
+
+        assert _run(env={"VILLA_DB": str(db)}).returncode == 0
+
+        conn = sqlite3.connect(str(db))
+        try:
+            assert conn.execute("SELECT * FROM availability_evidence").fetchall() == before
+            assert conn.execute("SELECT COUNT(*) FROM evidence_supplier_attributions").fetchone()[0] == 0
+        finally:
+            conn.close()

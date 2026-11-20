@@ -235,7 +235,7 @@ class Live:
 
 
 @contextmanager
-def live_dashboard(db_path, clock, *, seed_data: bool, sessions: tuple = ()):
+def live_dashboard(db_path, clock, *, seed_data: bool, sessions: tuple = (), bootstrap=None):
     setup = connect_sqlite(db_path)
     if seed_data:
         seed(setup, clock)
@@ -243,6 +243,11 @@ def live_dashboard(db_path, clock, *, seed_data: bool, sessions: tuple = ()):
         identity: identity_module.SessionService(setup, clock=clock).open_session(identity, role)
         for identity, role in sessions
     }
+    extra_tokens: dict = {}
+    if bootstrap is not None:
+        # A test that needs more than ``open_session`` can offer (role holders, TOTP, a
+        # step-up) builds those rows here and returns the tokens it minted.
+        extra_tokens = dict(bootstrap(setup) or {})
     setup.commit()
     setup.close()
     box: dict = {}
@@ -267,6 +272,7 @@ def live_dashboard(db_path, clock, *, seed_data: bool, sessions: tuple = ()):
     try:
         live = Live(Client(f"http://127.0.0.1:{server.server_address[1]}"), reader)
         live.session_tokens = {identity: result.token for identity, result in opened.items()}
+        live.session_tokens.update(extra_tokens)
         yield live
     finally:
         server.shutdown()
@@ -1444,9 +1450,11 @@ def test_render_page_escapes_every_dynamic_value():
             "schema_version": "1.0.0",
             "nav": D.Markup(""),
             "read_only_banner": D.Markup(""),
+            "banner": D.Markup(""),
             "property_table": D.table(["Nama"], [[XSS]], empty="properti"),
             "unit_table": D.empty_note("unit"),
             "hold_table": D.empty_note("hold"),
+            "supplier_contacts": D.Markup(""),
         },
         templates_dir=TEMPLATES,
     )
@@ -4318,3 +4326,210 @@ def test_revocation_needs_the_form_token(block_proof_http):
         "SELECT revoked_at FROM supplier_block_proofs WHERE proof_id = 'proof-e1'"
     ).fetchone()
     assert row["revoked_at"] is None
+
+
+# --------------------------------------------------------------------------- #
+# Stage E5: supplier contact registry and the booking-specific assertion screen
+# --------------------------------------------------------------------------- #
+def _e5_people(conn, clock):
+    """Role holders, TOTP factors and three signed-in humans — the minimum E5 writes need.
+
+    A registry action must come from a *session* (the kernel refuses a static role token),
+    and an owner/gm session needs MFA at login, so the fixture mints real factors. The
+    reservation manager then steps up once, which is what a signature spends.
+    """
+    import totp as T
+    from agency_roles import AgencyRoles
+    from primitives import parse_iso
+
+    people = (("owner-1", "owner"), ("gm-1", "gm"), ("rm-1", "reservation_manager"))
+    secrets = {f"{name}-ref": T.generate_secret() for name, _ in people}
+
+    def stamp(seconds: int) -> str:
+        return to_iso(clock.now() + timedelta(seconds=seconds))
+
+    def code(name: str, seconds: int) -> str:
+        return T.totp(secrets[f"{name}-ref"], parse_iso(stamp(seconds)))
+
+    roles = AgencyRoles(conn, clock, agency_id="agency_default")
+    roles.seed_blueprint(actor="owner-1", actor_role="owner")
+    for name, role in people:
+        roles.assign_holder(role, holder_ref=name, actor="owner-1", actor_role="owner")
+
+    svc = identity_module.SessionService(
+        conn, clock=clock, ids=IdFactory(deterministic=True, seed="e5"),
+        agency_id="agency_default", secrets=identity_module.MappingSecretResolver(secrets),
+    )
+    for name, _ in people:
+        svc.enroll_totp(name, secret_ref=f"{name}-ref", at=stamp(-180))
+        svc.confirm_totp(name, code(name, -180), at=stamp(-180))
+    owner = svc.open_session("owner-1", "owner", mfa_code=code("owner-1", -60), at=stamp(-60))
+    gm = svc.open_session("gm-1", "gm", mfa_code=code("gm-1", -30), at=stamp(-30))
+    rm = svc.open_session("rm-1", "reservation_manager", at=stamp(-20))
+    svc.satisfy_step_up(rm.session.session_id, code("rm-1", 0), at=stamp(0))
+    return {"owner": owner.token, "gm": gm.token, "rm": rm.token}
+
+
+@pytest.fixture()
+def supplier_http(tmp_path, clock):
+    """Seeded dashboard where the three E5 humans hold real roles and real sessions."""
+    with live_dashboard(
+        tmp_path / "supplier-assertion.db",
+        clock,
+        seed_data=True,
+        bootstrap=lambda conn: _e5_people(conn, clock),
+    ) as live:
+        _seed_stage_e_paid_booking(live.db)
+        _seed_block_supplier(live.db)
+        yield live
+
+
+def _form_token_after(live, anchor: str, *, token: str, path: str = "/properties") -> str:
+    page = live.get(path, token=token)
+    assert page.status == 200, page.text[:400]
+    start = page.text.find(anchor)
+    assert start != -1, f"form not rendered: {anchor}"
+    match = BOOKING_TOKEN_PATTERN.search(page.text, start)
+    assert match, "the form carries no token"
+    return match.group(1)
+
+
+def _register_contact(live, *, value: str = "+62 812 3456 7890", key: str = "idem-http-reg-1"):
+    token = live.session_tokens["owner"]
+    form_token = _form_token_after(live, 'action="/supplier-contacts"', token=token)
+    return live.post("/supplier-contacts", token=token, form={
+        "form_token": form_token, "supplier_id": "sup-1", "contact_value": value,
+        "registration_basis": "SIGNED_AGREEMENT", "idempotency_key": key,
+    })
+
+
+def _only_contact_id(live) -> str:
+    row = live.db.execute("SELECT contact_id FROM supplier_contacts").fetchone()
+    assert row is not None, "the contact was not written"
+    return str(row[0])
+
+
+def _verify_contact(live, contact_id: str, *, key: str = "idem-http-ver-1"):
+    token = live.session_tokens["gm"]
+    form_token = _form_token_after(
+        live, f'action="/supplier-contacts/{contact_id}/verify"', token=token
+    )
+    return live.post(f"/supplier-contacts/{contact_id}/verify", token=token, form={
+        "form_token": form_token, "idempotency_key": key,
+    })
+
+
+def test_the_screen_registers_a_contact_and_a_second_human_checks_it(supplier_http):
+    live = supplier_http
+    registered = _register_contact(live)
+    assert registered.status == 200, registered.text[-900:]
+    assert 'data-banner="supplier-contact-registered"' in registered.text
+    assert 'data-state="UNVERIFIED"' in registered.text
+    assert "PENDING" in registered.text
+
+    contact_id = _only_contact_id(live)
+    checked = _verify_contact(live, contact_id)
+    assert checked.status == 200, checked.text[-900:]
+    assert 'data-banner="supplier-contact-verified"' in checked.text
+    assert 'data-state="VERIFIED"' in checked.text
+
+    rows = live.db.execute(
+        "SELECT c.created_by, e.actor, e.kind FROM supplier_contacts c"
+        " JOIN supplier_contact_events e ON e.contact_id = c.contact_id"
+    ).fetchall()
+    assert [(r["created_by"], r["actor"], r["kind"]) for r in rows] == [
+        ("owner-1", "gm-1", "VERIFIED")
+    ]
+
+
+def test_the_screen_never_prints_the_registered_number_in_full(supplier_http):
+    live = supplier_http
+    response = _register_contact(live, value="+62 812 3456 7890")
+    assert "+62 812 3456 7890" not in response.text
+    assert "7890" in response.text  # last four, to recognise the row
+
+
+def test_the_maker_cannot_check_their_own_registration_through_the_screen(supplier_http):
+    live = supplier_http
+    _register_contact(live)
+    contact_id = _only_contact_id(live)
+    token = live.session_tokens["owner"]
+    # The verify form is not offered to the maker, so the write is attempted directly.
+    response = live.post(f"/supplier-contacts/{contact_id}/verify", token=token, form={
+        "form_token": _form_token_after(live, 'action="/supplier-contacts"', token=token),
+        "idempotency_key": "idem-http-self-check",
+    })
+    assert "CONTACT_CHECKER_IS_MAKER" in response.text
+    events = live.db.execute("SELECT COUNT(*) FROM supplier_contact_events").fetchone()[0]
+    assert events == 0
+
+
+def test_the_assertion_form_is_offered_only_once_a_contact_is_verified(supplier_http):
+    live = supplier_http
+    rm = live.session_tokens["rm"]
+    before = live.get("/inventory", token=rm)
+    assert before.status == 200
+    assert 'action="/bookings/booking-e1/supplier-assertion"' not in before.text
+    assert 'data-note="supplier-assertion-contact-missing"' in before.text
+
+    _register_contact(live)
+    _verify_contact(live, _only_contact_id(live))
+
+    after = live.get("/inventory", token=rm)
+    assert 'data-form="record-supplier-assertion"' in after.text
+    start = after.text.find('action="/bookings/booking-e1/supplier-assertion"')
+    assert start != -1
+    form = after.text[start:start + 4000]
+    assert 'name="check_in" value="2026-12-10"' in form
+    assert 'name="check_out" value="2026-12-13"' in form
+    assert "+62 812 3456 7890" not in after.text
+
+
+def test_a_stepped_up_reservation_manager_records_the_assertion_and_the_screen_shows_it(
+    supplier_http, clock
+):
+    live = supplier_http
+    _register_contact(live)
+    contact_id = _only_contact_id(live)
+    _verify_contact(live, contact_id)
+
+    rm = live.session_tokens["rm"]
+    form_token = _form_token_after(
+        live, 'action="/bookings/booking-e1/supplier-assertion"', token=rm, path="/inventory"
+    )
+    response = live.post("/bookings/booking-e1/supplier-assertion", token=rm, form={
+        "form_token": form_token, "supplier_id": "sup-1", "relationship_id": "vsr-1",
+        "contact_id": contact_id, "check_in": "2026-12-10", "check_out": "2026-12-13",
+        "supplier_confirmed_at": to_iso(clock.now()), "idempotency_key": "idem-http-assert-1",
+    })
+    assert response.status == 200, response.text[-900:]
+    assert 'data-banner="supplier-assertion-recorded"' in response.text
+    assert 'data-assertion-state="FRESH"' in response.text
+
+    row = live.db.execute(
+        "SELECT booking_id, callback_by, callback_role FROM evidence_supplier_attributions"
+    ).fetchone()
+    assert (row["booking_id"], row["callback_by"], row["callback_role"]) == (
+        "booking-e1", "rm-1", "reservation_manager"
+    )
+    # The booking is still paid: an assertion is evidence, never a confirmation.
+    status = live.db.execute(
+        "SELECT status FROM bookings WHERE booking_id = 'booking-e1'"
+    ).fetchone()["status"]
+    assert status == "PAID_IN_FULL"
+
+
+def test_a_static_role_token_cannot_read_or_write_the_registry(supplier_http):
+    live = supplier_http
+    page = live.get("/properties", token="tok-owner")
+    assert page.status == 200
+    assert 'data-note="supplier-contacts-unavailable"' in page.text
+    assert "SESSION_REQUIRED" in page.text
+    assert 'data-form="register-supplier-contact"' not in page.text
+
+    response = live.post("/supplier-contacts", token="tok-owner", form={
+        "supplier_id": "sup-1", "contact_value": "+62 812 3456 7890",
+        "registration_basis": "SIGNED_AGREEMENT", "idempotency_key": "idem-http-static",
+    })
+    assert response.status in (400, 403, 409), response.status
+    assert live.db.execute("SELECT COUNT(*) FROM supplier_contacts").fetchone()[0] == 0

@@ -142,6 +142,20 @@ def _text_list(value: Any) -> str:
     return canonical_json(cleaned)
 
 
+def _true_false(value: Any) -> str:
+    text = _text(value).lower()
+    if text not in ("true", "false"):
+        raise InvalidSettingValue("this setting must be true or false", got=repr(value))
+    return text
+
+
+def _hours_1_to_24(value: Any) -> str:
+    number = int(_positive_int(value))
+    if number > 24:
+        raise InvalidSettingValue("a supplier confirmation may not be trusted past 24 hours", got=number)
+    return str(number)
+
+
 @dataclass(frozen=True)
 class SettingDef:
     """One key a tenant owns: what it means, how it is validated, and whether go-live needs it."""
@@ -224,6 +238,24 @@ SETTING_DEFS: Mapping[str, SettingDef] = MappingProxyType(
             required_before_go_live=False,
             validate=_text,
             example="Jumat",
+        ),
+        "reservation.supplier_assertion.enforced": SettingDef(
+            key="reservation.supplier_assertion.enforced",
+            description=(
+                "Whether a booking may be confirmed only on a verified supplier callback "
+                "assertion signed by a bound reservation manager (ADR-0074, PROPOSED). Off "
+                "until the owner turns it on."
+            ),
+            required_before_go_live=False,
+            validate=_true_false,
+            example="false",
+        ),
+        "reservation.supplier_assertion.max_age_hours": SettingDef(
+            key="reservation.supplier_assertion.max_age_hours",
+            description="How old the supplier's own confirmation may be when a booking is confirmed (1-24).",
+            required_before_go_live=False,
+            validate=_hours_1_to_24,
+            example="24",
         ),
         "retention.data_years": SettingDef(
             key="retention.data_years",

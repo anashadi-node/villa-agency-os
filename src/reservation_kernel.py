@@ -92,6 +92,7 @@ from primitives import (
     to_iso,
 )
 from schema_loader import applied_version, connect_sqlite
+from supplier_assertion import SupplierAssertionMixin
 
 __all__ = [
     "ReservationKernel",
@@ -329,7 +330,7 @@ class CheckOutcome:
 # --------------------------------------------------------------------------- #
 # The kernel
 # --------------------------------------------------------------------------- #
-class ReservationKernel:
+class ReservationKernel(SupplierAssertionMixin):
     """Transactional write path for inventory state.
 
     One instance owns one connection. Do not share an instance across threads or
@@ -1132,6 +1133,11 @@ class ReservationKernel:
                     code="BLOCK_PROOF_SUPPLIER_NOT_AUTHORIZED",
                     relationship_id=relationship_id,
                     unit_id=booking["unit_id"],
+                )
+            if self._assertion_enforced(conn):
+                self._require_attributed_evidence(
+                    conn, booking=booking, evidence_id=evidence_id, supplier_id=supplier_id,
+                    relationship_id=relationship_id, at_confirmation=False,
                 )
             if conn.execute(
                 "SELECT 1 FROM supplier_block_proofs WHERE evidence_id = ?", (evidence_id,)
@@ -2373,6 +2379,7 @@ class ReservationKernel:
         command_id: str,
         actor: Optional[str] = None,
         actor_role: Optional[str] = None,
+        session_token: Optional[str] = None,
     ) -> BookingOutcome:
         """Reservation's closing step (ADR-0033 §2.6, hardened by ADR-0073): the
         supplier's block turns a paid booking into ``CONFIRMED`` and converts its hold.
@@ -2472,6 +2479,14 @@ class ReservationKernel:
                     code="BLOCK_PROOF_EXPIRED",
                     expires_at=proof["expires_at"],
                 )
+            # ADR-0074 (PROPOSED), E5: once an agency turns enforcement on, a confirmation also
+            # needs a bound reservation_manager session with a fresh step-up, and evidence that
+            # a verified callback assertion attributes to this booking. Off by default.
+            signer = self._enforce_at_confirmation(
+                conn, booking=booking, proof=proof, session_token=session_token, actor=actor
+            )
+            if signer is not None:
+                actor = signer
             supplier = conn.execute(
                 "SELECT status FROM suppliers WHERE supplier_id = ? AND agency_id = ?",
                 (proof["supplier_id"], self.agency_id),

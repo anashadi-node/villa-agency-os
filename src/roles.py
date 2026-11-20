@@ -43,6 +43,7 @@ __all__ = [
     "ROLE_CAPABILITIES",
     "ROLE_IDS",
     "ROLE_RANK",
+    "SIGNER_ROLES",
     "UnknownRole",
     "approval_ladder",
     "canonical_role",
@@ -220,6 +221,12 @@ MONEY_OUT_APPROVER_ROLES: frozenset[str] = frozenset(
 #: ``identity.is_mfa_role`` resolves the *page* word a session carries (``finance``) onto the
 #: canonical id, so the published set and the session vocabulary cannot drift apart.
 MFA_REQUIRED_ROLES: tuple[str, ...] = ("owner", "finance_manager", "gm")
+
+#: Who may sign a supplier block assertion or the confirmation it supports (ADR-0074,
+#: PROPOSED; E5 candidate). Data, not prompt: owner, finance, auditor, system_admin, the AI
+#: roles and partnership_manager are deliberately absent. ``is_named_human_role`` only says a
+#: role names a person; this says which person may sign.
+SIGNER_ROLES: tuple[str, ...] = ("reservation_manager",)
 
 
 def canonical_role(role: Any) -> Optional[str]:

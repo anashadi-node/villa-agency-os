@@ -51,7 +51,7 @@ import secrets
 import sqlite3
 import sys
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
@@ -1019,6 +1019,9 @@ class Principal:
     #: per-person token minted by :mod:`identity` after an MFA check, so it can
     #: carry a human's name into a record that must name one.
     authenticated_via: str = "token"
+    #: The raw session token, kept only so a handler can hand it to the kernel, which resolves
+    #: identity, role binding and step-up from it (ADR-0074). Never compared, printed or logged.
+    session_token: Optional[str] = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         require_ref(self.identity, "identity")
@@ -1366,6 +1369,7 @@ class Dashboard:
             role=page_role,
             agency_id=session.agency_id,
             authenticated_via="session",
+            session_token=candidate,
         )
 
     def authenticate(self, headers: Any) -> Principal:
@@ -2336,6 +2340,223 @@ class Dashboard:
             '<button type="submit">Revoke supplier block</button></form>'
         )
 
+    def _assertion_max_age_hours(self) -> int:
+        """The freshness window the screen shows. The kernel remains the gate; this mirrors it.
+
+        Same default and same clamp as ``SupplierAssertionMixin._assertion_max_age``, read from
+        the agency's own setting so the screen never promises a window the gate would refuse.
+        """
+        from supplier_assertion import DEFAULT_MAX_CONFIRMATION_AGE_HOURS, SETTING_MAX_AGE_HOURS
+
+        rows = self._rows(
+            "SELECT value FROM agency_settings WHERE agency_id = ? AND setting_key = ?",
+            (self.agency_id, SETTING_MAX_AGE_HOURS),
+        )
+        try:
+            hours = int(str(rows[0]["value"])) if rows else DEFAULT_MAX_CONFIRMATION_AGE_HOURS
+        except (TypeError, ValueError):
+            hours = DEFAULT_MAX_CONFIRMATION_AGE_HOURS
+        return max(1, min(hours, DEFAULT_MAX_CONFIRMATION_AGE_HOURS))
+
+    def _supplier_contact_panel(self, principal: Principal) -> Markup:
+        """The registry screen: who is registered, who checked them, what is still pending.
+
+        Reads go through the kernel's read model, so the standing shown here is derived by
+        the same rule the write path enforces: a screen that called an unverified contact
+        "verified" would be a lie the operator cannot see through. Numbers are masked; the
+        full value leaves only through the callback read.
+        """
+        from supplier_assertion import REGISTRATION_BASES
+
+        if not principal.session_token:
+            # A static role token is not a session, so the kernel would refuse the read — and
+            # constructing it here would write the agency row on a GET. Say so instead.
+            return Markup(
+                "<h3>Supplier contacts</h3>"
+                '<p class="muted" data-note="supplier-contacts-unavailable"'
+                ' data-code="SESSION_REQUIRED">Not shown: this page is signed in with a static'
+                " role token; the registry is only readable from a session"
+                " (code SESSION_REQUIRED).</p>"
+            )
+
+        try:
+            contacts = self._reservation_kernel(principal).list_supplier_contacts(
+                session_token=principal.session_token or ""
+            )
+        except DomainError as exc:
+            return Markup(
+                "<h3>Supplier contacts</h3>"
+                '<p class="muted" data-note="supplier-contacts-unavailable"'
+                f' data-code="{escape_value(exc.code)}">Not shown: '
+                f"{escape_value(exc.message)} (code {escape_value(exc.code)}).</p>"
+            )
+        verdicts = {"UNVERIFIED": "PENDING", "VERIFIED": "VERIFIED",
+                    "SUSPENDED": "SUSPENDED", "REVOKED": "REVOKED"}
+        rows = []
+        for contact in contacts:
+            state = str(contact["standing"])
+            verify = ""
+            if state == "UNVERIFIED" and self._can_be_verifier(principal):
+                verify = (
+                    '<form method="post" data-write-form="1" data-form="verify-supplier-contact"'
+                    f' action="/supplier-contacts/{escape_value(contact["contact_id"])}/verify">'
+                    f'<input type="hidden" name="{FORM_TOKEN_FIELD}"'
+                    f' value="{escape_value(self.form_token_for(principal))}">'
+                    f'<input type="hidden" name="idempotency_key"'
+                    f' value="{escape_value(self._new_write_key())}">'
+                    '<button type="submit">Check by an independent channel</button></form>'
+                )
+            rows.append(
+                f'<tr data-contact-id="{escape_value(contact["contact_id"])}"'
+                f' data-supplier-id="{escape_value(contact["supplier_id"])}"'
+                f' data-state="{escape_value(state)}">'
+                f"<td>{escape_value(contact['contact_id'])}</td>"
+                f"<td>{escape_value(contact['supplier_name'] or contact['supplier_id'])}</td>"
+                f"<td>{escape_value(contact['channel'])} {escape_value(contact['masked_value'])}</td>"
+                f"<td>{escape_value(contact['registration_basis'])}</td>"
+                f"<td>{escape_value(contact['created_by'])} ({escape_value(contact['created_role'])})</td>"
+                f"<td>{escape_value(verdicts.get(state, state))}</td>"
+                f"<td>{escape_value(contact['last_event_at'] or contact['created_at'])}</td>"
+                f"<td>{verify}</td></tr>"
+            )
+        table = (
+            '<table data-table="supplier-contacts"><thead><tr>'
+            "<th>Contact</th><th>Supplier</th><th>Channel</th><th>Basis</th>"
+            "<th>Registered by</th><th>State</th><th>Last event</th><th>Action</th>"
+            f"</tr></thead><tbody>{''.join(rows)}</tbody></table>"
+            if rows
+            else '<p class="muted" data-note="supplier-contacts-empty">No supplier contact is '
+                 "registered for this agency yet.</p>"
+        )
+        return Markup(
+            "<h3>Supplier contacts — registered, checked, revoked</h3>"
+            '<p class="muted" data-note="supplier-contacts-legend">PENDING = registered but not '
+            "yet checked; VERIFIED = a second person confirmed the number on an independent "
+            "channel; SUSPENDED/REVOKED = no longer valid authority. Only VERIFIED contacts may "
+            "back a supplier assertion.</p>"
+            f"{table}{self._supplier_contact_form(principal, REGISTRATION_BASES)}"
+        )
+
+    def _supplier_contact_form(self, principal: Principal, bases: Sequence[str]) -> str:
+        """Register a contact. The maker is the signed-in identity, never a form field."""
+        if not (principal.may_write and self._can_be_verifier(principal)):
+            return ""
+        suppliers = self._rows(
+            "SELECT supplier_id, name FROM suppliers WHERE agency_id = ? AND status = 'ACTIVE'"
+            " ORDER BY name",
+            (self.agency_id,),
+        )
+        if not suppliers:
+            return ('<p class="muted" data-note="supplier-contact-form-unavailable">No active '
+                    "supplier to register a contact for.</p>")
+        supplier_options = "".join(
+            f'<option value="{escape_value(item["supplier_id"])}">'
+            f'{escape_value(item["name"])} ({escape_value(item["supplier_id"])})</option>'
+            for item in suppliers
+        )
+        basis_options = "".join(
+            f'<option value="{escape_value(basis)}">{escape_value(basis)}</option>'
+            for basis in bases
+        )
+        return (
+            '<form method="post" data-write-form="1" data-form="register-supplier-contact"'
+            ' action="/supplier-contacts">'
+            f'<input type="hidden" name="{FORM_TOKEN_FIELD}"'
+            f' value="{escape_value(self.form_token_for(principal))}">'
+            '<label>Supplier <select name="supplier_id">'
+            f"{supplier_options}</select></label> "
+            '<label>Channel number <input name="contact_value" required minlength="6"'
+            ' maxlength="32" placeholder="+62 ..."></label> '
+            '<label>Basis <select name="registration_basis">'
+            f"{basis_options}</select></label> "
+            f'<input type="hidden" name="idempotency_key"'
+            f' value="{escape_value(self._new_write_key())}">'
+            '<button type="submit">Register contact</button></form>'
+        )
+
+    def _verified_supplier_contacts(self, principal: Principal) -> list[Any]:
+        """Contacts a booking-specific assertion may name: verified, this tenant, still valid."""
+        if not principal.session_token:
+            return []
+        try:
+            contacts = self._reservation_kernel(principal).list_supplier_contacts(
+                session_token=principal.session_token or ""
+            )
+        except DomainError:
+            return []
+        # ``standing`` is the kernel's own verdict (latest event, revocation wins): the screen
+        # does not re-derive it, it only filters on it.
+        return [contact for contact in contacts if contact["standing"] == "VERIFIED"]
+
+    def _supplier_assertion_form(
+        self,
+        principal: Principal,
+        row: Mapping[str, Any],
+        relationships: Sequence[Any],
+        contacts: Sequence[Any],
+    ) -> str:
+        """Record the callback that makes a block booking-specific.
+
+        The stay dates travel as hidden fields taken from the booking row: they are the
+        server's facts, and the kernel re-checks them anyway. The signer, the step-up and
+        the contact's standing are never read from the form.
+        """
+        if not relationships:
+            return (
+                '<span class="muted" data-note="supplier-assertion-supplier-missing">'
+                "No active supplier relationship covers this unit.</span>"
+            )
+        eligible = [
+            contact for contact in contacts
+            if contact["supplier_id"] in {str(item["supplier_id"]) for item in relationships}
+        ]
+        if not eligible:
+            return (
+                '<span class="muted" data-note="supplier-assertion-contact-missing">'
+                "No VERIFIED supplier contact for this supplier. Register the number, then have "
+                "a second person check it on an independent channel.</span>"
+            )
+        supplier_options = "".join(
+            f'<option value="{escape_value(item["supplier_id"])}">'
+            f'{escape_value(item["supplier_name"])} ({escape_value(item["supplier_id"])})</option>'
+            for item in relationships
+        )
+        relationship_options = "".join(
+            f'<option value="{escape_value(item["relationship_id"])}">'
+            f'{escape_value(item["relationship_id"])} — {escape_value(item["supplier_name"])}'
+            "</option>"
+            for item in relationships
+        )
+        contact_options = "".join(
+            f'<option value="{escape_value(contact["contact_id"])}">'
+            f'{escape_value(contact["supplier_id"])} · {escape_value(contact["channel"])} '
+            f'{escape_value(contact["masked_value"])} '
+            f'({escape_value(contact["contact_id"])})</option>'
+            for contact in eligible
+        )
+        return (
+            '<form method="post" data-write-form="1" data-form="record-supplier-assertion"'
+            f' action="/bookings/{escape_value(row["booking_id"])}/supplier-assertion">'
+            f'<input type="hidden" name="{FORM_TOKEN_FIELD}"'
+            f' value="{escape_value(self.form_token_for(principal))}">'
+            f'<input type="hidden" name="check_in" value="{escape_value(row["check_in"])}">'
+            f'<input type="hidden" name="check_out" value="{escape_value(row["check_out"])}">'
+            '<label>Supplier <select name="supplier_id">'
+            f"{supplier_options}</select></label> "
+            '<label>Relationship <select name="relationship_id">'
+            f"{relationship_options}</select></label> "
+            '<label>Called <select name="contact_id">'
+            f"{contact_options}</select></label> "
+            '<label>Supplier said yes at <input name="supplier_confirmed_at" required'
+            f' value="{escape_value(to_iso(self.clock.now()))}" placeholder="2026-11-20T09:30:00+07:00">'
+            "</label> "
+            f'<input type="hidden" name="idempotency_key"'
+            f' value="{escape_value(self._new_write_key())}">'
+            '<button type="submit">Record supplier assertion</button>'
+            '<span class="muted" data-note="supplier-assertion-step-up">needs a reservation '
+            "manager session with a fresh step-up (scripts/session_token.py step-up)</span></form>"
+        )
+
     def _confirmation_table(self, principal: Principal) -> Markup:
         """Paid bookings, their supplier block, and the step that is still missing.
 
@@ -2353,7 +2574,16 @@ class Dashboard:
             " e.source_ref, e.source_type, e.evidence_level, e.captured_at,"
             " (SELECT COUNT(*) FROM supplier_block_proofs r"
             "  WHERE r.booking_id = b.booking_id AND r.agency_id = b.agency_id"
-            "  AND r.revoked_at IS NOT NULL) AS revoked_count"
+            "  AND r.revoked_at IS NOT NULL) AS revoked_count,"
+            " (SELECT a.evidence_id FROM evidence_supplier_attributions a"
+            "  WHERE a.booking_id = b.booking_id AND a.agency_id = b.agency_id"
+            "  ORDER BY a.recorded_at DESC, a.evidence_id DESC LIMIT 1) AS assertion_evidence_id,"
+            " (SELECT a.supplier_confirmed_at FROM evidence_supplier_attributions a"
+            "  WHERE a.booking_id = b.booking_id AND a.agency_id = b.agency_id"
+            "  ORDER BY a.recorded_at DESC, a.evidence_id DESC LIMIT 1) AS assertion_confirmed_at,"
+            " (SELECT a.callback_by FROM evidence_supplier_attributions a"
+            "  WHERE a.booking_id = b.booking_id AND a.agency_id = b.agency_id"
+            "  ORDER BY a.recorded_at DESC, a.evidence_id DESC LIMIT 1) AS assertion_callback_by"
             " FROM bookings b"
             " LEFT JOIN supplier_block_proofs p ON p.booking_id = b.booking_id"
             "  AND p.agency_id = b.agency_id AND p.revoked_at IS NULL"
@@ -2372,11 +2602,24 @@ class Dashboard:
             )
         now = to_iso(self.clock.now())
         may_verify = self._can_be_verifier(principal)
+        refresh_window = timedelta(hours=self._assertion_max_age_hours())
+        verified_contacts = self._verified_supplier_contacts(principal) if may_verify else []
         body_rows = []
         for row in rows:
             candidates = self._block_proof_candidates(row)
             relationships = self._active_supplier_relationships(row)
             proof_id = row["proof_id"]
+            if row["assertion_evidence_id"] is None:
+                assertion_state = "MISSING"
+                assertion_cell = "no supplier callback on record"
+            else:
+                stale = parse_iso(now) - parse_iso(str(row["assertion_confirmed_at"])) > refresh_window
+                assertion_state = "EXPIRED" if stale else "FRESH"
+                assertion_cell = (
+                    f"{row['assertion_evidence_id']} — supplier said yes at "
+                    f"{_time_label(row['assertion_confirmed_at'])}, called by "
+                    f"{row['assertion_callback_by']}"
+                )
             if proof_id is None:
                 supplier_cell = (
                     f"{relationships[0]['supplier_name']} "
@@ -2441,7 +2684,14 @@ class Dashboard:
                     "confirmation belongs to Reservation or Operations</span>"
                 )
             elif may_verify and proof_id is None:
-                action = self._block_proof_form(principal, row, candidates, relationships)
+                assertion_form = (
+                    self._supplier_assertion_form(principal, row, relationships, verified_contacts)
+                    if row["assertion_evidence_id"] is None
+                    else ""
+                )
+                action = assertion_form + self._block_proof_form(
+                    principal, row, candidates, relationships
+                )
             elif state == "EXPIRED":
                 action = (
                     '<span class="muted" data-note="confirmation-blocked"'
@@ -2463,6 +2713,7 @@ class Dashboard:
             body_rows.append(
                 f'<tr data-booking-id="{escape_value(row["booking_id"])}"'
                 f' data-status="{escape_value(row["status"])}"'
+                f' data-assertion-state="{escape_value(assertion_state)}"'
                 f' data-proof-state="{escape_value(state)}">'
                 f"<td>{escape_value(row['booking_id'])}</td>"
                 f"<td>{escape_value(row['unit_id'])}</td>"
@@ -2472,6 +2723,7 @@ class Dashboard:
                 f"<td>{escape_value(evidence_cell)}</td>"
                 f"<td>{escape_value(method_cell)}</td>"
                 f"<td>{escape_value(verified_cell)}</td>"
+                f"<td>{escape_value(assertion_cell)}</td>"
                 f"<td>{escape_value(proof_cell)}</td>"
                 f"<td>{action}</td>"
                 "</tr>"
@@ -2481,7 +2733,7 @@ class Dashboard:
             '<table data-table="confirmation"><thead><tr>'
             "<th>Booking</th><th>Unit</th><th>Stay</th><th>Payment</th>"
             "<th>Supplier</th><th>Evidence</th><th>Method</th><th>Verification</th>"
-            "<th>Supplier proof</th><th>Action</th>"
+            "<th>Supplier callback</th><th>Supplier proof</th><th>Action</th>"
             f"</tr></thead><tbody>{''.join(body_rows)}</tbody></table>"
         )
 
@@ -3084,6 +3336,12 @@ class Dashboard:
                 holds,
                 empty="hold",
             ),
+            # The supplier registry lives with property data, not with the calendar: the
+            # people who register and check a number (owner, gm) are not the people who read
+            # availability. The panel refuses to render for any other role.
+            "supplier_contacts": self._supplier_contact_panel(principal),
+            # A GET has no outcome to report; the template always asks, so answer emptily.
+            "banner": Markup(""),
         }
 
     def view_marketing(self, principal: Principal) -> dict[str, Any]:
@@ -3686,6 +3944,19 @@ class Dashboard:
         if len(segments) == 3 and segments[0] == "bookings" and segments[2] == "block-proof":
             self.require_page("inventory", principal)
             return self.post_block_proof_request(request, principal, segments[1])
+        if (
+            len(segments) == 3
+            and segments[0] == "bookings"
+            and segments[2] == "supplier-assertion"
+        ):
+            self.require_page("inventory", principal)
+            return self.post_supplier_assertion_request(request, principal, segments[1])
+        if segments == ["supplier-contacts"]:
+            self.require_page("properties", principal)
+            return self.post_supplier_contact_request(request, principal, None)
+        if len(segments) == 3 and segments[0] == "supplier-contacts" and segments[2] == "verify":
+            self.require_page("properties", principal)
+            return self.post_supplier_contact_request(request, principal, segments[1])
         if segments == ["invoices"]:
             self.require_page("finance", principal)
             return self.post_invoice_request(request, principal)
@@ -3704,6 +3975,9 @@ class Dashboard:
                 "POST /bookings/confirm",
                 "POST /bookings/<id>/block-proof",
                 "POST /bookings/<id>/block-proof/revoke",
+                "POST /bookings/<id>/supplier-assertion",
+                "POST /supplier-contacts",
+                "POST /supplier-contacts/<id>/verify",
                 "POST /invoices",
                 "POST /payments/mark-paid",
             ],
@@ -4018,6 +4292,7 @@ class Dashboard:
                 command_id=key,
                 actor=principal.identity,
                 actor_role=principal.role,
+                session_token=principal.session_token,
             )
         except DomainError as exc:
             return self._confirmation_refusal(principal, exc)
@@ -4104,11 +4379,99 @@ class Dashboard:
             )
 
     def _block_proof_response(
-        self, principal: Principal, banner: Markup, *, status: int = 200
+        self, principal: Principal, banner: Markup, *, status: int = 200, page: str = "inventory"
     ) -> _Response:
-        context = self.view_inventory(principal)
+        """Re-render the screen the operator was working on, with the outcome on it."""
+        context = (
+            self.view_properties(principal) if page == "properties"
+            else self.view_inventory(principal)
+        )
         context["banner"] = banner
-        return _Response(status, self.render("inventory", principal, context), page="inventory")
+        return _Response(status, self.render(page, principal, context), page=page)
+
+    def post_supplier_contact_request(
+        self, request: "_Request", principal: Principal, contact_id: Optional[str]
+    ) -> _Response:
+        """Register (no id) or check (id) a supplier contact. The kernel decides who may.
+
+        The route forwards the session token and nothing it could be talked into trusting: no
+        role, identity or step-up flag is read from the form (ADR-0074, E5).
+        """
+        self._require_form_token(request, principal)
+        key = self._require_idempotency(request)
+        try:
+            kernel = self._reservation_kernel(principal)
+            if contact_id is None:
+                done = kernel.register_supplier_contact(
+                    supplier_id=request.option("supplier_id"),
+                    contact_value=request.option("contact_value"),
+                    registration_basis=request.option("registration_basis"),
+                    session_token=principal.session_token or "",
+                    idempotency_key=key,
+                )
+                label, said = "supplier-contact-registered", "Contact registered; a second person must check it"
+            else:
+                done = kernel.verify_supplier_contact(
+                    contact_id=contact_id,
+                    session_token=principal.session_token or "",
+                    idempotency_key=key,
+                )
+                label, said = "supplier-contact-verified", "Contact checked"
+        except DomainError as exc:
+            return self._assertion_refusal(principal, exc, page="properties")
+        return self._block_proof_response(
+            principal,
+            Markup(
+                f'<p class="ok" role="status" data-banner="{label}"'
+                f' data-ref="{escape_value(done)}">{said}: {escape_value(done)}.</p>'
+            ),
+            page="properties",
+        )
+
+    def post_supplier_assertion_request(
+        self, request: "_Request", principal: Principal, booking_id: str
+    ) -> _Response:
+        """Record that a signed-in reservation manager called the supplier back for this booking."""
+        self._require_form_token(request, principal)
+        key = self._require_idempotency(request)
+        try:
+            evidence_id = self._reservation_kernel(principal).record_supplier_assertion(
+                booking_id=booking_id,
+                supplier_id=request.option("supplier_id"),
+                relationship_id=request.option("relationship_id"),
+                contact_id=request.option("contact_id"),
+                check_in=request.option("check_in"),
+                check_out=request.option("check_out"),
+                supplier_confirmed_at=request.option("supplier_confirmed_at"),
+                session_token=principal.session_token or "",
+                idempotency_key=key,
+            )
+        except DomainError as exc:
+            return self._assertion_refusal(principal, exc)
+        return self._block_proof_response(
+            principal,
+            Markup(
+                f'<p class="ok" role="status" data-banner="supplier-assertion-recorded"'
+                f' data-evidence-id="{escape_value(evidence_id)}">Supplier assertion recorded as'
+                f" {escape_value(evidence_id)}. Record the block proof next; the booking is not"
+                f" confirmed yet.</p>"
+            ),
+        )
+
+    def _assertion_refusal(
+        self, principal: Principal, exc: DomainError, *, page: str = "inventory"
+    ) -> _Response:
+        return self._block_proof_response(
+            principal,
+            Markup(
+                f'<p class="err" role="alert" data-banner="supplier-assertion-refused"'
+                f' data-code="{escape_value(exc.code)}">'
+                f"Nothing was recorded: {escape_value(exc.message)} "
+                f"(code {escape_value(exc.code)}).</p>"
+            ),
+            status=status_for(exc),
+            page=page,
+        )
 
     def _block_proof_refusal(self, principal: Principal, exc: DomainError) -> _Response:
         return self._block_proof_response(
