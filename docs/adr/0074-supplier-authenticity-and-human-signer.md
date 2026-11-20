@@ -306,7 +306,7 @@ remains auditable.
 
 | # | §2/§3 said | As built (E5) | Why it is not weaker |
 |---|---|---|---|
-| A | Attribution = 4 nullable columns + all-or-none CHECK on `availability_evidence` | Table `evidence_supplier_attributions`, one row per attributed evidence, every attribution column `NOT NULL`, composite FKs `(agency_id, …)`, INSERT-only triggers | `NOT NULL` on a separate row enforces all-or-none harder than a CHECK with a nullable branch; no code path updates `availability_evidence`, and the attribution row is written only at `record_evidence` time, so a legacy answer has no row here and **no application path** can add one afterwards. A writer with direct database access is not stopped by a trigger at INSERT time — see §11.2 (residual G1) |
+| A | Attribution = 4 nullable columns + all-or-none CHECK on `availability_evidence` | Table `evidence_supplier_attributions`, one row per attributed evidence, every attribution column `NOT NULL`, composite FKs `(agency_id, …)`, INSERT-only triggers | `NOT NULL` on a separate row enforces all-or-none harder than a CHECK with a nullable branch; no code path updates `availability_evidence`, and the attribution row is written only at `record_evidence` time, so a legacy answer has no row here and **no application path** can add one afterwards. G1 was the remaining hole — a direct writer could file an attribution against any evidence — and is now closed at the database boundary (§11.2, `63ac1ea`) |
 | B | Contact registration = `partnership.write` (Partnership Manager) | `owner` + `gm` register and counter-check for the pilot (`CONTACT_REGISTRY_ROLES`), maker ≠ checker, both from authenticated sessions with MFA | The Partnership page role does not exist yet (§9.2). Narrowing the role set widens nothing; the maker/checker separation is enforced in the kernel (`CONTACT_CHECKER_IS_MAKER`) and in the database (`ck_sce_checker_is_not_maker`) |
 | C | `status ACTIVE/RETIRED` + `verified_at`/`verified_by` columns | Append-only `supplier_contact_events` (`VERIFIED`/`SUSPENDED`/`REINSTATED`) + revoke-only `revoked_at`; standing derived from the latest event | The column form overwrites history. The event form keeps every verification and suspension with actor, reason and time; "one live `VERIFIED` event per contact" is a partial unique index (`ux_sce_one_verified`) and "one live number per supplier" another (`ux_sc_live_value`), while "no second verified contact" is the kernel's `CONTACT_ALREADY_VERIFIED` |
 | D | `channel` ∈ `phone_wa`, `phone_voice`, `email`, `portal` | `PHONE` only | A closed set of one is a deliberate pilot limit, not an oversight; the CHECK can only widen later, and no code path assumes another channel exists |
@@ -360,19 +360,72 @@ stand and are recorded here as residuals rather than fixed in the same commit.
 | A machine principal, wrong role or stale step-up might sign | **Refuted** | `_resolve_principal` refuses machine identity/role (`MACHINE_PRINCIPAL_REFUSED`), checks the allowed set after canonicalisation, requires an ACTIVE holder row, `mfa_satisfied_at`, and `require_step_up` inside `STEP_UP_WINDOW` |
 | A case/whitespace variant of the maker's identity could self-check | **Refuted in practice** | Binding compares `session.identity` to `holder_ref` exactly, so an identity variant holds no role and cannot reach `CONTACT_CHECKER_IS_MAKER`; revisit only if identity storage ever becomes case-insensitive |
 
-### §11.2 Standing residuals (reported, not fixed here)
+### §11.2 Residual status (G1 closed locally, G1-R and G2 open)
 
-- **G1 — attribution INSERT is not constrained in the database.** The row is
-  insert-only, but nothing at INSERT time proves the evidence row was created in the
-  same transaction, or that `contact_event_id` names a `VERIFIED` event. Only the
-  kernel writes it, so the application surface is closed; a writer with direct
-  database access is not. Structural fix that needs no new files: composite FK
-  `(evidence_id, recorded_at) → availability_evidence (evidence_id, captured_at)`
-  plus a constant `contact_event_kind = 'VERIFIED'` column carried into a composite
-  FK against `supplier_contact_events (event_id, contact_id, kind)`.
-- **G2 — enforcement defaults to `false`.** Until an agency sets
-  `supplier_assertion_enforced=true` (or the cutover date in §9.6 is chosen), an
-  unattributed E3 proof can still authorise a confirmation. This is the deliberate
-  legacy window, but it *is* a fail-open default and must be stated as one.
+- **G1 — CLOSED by `63ac1ea` (fix committed locally, subject to independent
+  verification).** The attribution is now pinned by the database: `(evidence_id,
+  contact_id)` must match a parent `availability_evidence` row whose derived column
+  `callback_verified_contact` equals that contact, the event reference carries a
+  `NOT NULL` `contact_event_kind` CHECKed to `'VERIFIED'` into a composite FK against
+  `supplier_contact_events (event_id, contact_id, kind)`, and `(agency_id, booking_id,
+  unit_id, block_start, block_end)` must equal a real `bookings` stay. Parent keys
+  `ux_evidence_callback_contact`, `uq_sce_event_contact_kind` and `uq_bk_agency_stay`
+  make those FKs legal on SQLite and PostgreSQL alike; no trigger was needed. What the
+  database still cannot assert, and what must not be claimed for it: that the evidence
+  row was written in the same transaction as the attribution, and that a
+  `source_ref` value is an authentic supplier attestation rather than a claim. Those
+  remain service and operating concerns (§11.3).
+- **G1-R — upgrade path for existing databases: OPEN — HIGH.** The fix is correct for
+  a database *created* from the current `001_initial.sql`, and there is no path for one
+  created before it. `020_supplier_contacts.sql` uses `CREATE TABLE IF NOT EXISTS` and
+  `ALTER` nothing, so on a pre-`63ac1ea` database the attribution table keeps its old
+  shape (no `contact_event_kind`, no stay pin) and the new parent-key index fails with
+  `no such column: callback_verified_contact` — measured on a database built from
+  `63ac1ea^`. SQLite cannot add a STORED generated column to an existing table, so the
+  repair is either a table rebuild in a new migration or a trigger-maintained plain
+  column plus backfill; both need schema and generator work, which this pack does not
+  authorise. The migration test did **not** catch this: its "legacy" fixture is built
+  from the current `001_initial.sql`, which already carries the new column, so the
+  fixture proves less than its name says.
+- **G2 — OPEN — HIGH / PRODUCTION BLOCKER.** Enforcement defaults to `false`. Until an
+  agency sets `supplier_assertion_enforced=true` (or the cutover date in §9.6 is
+  chosen), an unattributed E3 proof can still authorise a confirmation. This is the
+  deliberate legacy window, but it *is* a fail-open default and must be stated as one.
+  Measured, not merely asserted: with enforcement off, a paid booking was taken to
+  `CONFIRMED` with **no session at all** — evidence written by `record_evidence` (which
+  takes no credential), a block proof signed by a self-declared
+  `verifier_role="reservation_manager"`, and `confirm_booking` called with a made-up
+  `actor`. Every one of those gates is keyed off the *declared* role string, so the
+  only thing standing between a script and a confirmation today is the enforcement
+  flag. The dashboard's HTTP routes are session-bound and cannot do this; a caller with
+  in-process kernel access can.
+
+### §11.3 Verification of the G1 fix (pack VILLA-E5-VERIFY-001, 2026-11-20)
+
+Three different questions, kept apart because conflating them is how a database
+constraint gets mistaken for a supplier's word:
+
+- **A. Referential consistency — enforced, proven.** Composite FKs and their parent
+  keys are present in the committed DDL on both engines; negative probes (foreign
+  evidence, non-callback evidence, evidence naming another contact, non-VERIFIED event,
+  cross-tenant ids, NULL composite parts, wrong stay) are refused by the database, and
+  a valid attribution is accepted. PostgreSQL 16 applies the generated twin and
+  enforces the same constraints — the probe there accepted the valid pair and refused
+  non-callback, wrong-contact and missing-evidence references.
+- **B. Authorized source attestation — not enforced by the database, and not claimed.**
+  `record_evidence` accepts any caller and any `source_ref` string, so
+  `callback_verified:<contact>` is a value a writer can type, not a fact the database
+  can verify. The attribution row is only written by the authenticated assertion path,
+  which is what makes the *row* trustworthy; the FK proves the row is consistent with
+  its parents, nothing more.
+- **C. Actual supplier confirmation — outside the database entirely.** Only the
+  operating procedure (a human calls the number, reads it through
+  `read_supplier_contact_for_callback`, and records the assertion with a fresh step-up)
+  can assert that. No schema in this repository can.
+- **D. Upgrade path — refuted for existing databases (see G1-R).** A database built
+  from `63ac1ea^` and then given the current `020_supplier_contacts.sql` keeps the old
+  attribution shape and aborts the new index with
+  `no such column: callback_verified_contact` (18 statements applied, 1 failed). Fresh
+  databases are correct; migrated ones are not, and it fails closed rather than open.
 
 
