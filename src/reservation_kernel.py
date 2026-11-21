@@ -330,6 +330,23 @@ class CheckOutcome:
 # --------------------------------------------------------------------------- #
 # The kernel
 # --------------------------------------------------------------------------- #
+def _claimed_canonical_role(role: Any) -> Optional[str]:
+    """A *claimed* role, in canonical form: a canonical id, a legacy alias or a page word.
+
+    The dashboard binds its kernel to the page word (``operations``), the session carries the
+    canonical id (``reservation_manager``). Both name one role; the claim is only compared
+    to the session's resolved role, never trusted as authority.
+    """
+    found = ROLES.canonical_role(role)
+    if found is not None or not isinstance(role, str):
+        return found
+    word = role.strip().casefold()
+    for canonical, page in ROLES.PAGE_ROLE_BY_CANONICAL.items():
+        if page == word:
+            return canonical
+    return None
+
+
 class ReservationKernel(SupplierAssertionMixin):
     """Transactional write path for inventory state.
 
@@ -921,6 +938,7 @@ class ReservationKernel(SupplierAssertionMixin):
         expires_at: Optional[str] = None,
         evidence_object_id: Optional[str] = None,
         notes: Optional[str] = None,
+        session_token: Optional[str] = None,
     ) -> str:
         """Bind one authenticated supplier answer to one booking, verified by a human.
 
@@ -970,7 +988,19 @@ class ReservationKernel(SupplierAssertionMixin):
             )
         idempotency_key = require_ref(idempotency_key, "idempotency_key")
         _require_min_length(idempotency_key, "idempotency_key", 8)
-        actor_name, role = self._require_human_verifier_principal(actor, verifier_role)
+        # A claim is not authority, but a nonsense claim is still nonsense: refuse a
+        # machine or an unknown role before asking who is signed in (G2-A keeps the
+        # specific reason; the session below decides whether the claim is *true*).
+        self._require_human_verifier_principal(actor, verifier_role)
+        who = self._authorize_confirmation(self.conn, session_token=session_token, actor=actor)
+        actor_name, role = who.identity, who.role
+        if verifier_role is not None and _claimed_canonical_role(verifier_role) != role:
+            raise DomainError(
+                "verifier_role does not match the signed-in role",
+                code="BLOCK_PROOF_VERIFIER_MISMATCH",
+                verifier_role=str(verifier_role),
+                role=role,
+            )
         if verified_by not in (actor_name, f"human:{actor_name}"):
             raise DomainError(
                 "verified_by must name the acting human, not a third party",
@@ -1014,6 +1044,11 @@ class ReservationKernel(SupplierAssertionMixin):
             notes or "",
         )
         with self.transaction() as conn:
+            # Linearization point (G2-A): authority is re-proved *inside* the write
+            # transaction, so a session or role revoked between the pre-check above and
+            # this commit cannot ride an authorization that is already stale. This is the
+            # same boundary ``confirm_booking`` enforces via ``_enforce_at_confirmation``.
+            self._authorize_confirmation(conn, session_token=session_token, actor=actor)
             booking = self._require_booking(conn, booking_id)
             # A retry of a request that already succeeded answers with that proof even
             # if the booking has moved on since; it must not look like a failed write.
@@ -1273,6 +1308,7 @@ class ReservationKernel(SupplierAssertionMixin):
         reason: str,
         actor: Optional[str] = None,
         actor_role: Optional[str] = None,
+        session_token: Optional[str] = None,
     ) -> None:
         """Retire a live proof, keeping the row and the reason it was retired.
 
@@ -1281,6 +1317,9 @@ class ReservationKernel(SupplierAssertionMixin):
         A revoked proof can never confirm anything again, and the partial unique index
         frees the booking for a corrected proof. Revoking twice is a no-op, so a retry
         cannot overwrite the first reason.
+
+        Like recording one, revoking needs a signed-in signer (G2-A): the name written to
+        the row is the resolved identity, never the caller's claim.
         """
         proof_id = require_ref(proof_id, "proof_id")
         text = require_text(reason, "reason", max_len=200)
@@ -1288,8 +1327,24 @@ class ReservationKernel(SupplierAssertionMixin):
             raise DomainError(
                 "a proof is revoked with a reason", code="BLOCK_PROOF_REVOCATION_NEEDS_REASON"
             )
-        actor_name, _role = self._require_human_verifier_principal(actor, actor_role)
+        self._require_human_verifier_principal(actor, actor_role)
+        who = self._authorize_confirmation(self.conn, session_token=session_token, actor=actor)
+        if actor_role is not None and _claimed_canonical_role(actor_role) != who.role:
+            raise DomainError(
+                "actor_role does not match the signed-in role",
+                code="BLOCK_PROOF_VERIFIER_MISMATCH",
+                actor_role=str(actor_role),
+                role=who.role,
+            )
+        # ``_authorize_confirmation`` already proved the claim is this identity (bare or
+        # ``human:``-labelled), so keeping the caller's label shape trusts nothing new and
+        # leaves the stored ``revoked_by`` exactly as it was before G2-A.
+        actor_name = actor or who.identity
         with self.transaction() as conn:
+            # Linearization point (G2-A): re-prove authority inside the write transaction,
+            # so a session or role revoked after the pre-check cannot commit a revocation
+            # audit event on stale authority. Same boundary as ``confirm_booking``.
+            self._authorize_confirmation(conn, session_token=session_token, actor=actor)
             row = conn.execute(
                 "SELECT revoked_at FROM supplier_block_proofs WHERE proof_id = ? AND agency_id = ?",
                 (proof_id, self.agency_id),
@@ -2416,7 +2471,14 @@ class ReservationKernel(SupplierAssertionMixin):
                 actor=actor or self.actor,
                 actor_role=actor_role or self.actor_role,
             )
+        signer = self._authorize_confirmation(self.conn, session_token=session_token, actor=actor)
+        actor = signer.identity
         with self.transaction() as conn:
+            # Linearization point (G2-A), uniform with record/revoke: authority is re-proved
+            # as the first statement inside the write transaction, so a session or role
+            # revoked after the pre-check cannot even read back a replayed CONFIRMED
+            # outcome, let alone commit a change (AUTH-11 covers the replay read too).
+            self._authorize_confirmation(conn, session_token=session_token, actor=actor)
             booking = self._require_booking(conn, booking_id)
             current = booking["status"]
             if current == "CONFIRMED":
@@ -2479,9 +2541,9 @@ class ReservationKernel(SupplierAssertionMixin):
                     code="BLOCK_PROOF_EXPIRED",
                     expires_at=proof["expires_at"],
                 )
-            # ADR-0074 (PROPOSED), E5: once an agency turns enforcement on, a confirmation also
-            # needs a bound reservation_manager session with a fresh step-up, and evidence that
-            # a verified callback assertion attributes to this booking. Off by default.
+            # ADR-0074 (PROPOSED), E5: enforcement adds the *evidence* requirement (a verified
+            # callback attributed to this booking). The identity requirement above is not
+            # optional and does not depend on this setting (G2-A).
             signer = self._enforce_at_confirmation(
                 conn, booking=booking, proof=proof, session_token=session_token, actor=actor
             )

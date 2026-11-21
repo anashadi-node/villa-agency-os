@@ -81,7 +81,8 @@ class TestPaidThenConfirmed(KernelTestCase):
         proof = block_proof(self.kernel, "unit_1")
         self.assertEqual(
             self.code(self.kernel.confirm_booking, booking_id=booking.booking_id,
-                      block_proof_id=proof, command_id="cmd_k2_conf"),
+                      block_proof_id=proof, command_id="cmd_k2_conf",
+                      session_token=self.signer()),
             "PAYMENT_REQUIRED",
         )
 
@@ -141,12 +142,14 @@ class TestPaidThenConfirmed(KernelTestCase):
         self.assertEqual(paid.status, "DEPOSIT_PAID")
         proof = supplier_block_proof(self.kernel, booking.booking_id)
         confirmed = self.kernel.confirm_booking(
+            session_token=self.signer(),
             booking_id=booking.booking_id, block_proof_id=proof,
             command_id="cmd_k2_conf",
         )
         self.assertEqual(confirmed.status, "CONFIRMED")
         self.assertEqual(self.kernel.get_hold(hold.hold_id)["status"], RK.HOLD_CONVERTED)
         again = self.kernel.confirm_booking(
+            session_token=self.signer(),
             booking_id=booking.booking_id, block_proof_id=proof,
             command_id="cmd_k2_conf2",
         )
@@ -187,7 +190,8 @@ class TestPaidThenConfirmed(KernelTestCase):
                               command_id="cmd_k2_paid_b")
         self.assertEqual(
             self.code(self.kernel.confirm_booking, booking_id=second.booking_id,
-                      block_proof_id=proof, command_id="cmd_k2_conf_b"),
+                      block_proof_id=proof, command_id="cmd_k2_conf_b",
+                      session_token=self.signer()),
             "BLOCK_PROOF_NOT_FOR_BOOKING",
         )
         self.assertNotEqual(self.kernel.get_booking(second.booking_id)["status"], "CONFIRMED")

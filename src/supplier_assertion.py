@@ -702,27 +702,55 @@ class SupplierAssertionMixin:
                 )
         return row
 
-    def _enforce_at_confirmation(
-        self, conn: sqlite3.Connection, *, booking: sqlite3.Row, proof: sqlite3.Row,
-        session_token: Any, actor: Optional[str],
-    ) -> Optional[str]:
-        """Return the signer's identity when enforcement is on, else ``None`` (no change)."""
-        if not self._assertion_enforced(conn):
-            return None
-        who = self._resolve_principal(conn, session_token, allowed=ROLES.SIGNER_ROLES, step_up=True)
+    def _authorize_confirmation(
+        self, conn: sqlite3.Connection, *, session_token: Any, actor: Optional[str]
+    ) -> Principal:
+        """Resolve *who* is closing this booking — before any state is read or written.
+
+        This is the hard invariant (G2-A): a close is a privileged human decision, so it
+        needs a verified identity, an approved role assignment and current authorization
+        no matter what ``reservation.supplier_assertion.enforced`` says. The caller's
+        ``actor`` string is a claim; only the session is evidence, and the claim is
+        accepted only when it matches the resolved identity.
+        """
+        who = self._resolve_principal(
+            conn, session_token, allowed=ROLES.SIGNER_ROLES, step_up=True
+        )
+        bound = self._bound_principal()
+        if bound and (
+            ROLES.is_machine_identity(getattr(self, "actor", ""))
+            or ROLES.is_machine_role(getattr(self, "actor_role", ""))
+        ):
+            raise DomainError(
+                "a machine-bound kernel cannot sign as a human",
+                code="BLOCK_PROOF_MACHINE_VERIFIER",
+                actor=getattr(self, "actor", None),
+                role=getattr(self, "actor_role", None),
+            )
         supplied = actor or who.identity
         if supplied not in (who.identity, f"human:{who.identity}") or (
-            self._bound_principal() and self.actor not in (who.identity, f"human:{who.identity}")
+            bound and self.actor not in (who.identity, f"human:{who.identity}")
         ):
             raise DomainError(
                 "the confirming actor must be the signed-in signer",
-                code="BLOCK_PROOF_ACTOR_NOT_BOUND", supplied=supplied, signer=who.identity,
+                code="BLOCK_PROOF_ACTOR_NOT_BOUND",
+                supplied=supplied,
+                signer=who.identity,
             )
-        self._require_attributed_evidence(
-            conn, booking=booking, evidence_id=proof["evidence_id"],
-            supplier_id=proof["supplier_id"], relationship_id=proof["relationship_id"],
-            at_confirmation=True,
-        )
+        return who
+
+    def _enforce_at_confirmation(
+        self, conn: sqlite3.Connection, *, booking: sqlite3.Row, proof: sqlite3.Row,
+        session_token: Any, actor: Optional[str],
+    ) -> str:
+        """Return the signer's identity, always authorizing; evidence only when enforced."""
+        who = self._authorize_confirmation(conn, session_token=session_token, actor=actor)
+        if self._assertion_enforced(conn):
+            self._require_attributed_evidence(
+                conn, booking=booking, evidence_id=proof["evidence_id"],
+                supplier_id=proof["supplier_id"], relationship_id=proof["relationship_id"],
+                at_confirmation=True,
+            )
         return who.identity
 
     # -- read models for the operator screen (no writes, no number in bulk) ---------- #

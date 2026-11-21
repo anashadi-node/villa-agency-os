@@ -68,10 +68,13 @@ import documents as DOCUMENTS  # noqa: E402
 import intake as INTAKE  # noqa: E402
 import invoicing as INVOICING  # noqa: E402
 import payments as PAYMENTS  # noqa: E402
+import identity as IDENTITY  # noqa: E402
 import policy_engine as POLICY  # noqa: E402
 import quotation as QUOTATION  # noqa: E402
 import reservation_kernel as KERNEL  # noqa: E402
 import supplier_settlements as SUPPLIERS  # noqa: E402
+import totp as TOTP  # noqa: E402
+from agency_roles import AgencyRoles  # noqa: E402
 from primitives import DomainError, FrozenClock, IdFactory  # noqa: E402
 from schema_loader import connect_sqlite  # noqa: E402
 
@@ -81,6 +84,11 @@ AGENCY = "agency_default"
 #: says who did it — a run with anonymous actors would not exercise that rule.
 OWNER = "user:owner_anas"
 MANAGER = "user:manager_dewi"
+#: The same person, as the identity a session is opened for. G2-A: privileged kernel calls
+#: take their authority from a signed-in session, never from the actor string beside it.
+SIGNER = "manager_dewi"
+SIGNER_ROLE = "reservation_manager"
+SIGNER_SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
 FRONT_DESK = "user:staff_ayu"
 FINANCE = "user:finance_fam"
 GUEST = "user:guest_marco"
@@ -145,6 +153,54 @@ class Smoke:
 
     def close(self) -> None:
         self.kernel.close()
+
+    def signer_token(self) -> str:
+        """Open a real, MFA-satisfied, stepped-up session for the manager.
+
+        The smoke run is a legitimate internal caller, so it earns authority the same way
+        the dashboard does — by signing in — instead of relying on a name it wrote itself.
+        One session serves every call made at the same frozen instant.
+        """
+        cached = getattr(self, "_signer_session", None)
+        if cached is not None and cached[0] == self.clock.now():
+            return cached[1]
+        roles = AgencyRoles(self.conn, self.clock, agency_id=AGENCY)
+        try:
+            roles.seed_blueprint(actor=OWNER, actor_role="owner")
+        except Exception:
+            pass
+        try:
+            roles.assign_holder(SIGNER_ROLE, holder_ref=SIGNER, actor=OWNER, actor_role="owner")
+        except Exception:
+            pass
+        service = IDENTITY.SessionService(
+            self.conn,
+            clock=self.clock,
+            ids=self.ids,
+            agency_id=AGENCY,
+            secrets=IDENTITY.MappingSecretResolver({f"{SIGNER}-ref": SIGNER_SECRET}),
+        )
+        base = self.clock.now() - timedelta(minutes=5)
+        try:
+            service.enroll_totp(SIGNER, secret_ref=f"{SIGNER}-ref", at=IDENTITY.to_iso(base))
+            service.confirm_totp(
+                SIGNER, TOTP.totp(SIGNER_SECRET, base), at=IDENTITY.to_iso(base)
+            )
+        except Exception:
+            pass
+        # A TOTP step is single-use, so sign-in and step-up spend two different steps, the
+        # way a person waits for the next code. Replay protection stays fully on.
+        login_at = self.clock.now() - timedelta(seconds=TOTP.DEFAULT_STEP_SECONDS)
+        opened = service.open_session(
+            SIGNER, SIGNER_ROLE,
+            mfa_code=TOTP.totp(SIGNER_SECRET, login_at), at=IDENTITY.to_iso(login_at),
+        )
+        service.satisfy_step_up(
+            opened.session.session_id, TOTP.totp(SIGNER_SECRET, self.clock.now()),
+            at=IDENTITY.to_iso(self.clock.now()),
+        )
+        self._signer_session = (self.clock.now(), opened.token)
+        return opened.token
 
     def at(self, hours: float) -> None:
         """Advance the frozen clock — an audit trail with no movement proves nothing."""
@@ -589,10 +645,12 @@ class Smoke:
                 check_in=str(booking["check_in"]),
                 check_out=str(booking["check_out"]),
                 verification_method="MANAGER_WRITTEN",
-                verified_by=MANAGER,
-                actor=MANAGER,
-                verifier_role="reservation_manager",
+                verified_by=SIGNER,
+                actor=SIGNER,
+                verifier_role=SIGNER_ROLE,
                 idempotency_key="idem_smoke_stale_proof",
+                session_token=self.signer_token(),
+
             )
         except DomainError:
             refused = True
@@ -609,17 +667,19 @@ class Smoke:
             check_in=str(booking["check_in"]),
             check_out=str(booking["check_out"]),
             verification_method="MANAGER_WRITTEN",
-            verified_by=MANAGER,
-            actor=MANAGER,
-            verifier_role="reservation_manager",
+            verified_by=SIGNER,
+            actor=SIGNER,
+            verifier_role=SIGNER_ROLE,
             idempotency_key="idem_smoke_block_proof",
+            session_token=self.signer_token(),
         )
         outcome = self.kernel.confirm_booking(
             booking_id=self.facts["booking_id"],
             block_proof_id=block_proof_id,
             command_id="cmd_smoke_confirm_1",
-            actor=MANAGER,
-            actor_role="manager",
+            actor=SIGNER,
+            actor_role=SIGNER_ROLE,
+            session_token=self.signer_token(),
         )
         self.facts["block_proof"] = str(block_proof_id)
         self.facts["block_evidence"] = str(proof)

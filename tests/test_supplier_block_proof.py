@@ -69,19 +69,29 @@ class SupplierProofCase(KernelTestCase):
         return hold, booking
 
     def code(self, call, *args, **kwargs) -> str:
+        if getattr(call, "__name__", "") in (
+            "confirm_booking", "record_supplier_block_proof", "revoke_supplier_block_proof"
+        ):
+            kwargs.setdefault("session_token", self.signer())
         with self.assertRaises(DomainError) as ctx:
             call(*args, **kwargs)
         return ctx.exception.code
 
     def snapshots(self, booking_id: str) -> tuple:
         conn = self.kernel.conn
+        self.signer()  # session bookkeeping is not a booking write; open it first
         return (
             conn.execute(
                 "SELECT status, amount_paid_minor, confirmed_at FROM bookings WHERE booking_id = ?",
                 (booking_id,),
             ).fetchone()[:],
             conn.execute("SELECT COUNT(*) FROM booking_state_events").fetchone()[0],
-            conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0],
+            # Session/role bookkeeping is not a booking write: the signer opens one
+            # before the privileged call, and it must not look like a partial change.
+            conn.execute(
+                "SELECT COUNT(*) FROM audit_events WHERE action NOT LIKE 'session.%'"
+                " AND action NOT LIKE 'identity.%' AND action NOT LIKE 'role.%'"
+            ).fetchone()[0],
             conn.execute("SELECT COUNT(*) FROM supplier_block_proofs").fetchone()[0],
         )
 
@@ -92,11 +102,12 @@ class TestTheProofBindsTheBooking(SupplierProofCase):
         proof = supplier_block_proof(self.kernel, booking.booking_id)
 
         outcome = self.kernel.confirm_booking(
+            session_token=self.signer(),
             booking_id=booking.booking_id,
             block_proof_id=proof,
             command_id="cmd_e_confirm_1",
-            actor="user:reservation-1",
-            actor_role="reservation",
+            actor="rm-1",
+            actor_role="reservation_manager",
         )
 
         self.assertEqual(outcome.status, "CONFIRMED")
@@ -119,6 +130,7 @@ class TestTheProofBindsTheBooking(SupplierProofCase):
         self.assertEqual(paid.status, "DEPOSIT_PAID")
         proof = supplier_block_proof(self.kernel, booking.booking_id)
         outcome = self.kernel.confirm_booking(
+            session_token=self.signer(),
             booking_id=booking.booking_id, block_proof_id=proof, command_id="cmd_confirm_dep"
         )
         self.assertEqual(outcome.status, "CONFIRMED")
@@ -237,9 +249,10 @@ class TestTheProofMustStillBeGood(SupplierProofCase):
         _, booking = self.paid()
         proof = supplier_block_proof(self.kernel, booking.booking_id)
         self.kernel.revoke_supplier_block_proof(
+            session_token=self.signer(),
             proof_id=proof,
             reason="villa withdrew the block",
-            actor="user:manager_1",
+            actor="rm-1",
             actor_role="reservation_manager",
         )
         self.assertEqual(
@@ -257,7 +270,7 @@ class TestTheProofMustStillBeGood(SupplierProofCase):
             (proof,),
         ).fetchone()
         self.assertIsNotNone(row["revoked_at"])
-        self.assertEqual(row["revoked_by"], "user:manager_1")
+        self.assertEqual(row["revoked_by"], "rm-1")
         self.assertEqual(row["revoke_reason"], "villa withdrew the block")
         self.assertIsNone(self.kernel.supplier_block_proof_for_booking(booking.booking_id))
 
@@ -362,6 +375,7 @@ class TestTheProofMustStillBeGood(SupplierProofCase):
         _, booking = self.paid()
         proof = supplier_block_proof(self.kernel, booking.booking_id)
         self.kernel.confirm_booking(
+            session_token=self.signer(),
             booking_id=booking.booking_id, block_proof_id=proof, command_id="cmd_confirm_1"
         )
         self.assertEqual(
@@ -390,9 +404,11 @@ class TestConfirmationIsAtomicAndIdempotent(SupplierProofCase):
         _, booking = self.paid()
         proof = supplier_block_proof(self.kernel, booking.booking_id)
         first = self.kernel.confirm_booking(
+            session_token=self.signer(),
             booking_id=booking.booking_id, block_proof_id=proof, command_id="cmd_confirm_1"
         )
         second = self.kernel.confirm_booking(
+            session_token=self.signer(),
             booking_id=booking.booking_id, block_proof_id=proof, command_id="cmd_confirm_2"
         )
         self.assertFalse(first.replayed)
@@ -416,10 +432,11 @@ class TestConfirmationIsAtomicAndIdempotent(SupplierProofCase):
         hold, booking = self.paid()
         other = supplier_block_proof(self.kernel, booking.booking_id)
         self.kernel.revoke_supplier_block_proof(
+            session_token=self.signer(),
             proof_id=other,
             reason="wrong dates on the letter",
-            actor="user:ops-1",
-            actor_role="reservation_agent",
+            actor="rm-1",
+            actor_role="reservation_manager",
         )
         before = self.snapshots(booking.booking_id)
         self.assertEqual(
@@ -601,9 +618,9 @@ class TestConfirmationDistrustsTheRow(SupplierProofCase):
                 check_in=booking.check_in,
                 check_out=booking.check_out,
                 verification_method="MANAGER_WRITTEN",
-                verified_by="user:ops-1",
-                actor="user:ops-1",
-                verifier_role="reservation_agent",
+                verified_by="rm-1",
+                actor="rm-1",
+                verifier_role="reservation_manager",
                 idempotency_key="idem_restricted_0001",
             ),
             "BLOCK_PROOF_DATES_RESTRICTED",
@@ -642,10 +659,11 @@ class TestConfirmationDistrustsTheRow(SupplierProofCase):
         proof = supplier_block_proof(self.kernel, booking.booking_id)
 
         self.kernel.revoke_supplier_block_proof(
+            session_token=self.signer(),
             proof_id=proof,
             reason="supplier pulled the block",
-            actor="user:ops-1",
-            actor_role="reservation_agent",
+            actor="rm-1",
+            actor_role="reservation_manager",
         )
         row = self.kernel.get_supplier_block_proof(proof)
         self.assertIsNotNone(row["revoked_at"])
@@ -674,13 +692,15 @@ class TestTheWriteHasAnOwnerAndAKey(SupplierProofCase):
             check_in=booking.check_in,
             check_out=booking.check_out,
             verification_method="MANAGER_WRITTEN",
-            verified_by="user:ops-1",
-            actor="user:ops-1",
-            verifier_role="reservation_agent",
+            verified_by="rm-1",
+            actor="rm-1",
+            verifier_role="reservation_manager",
             idempotency_key=key,
         )
         options.update(overrides)
-        return self.kernel.record_supplier_block_proof(**options)
+        return self.kernel.record_supplier_block_proof(
+            **options, session_token=self.signer()
+        )
 
     def _audit(self, action: str):
         return [
@@ -777,16 +797,18 @@ class TestTheWriteHasAnOwnerAndAKey(SupplierProofCase):
         proof = self._prove(booking)
 
         self.kernel.revoke_supplier_block_proof(
+            session_token=self.signer(),
             proof_id=proof,
             reason="villa pulled the block",
-            actor="user:ops-1",
-            actor_role="reservation_agent",
+            actor="rm-1",
+            actor_role="reservation_manager",
         )
         self.kernel.revoke_supplier_block_proof(
+            session_token=self.signer(),
             proof_id=proof,
             reason="villa pulled the block",
-            actor="user:ops-1",
-            actor_role="reservation_agent",
+            actor="rm-1",
+            actor_role="reservation_manager",
         )
 
         rows = self._audit("supplier_block.revoked")
@@ -838,6 +860,7 @@ class TestExpiryIsInstantsNotStrings(SupplierProofCase):
 
     def _proof(self, booking, expires_at, *, key):
         return self.kernel.record_supplier_block_proof(
+            session_token=self.signer(),
             booking_id=booking.booking_id,
             evidence_id=block_proof(
                 self.kernel, valid_until="2027-06-01T00:00:00+00:00"
@@ -847,9 +870,9 @@ class TestExpiryIsInstantsNotStrings(SupplierProofCase):
             check_in=booking.check_in,
             check_out=booking.check_out,
             verification_method="MANAGER_WRITTEN",
-            verified_by="user:ops-1",
-            actor="user:ops-1",
-            verifier_role="reservation_agent",
+            verified_by="rm-1",
+            actor="rm-1",
+            verifier_role="reservation_manager",
             idempotency_key=key,
             expires_at=expires_at,
         )
@@ -889,8 +912,9 @@ class TestExpiryIsInstantsNotStrings(SupplierProofCase):
         _, booking = self.paid()
         proof = self._proof(booking, "2027-06-01T00:00:00+00:00", key="idem_tz_0003")
         self.kernel.revoke_supplier_block_proof(
-            proof_id=proof, reason="wrong letter", actor="user:ops-1",
-            actor_role="reservation_agent",
+            session_token=self.signer(),
+            proof_id=proof, reason="wrong letter", actor="rm-1",
+            actor_role="reservation_manager",
         )
         replacement = self._proof(booking, "2027-06-01T00:00:00+00:00", key="idem_tz_0004")
         self.assertNotEqual(proof, replacement)
@@ -914,11 +938,11 @@ class TestAKernelCannotLendSomebodyElsesAuthority(SupplierProofCase):
             check_in=booking.check_in,
             check_out=booking.check_out,
             verification_method="MANAGER_WRITTEN",
-            verified_by="user:ops-1",
+            verified_by="rm-1",
             idempotency_key=key,
         )
         options.update(overrides)
-        return kernel.record_supplier_block_proof(**options)
+        return kernel.record_supplier_block_proof( session_token=self.signer(),**options)
 
     def test_a_machine_bound_kernel_cannot_sign_with_human_arguments(self):
         ensure_supplier(self.kernel, unit_id="unit_1", property_id="prop_1")
@@ -936,8 +960,8 @@ class TestAKernelCannotLendSomebodyElsesAuthority(SupplierProofCase):
                 machine,
                 booking,
                 key="idem_bound_machine",
-                actor="user:ops-1",
-                verifier_role="reservation_agent",
+                actor="rm-1",
+                verifier_role="reservation_manager",
             ),
             "BLOCK_PROOF_MACHINE_VERIFIER",
         )
@@ -955,8 +979,8 @@ class TestAKernelCannotLendSomebodyElsesAuthority(SupplierProofCase):
             self.kernel.conn,
             clock=self.kernel.clock,
             ids=self.kernel.ids,
-            actor="user:ops-1",
-            actor_role="reservation_agent",
+            actor="rm-1",
+            actor_role="reservation_manager",
         )
         self.assertEqual(
             self.code(
@@ -1001,10 +1025,11 @@ class TestAKernelCannotLendSomebodyElsesAuthority(SupplierProofCase):
         # meant, and it must not accept a machine's signature. The kernel-written proof
         # is revoked first so the one-live-proof index still holds.
         self.kernel.revoke_supplier_block_proof(
+            session_token=self.signer(),
             proof_id=proof,
             reason="replaced by a pre-contract row",
-            actor="user:ops-1",
-            actor_role="reservation_agent",
+            actor="rm-1",
+            actor_role="reservation_manager",
         )
         stamp = "2026-09-21T08:00:00+00:00"
         self.kernel.conn.execute(
@@ -1045,19 +1070,20 @@ class TestAKernelCannotLendSomebodyElsesAuthority(SupplierProofCase):
         evidence = block_proof(self.kernel, unit_id="unit_1")
         proof = self._reprove(
             self.kernel, booking, key="idem_after_confirm", evidence_id=evidence,
-            actor="user:ops-1", verifier_role="reservation_agent",
+            actor="rm-1", verifier_role="reservation_manager",
         )
         self.kernel.confirm_booking(
+            session_token=self.signer(),
             booking_id=booking.booking_id,
             block_proof_id=proof,
             command_id="cmd_confirm_before_retry",
-            actor="user:reservation-1",
-            actor_role="reservation_agent",
+            actor="rm-1",
+            actor_role="reservation_manager",
         )
 
         replay = self._reprove(
             self.kernel, booking, key="idem_after_confirm", evidence_id=evidence,
-            actor="user:ops-1", verifier_role="reservation_agent",
+            actor="rm-1", verifier_role="reservation_manager",
         )
 
         self.assertEqual(replay, proof)

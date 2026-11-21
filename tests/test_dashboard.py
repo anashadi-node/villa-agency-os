@@ -3351,6 +3351,56 @@ def _seed_stage_e_proof(
     )
 
 
+def _manager_sessions(conn, clock, names: tuple) -> dict:
+    """Real Reservation Manager sessions: role holder, enrolled TOTP, fresh step-up.
+
+    G2-A: closing a booking or signing a block proof is a privileged human act, so the
+    kernel resolves the session itself and refuses anything weaker. Each name gets its own
+    factor (a TOTP step is single-use) and spends one step-up, exactly as a person would.
+    """
+    import totp as T
+    from agency_roles import AgencyRoles
+    from primitives import parse_iso
+
+    secrets = {f"{name}-ref": T.generate_secret() for name in names}
+
+    def stamp(seconds: int) -> str:
+        return to_iso(clock.now() + timedelta(seconds=seconds))
+
+    def code(name: str, seconds: int) -> str:
+        return T.totp(secrets[f"{name}-ref"], parse_iso(stamp(seconds)))
+
+    roles = AgencyRoles(conn, clock, agency_id="agency_default")
+    roles.seed_blueprint(actor="owner-1", actor_role="owner")
+    svc = identity_module.SessionService(
+        conn, clock=clock, ids=IdFactory(deterministic=True, seed="g2m"),
+        agency_id="agency_default", secrets=identity_module.MappingSecretResolver(secrets),
+    )
+    tokens: dict = {}
+    for name in names:
+        roles.assign_holder(
+            "reservation_manager", holder_ref=name, actor="owner-1", actor_role="owner"
+        )
+        svc.enroll_totp(name, secret_ref=f"{name}-ref", at=stamp(-180))
+        svc.confirm_totp(name, code(name, -180), at=stamp(-180))
+        opened = svc.open_session(name, "reservation_manager", at=stamp(-20))
+        svc.satisfy_step_up(opened.session.session_id, code(name, 0), at=stamp(0))
+        tokens[name] = opened.token
+    return tokens
+
+
+@pytest.fixture()
+def confirm_http(tmp_path, clock):
+    """Seeded dashboard where one real Reservation Manager may close a paid booking."""
+    with live_dashboard(
+        tmp_path / "confirm.db",
+        clock,
+        seed_data=True,
+        bootstrap=lambda conn: _manager_sessions(conn, clock, ("rm-confirm",)),
+    ) as live:
+        yield live
+
+
 def _confirm_token(live, *, token: str = "tok-reservation") -> str:
     page = live.get("/inventory", token=token)
     assert page.status == 200, page.status
@@ -3392,14 +3442,14 @@ def test_confirmation_is_offered_only_with_a_live_supplier_proof(seeded_http):
     assert 'action="/bookings/confirm"' not in unproven
 
 
-def test_confirmation_action_closes_the_booking_with_an_audit_reference(seeded_http):
-    _seed_stage_e_paid_booking(seeded_http.db)
-    _seed_stage_e_proof(seeded_http.db)
-    token = _confirm_token(seeded_http)
+def test_confirmation_action_closes_the_booking_with_an_audit_reference(confirm_http):
+    _seed_stage_e_paid_booking(confirm_http.db)
+    _seed_stage_e_proof(confirm_http.db)
+    token = _confirm_token(confirm_http, token=confirm_http.session_tokens["rm-confirm"])
 
-    response = seeded_http.post(
+    response = confirm_http.post(
         "/bookings/confirm",
-        token="tok-reservation",
+        token=confirm_http.session_tokens["rm-confirm"],
         form={
             "form_token": token,
             "booking_id": "booking-e1",
@@ -3413,30 +3463,30 @@ def test_confirmation_action_closes_the_booking_with_an_audit_reference(seeded_h
     assert 'data-status="CONFIRMED"' in response.text
     assert 'data-replayed="0"' in response.text
     assert 'data-audit-id=""' not in response.text
-    booking = seeded_http.db.execute(
+    booking = confirm_http.db.execute(
         "SELECT status, confirmed_at FROM bookings WHERE booking_id = 'booking-e1'"
     ).fetchone()
     assert booking["status"] == "CONFIRMED" and booking["confirmed_at"]
-    hold = seeded_http.db.execute(
+    hold = confirm_http.db.execute(
         "SELECT status FROM holds WHERE hold_id = 'hold-e1'"
     ).fetchone()
     assert hold["status"] == "CONVERTED"
-    event = seeded_http.db.execute(
+    event = confirm_http.db.execute(
         "SELECT to_state, evidence_ref FROM booking_state_events"
         " WHERE booking_id = 'booking-e1' AND to_state = 'CONFIRMED'"
     ).fetchone()
     assert event["evidence_ref"] == "proof-e1"
 
 
-def test_confirmation_refuses_an_expired_proof(seeded_http):
-    _seed_stage_e_paid_booking(seeded_http.db)
-    _seed_stage_e_proof(seeded_http.db, proof_id="proof-live")
+def test_confirmation_refuses_an_expired_proof(confirm_http):
+    _seed_stage_e_paid_booking(confirm_http.db)
+    _seed_stage_e_proof(confirm_http.db, proof_id="proof-live")
     _seed_stage_e_paid_booking(
-        seeded_http.db, booking_id="booking-e2", hold_id="hold-e2",
+        confirm_http.db, booking_id="booking-e2", hold_id="hold-e2",
         check_in="2026-12-20", check_out="2026-12-23",
     )
     _seed_stage_e_proof(
-        seeded_http.db,
+        confirm_http.db,
         booking_id="booking-e2",
         proof_id="proof-stale",
         evidence_id="evid-block-2",
@@ -3445,11 +3495,11 @@ def test_confirmation_refuses_an_expired_proof(seeded_http):
         captured_at="2026-09-02T00:00:00Z",
         expires_at="2026-09-10T00:00:00Z",
     )
-    token = _confirm_token(seeded_http)
+    token = _confirm_token(confirm_http, token=confirm_http.session_tokens["rm-confirm"])
 
-    response = seeded_http.post(
+    response = confirm_http.post(
         "/bookings/confirm",
-        token="tok-reservation",
+        token=confirm_http.session_tokens["rm-confirm"],
         form={
             "form_token": token,
             "booking_id": "booking-e2",
@@ -3460,26 +3510,26 @@ def test_confirmation_refuses_an_expired_proof(seeded_http):
 
     assert response.status == 400, response.status
     assert 'data-code="BLOCK_PROOF_EXPIRED"' in response.text
-    assert seeded_http.db.execute(
+    assert confirm_http.db.execute(
         "SELECT status FROM bookings WHERE booking_id = 'booking-e2'"
     ).fetchone()["status"] == "PAID_IN_FULL"
 
 
-def test_confirmation_refuses_a_revoked_proof(seeded_http):
-    _seed_stage_e_paid_booking(seeded_http.db)
-    _seed_stage_e_proof(seeded_http.db, revoked=True)
+def test_confirmation_refuses_a_revoked_proof(confirm_http):
+    _seed_stage_e_paid_booking(confirm_http.db)
+    _seed_stage_e_proof(confirm_http.db, revoked=True)
     _seed_stage_e_paid_booking(
-        seeded_http.db, booking_id="booking-e2", hold_id="hold-e2",
+        confirm_http.db, booking_id="booking-e2", hold_id="hold-e2",
         check_in="2026-12-20", check_out="2026-12-23",
     )
-    _seed_stage_e_proof(seeded_http.db, booking_id="booking-e2", proof_id="proof-live",
+    _seed_stage_e_proof(confirm_http.db, booking_id="booking-e2", proof_id="proof-live",
                         evidence_id="evid-block-2", check_in="2026-12-20",
                         check_out="2026-12-23")
-    token = _confirm_token(seeded_http)
+    token = _confirm_token(confirm_http, token=confirm_http.session_tokens["rm-confirm"])
 
-    response = seeded_http.post(
+    response = confirm_http.post(
         "/bookings/confirm",
-        token="tok-reservation",
+        token=confirm_http.session_tokens["rm-confirm"],
         form={
             "form_token": token,
             "booking_id": "booking-e1",
@@ -3490,7 +3540,7 @@ def test_confirmation_refuses_a_revoked_proof(seeded_http):
 
     assert response.status == 400, response.status
     assert 'data-code="BLOCK_PROOF_REVOKED"' in response.text
-    assert 'data-proof-state="REVOKED"' in _confirmation_row("booking-e1", seeded_http)
+    assert 'data-proof-state="REVOKED"' in _confirmation_row("booking-e1", confirm_http)
 
 
 def test_confirmation_is_refused_for_finance_and_the_auditor(seeded_http):
@@ -3528,10 +3578,10 @@ def test_confirmation_is_refused_for_finance_and_the_auditor(seeded_http):
     ).fetchone()["status"] == "PAID_IN_FULL"
 
 
-def test_a_second_confirmation_replays_instead_of_double_journalling(seeded_http):
-    _seed_stage_e_paid_booking(seeded_http.db)
-    _seed_stage_e_proof(seeded_http.db)
-    token = _confirm_token(seeded_http)
+def test_a_second_confirmation_replays_instead_of_double_journalling(confirm_http):
+    _seed_stage_e_paid_booking(confirm_http.db)
+    _seed_stage_e_proof(confirm_http.db)
+    token = _confirm_token(confirm_http, token=confirm_http.session_tokens["rm-confirm"])
     form = {
         "form_token": token,
         "booking_id": "booking-e1",
@@ -3539,20 +3589,20 @@ def test_a_second_confirmation_replays_instead_of_double_journalling(seeded_http
         "idempotency_key": "idem-confirm-1",
     }
 
-    first = seeded_http.post("/bookings/confirm", token="tok-reservation", form=form)
-    second = seeded_http.post(
+    first = confirm_http.post("/bookings/confirm", token=confirm_http.session_tokens["rm-confirm"], form=form)
+    second = confirm_http.post(
         "/bookings/confirm",
-        token="tok-reservation",
+        token=confirm_http.session_tokens["rm-confirm"],
         form={**form, "idempotency_key": "idem-confirm-2"},
     )
 
     assert first.status == 200 and second.status == 200
     assert 'data-replayed="1"' in second.text
-    events = seeded_http.db.execute(
+    events = confirm_http.db.execute(
         "SELECT COUNT(*) FROM booking_state_events"
         " WHERE booking_id = 'booking-e1' AND to_state = 'CONFIRMED'"
     ).fetchone()[0]
-    audits = seeded_http.db.execute(
+    audits = confirm_http.db.execute(
         "SELECT COUNT(*) FROM audit_events"
         " WHERE entity_id = 'booking-e1' AND action = 'booking.confirmed'"
     ).fetchone()[0]
@@ -3616,6 +3666,12 @@ def _seed_block_evidence(
     )
 
 
+def _banner_of(response) -> str:
+    """The refusal banner (not the page footer), so a failure names its own cause."""
+    found = re.search(r'<p class="err"[^>]*>.*?</p>', response.text, re.S)
+    return f"{response.status}: {found.group(0) if found else response.text[:300]}"
+
+
 def _block_proof_token(live, booking_id: str, *, token: str) -> str:
     page = live.get("/inventory", token=token)
     assert page.status == 200, (page.status, page.text[:400])
@@ -3648,16 +3704,18 @@ def _proof_rows(live) -> list:
 
 @pytest.fixture()
 def block_proof_http(tmp_path, clock):
-    """Seeded dashboard, a paid booking, and two real session principals."""
+    """Seeded dashboard, a paid booking, two real Reservation Managers and one machine.
+
+    verifier-1/2 hold the manager role with TOTP and a fresh step-up (G2-A: a signature
+    is a privileged human act). ``ai:planner-1`` keeps a plain agent session on purpose:
+    it is the machine-principal negative.
+    """
     with live_dashboard(
         tmp_path / "block-proof.db",
         clock,
         seed_data=True,
-        sessions=(
-            ("verifier-1", "reservation_agent"),
-            ("verifier-2", "reservation_agent"),
-            ("ai:planner-1", "reservation_agent"),
-        ),
+        sessions=(("ai:planner-1", "reservation_agent"),),
+        bootstrap=lambda conn: _manager_sessions(conn, clock, ("verifier-1", "verifier-2")),
     ) as live:
         _seed_stage_e_paid_booking(live.db)
         yield live
@@ -3672,7 +3730,7 @@ def test_a_signed_in_human_records_the_block_and_unlocks_confirmation(block_proo
 
     response = _post_block_proof(live, token=token, form_token=form_token)
 
-    assert response.status == 200, response.text[-1200:]
+    assert response.status == 200, _banner_of(response)
     assert 'data-banner="block-proof-recorded"' in response.text
     assert 'data-replayed="0"' in response.text
     assert 'data-verified-by="human:verifier-1"' in response.text
@@ -3690,10 +3748,10 @@ def test_a_signed_in_human_records_the_block_and_unlocks_confirmation(block_proo
     ).fetchone()["status"]
     assert status == "PAID_IN_FULL"
     # ... and confirmation, still a separate action, now has its proof.
-    confirm_token = _confirm_token(live)
+    confirm_token = _confirm_token(live, token=token)
     confirmed = live.post(
         "/bookings/confirm",
-        token="tok-reservation",
+        token=token,
         form={
             "form_token": confirm_token,
             "booking_id": "booking-e1",

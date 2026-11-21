@@ -4545,6 +4545,7 @@ class Dashboard:
                 reason=reason,
                 actor=verifier,
                 actor_role=principal.role,
+                session_token=principal.session_token,
             )
         except DomainError as exc:
             return self._block_proof_refusal(principal, exc)
@@ -4685,6 +4686,7 @@ class Dashboard:
                 actor=verifier,
                 verifier_role=principal.role,
                 notes=notes or None,
+                session_token=principal.session_token,
             )
         except DomainError as exc:
             return self._block_proof_refusal(principal, exc)

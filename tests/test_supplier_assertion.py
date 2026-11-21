@@ -132,14 +132,29 @@ class AssertionCase(SupplierProofCase):
         args.update(over)
         return self.kernel.record_supplier_assertion(**args)
 
-    def prove(self, booking, evidence, *, key="idem_proof_1"):
+    def prove(self, booking, evidence, *, key="idem_proof_1", token=None):
+        # Recording a proof is itself a privileged human act (G2-A), so it signs in. A test
+        # that asserts a refusal passes ``token`` minted *before* ``refused()`` snapshots,
+        # so the session row is setup, never a write under test.
+        if token is None:
+            token = self.rm()
         return self.kernel.record_supplier_block_proof(
             booking_id=booking.booking_id, evidence_id=evidence, supplier_id=self.supplier_id,
             relationship_id=self.relationship_id, check_in=booking.check_in,
             check_out=booking.check_out, verification_method="MANAGER_CALL",
             verified_by="rm-1", actor="rm-1", verifier_role="reservation_manager",
-            idempotency_key=key,
+            session_token=token, idempotency_key=key,
         )
+
+    def legacy_proof(self, booking):
+        """A proof recorded the pre-E5 way: generic AVAILABLE evidence, no attribution."""
+        from booking_support import supplier_block_proof
+
+        proof = supplier_block_proof(self.kernel, booking.booking_id)
+        # That helper signs as ``rm-1`` through its own factor and spends this TOTP step;
+        # replay protection is a security control, so the clock moves on instead.
+        self.kernel.clock.advance(seconds=T.DEFAULT_STEP_SECONDS)
+        return proof
 
     def ready(self):
         """Paid booking + verified contact + attributed evidence + recorded proof; enforcement on."""
@@ -607,9 +622,7 @@ class TestConfirmationIsEnforced(AssertionCase):
     def test_legacy_unattributed_evidence_cannot_authorise_a_new_confirmation(self):
         _, booking = self.paid()
         # E3-style proof: generic AVAILABLE evidence, recorded before enforcement
-        from booking_support import supplier_block_proof
-
-        legacy = supplier_block_proof(self.kernel, booking.booking_id)
+        legacy = self.legacy_proof(booking)
         before_enforce = self.kernel.get_supplier_block_proof(legacy)
         self.assertIsNotNone(before_enforce)
         self.enforce()
@@ -625,7 +638,10 @@ class TestConfirmationIsEnforced(AssertionCase):
             result="available", can_confirm=True, source_ref="villa_block_letter",
         )
         self.kernel.clock.advance(minutes=1)
-        self.refused("BLOCK_PROOF_EVIDENCE_UNATTRIBUTED", self.prove, booking, generic)
+        token = self.rm()
+        self.refused(
+            "BLOCK_PROOF_EVIDENCE_UNATTRIBUTED", self.prove, booking, generic, token=token
+        )
 
     def test_an_assertion_for_another_booking_cannot_back_this_one(self):
         _, first = self.paid(key="idem_e_f1")
@@ -636,7 +652,8 @@ class TestConfirmationIsEnforced(AssertionCase):
         self.kernel.clock.advance(minutes=5)
         evidence = self.assertion(first, contact, self.rm())
         self.enforce()
-        self.refused("BLOCK_PROOF_WRONG_UNIT", self.prove, second, evidence)
+        token = self.rm()
+        self.refused("BLOCK_PROOF_WRONG_UNIT", self.prove, second, evidence, token=token)
 
     def test_the_contact_is_rechecked_at_confirmation(self):
         booking, contact, _, proof = self.ready()
@@ -695,13 +712,17 @@ class TestConfirmationIsEnforced(AssertionCase):
         self.assertIsNotNone(contact)
 
     def test_enforcement_is_off_by_default_so_existing_flows_are_unchanged(self):
-        from booking_support import supplier_block_proof
-
+        """Off means no *evidence* attribution is demanded; the signer still signs in (G2-A)."""
         _, booking = self.paid()
-        proof = supplier_block_proof(self.kernel, booking.booking_id)
-        outcome = self.kernel.confirm_booking(
-            booking_id=booking.booking_id, block_proof_id=proof, command_id="cmd_legacy_ok",
+        proof = self.legacy_proof(booking)
+        self.refused(
+            "SESSION_REQUIRED", self.kernel.confirm_booking, booking_id=booking.booking_id,
+            block_proof_id=proof, command_id="cmd_legacy_nosession",
             actor="user:reservation-1", actor_role="reservation",
+        )
+        outcome = self.confirm(
+            booking, proof, self.rm(), command_id="cmd_legacy_ok", actor="rm-1",
+            actor_role="reservation_manager",
         )
         self.assertEqual(outcome.status, "CONFIRMED")
 

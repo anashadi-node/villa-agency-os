@@ -153,6 +153,12 @@ class KernelTestCase(unittest.TestCase):
         )
 
     # -- helpers ----------------------------------------------------------- #
+    def signer(self) -> str:
+        """A real signed-in ``reservation_manager`` session (G2-A privileged calls)."""
+        from booking_support import signer_token
+
+        return signer_token(self.kernel)
+
     def quote(self, unit_id="unit_1", check_in="2026-10-01", check_out="2026-10-03", quote_id="quote_t1"):
         return QC.calculate_quote(
             make_request(check_in=check_in, check_out=check_out),

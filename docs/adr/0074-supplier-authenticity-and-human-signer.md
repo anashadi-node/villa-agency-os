@@ -360,7 +360,7 @@ stand and are recorded here as residuals rather than fixed in the same commit.
 | A machine principal, wrong role or stale step-up might sign | **Refuted** | `_resolve_principal` refuses machine identity/role (`MACHINE_PRINCIPAL_REFUSED`), checks the allowed set after canonicalisation, requires an ACTIVE holder row, `mfa_satisfied_at`, and `require_step_up` inside `STEP_UP_WINDOW` |
 | A case/whitespace variant of the maker's identity could self-check | **Refuted in practice** | Binding compares `session.identity` to `holder_ref` exactly, so an identity variant holds no role and cannot reach `CONTACT_CHECKER_IS_MAKER`; revisit only if identity storage ever becomes case-insensitive |
 
-### §11.2 Residual status (G1 and G1-R closed locally, G2 open)
+### §11.2 Residual status (G1, G1-R and G2-A closed locally; G2-B open)
 
 - **G1 — CLOSED by `63ac1ea` (fix committed locally, subject to independent
   verification).** The attribution is now pinned by the database: `(evidence_id,
@@ -399,18 +399,24 @@ stand and are recorded here as residuals rather than fixed in the same commit.
   byte-identical DDL; and there is still no migration runner for PostgreSQL, so the
   *existing*-schema path is unproven on PG even though the fresh-schema twin applies
   cleanly. Both are recorded as residual, not as tested.
-- **G2 — OPEN — HIGH / PRODUCTION BLOCKER.** Enforcement defaults to `false`. Until an
-  agency sets `supplier_assertion_enforced=true` (or the cutover date in §9.6 is
-  chosen), an unattributed E3 proof can still authorise a confirmation. This is the
-  deliberate legacy window, but it *is* a fail-open default and must be stated as one.
-  Measured, not merely asserted: with enforcement off, a paid booking was taken to
-  `CONFIRMED` with **no session at all** — evidence written by `record_evidence` (which
-  takes no credential), a block proof signed by a self-declared
-  `verifier_role="reservation_manager"`, and `confirm_booking` called with a made-up
-  `actor`. Every one of those gates is keyed off the *declared* role string, so the
-  only thing standing between a script and a confirmation today is the enforcement
-  flag. The dashboard's HTTP routes are session-bound and cannot do this; a caller with
-  in-process kernel access can.
+- **G2-A — CLOSED locally (pack VILLA-E5-G2A-001); G2-B remains OPEN — PRODUCTION
+  BLOCKER.** The hard authorization invariant now holds *independently of the flag*:
+  `confirm_booking`, `record_supplier_block_proof` and `revoke_supplier_block_proof`
+  first resolve a signed-in session (`SessionService` — identity, status, tenant, active
+  role holder, `SIGNER_ROLES`, MFA, fresh step-up) and only then look at evidence. The
+  caller's `actor`/`actor_role` are claims checked against the resolved identity, never
+  authority. Measured before the fix: a paid booking reached `CONFIRMED` with no session,
+  a self-declared `verifier_role="reservation_manager"` and a made-up actor
+  (`cache/scratch/g2_exploit.py`, run against `93d52ce`'s own modules). Measured after:
+  the same call refuses `SESSION_REQUIRED` on both flag states, and the matrix
+  G2-T01…T12 in `tests/test_g2_trusted_authorization.py` covers no-session, spoofed
+  role, expired/revoked session, stale step-up, machine principal, unauthorized replay,
+  refusal-without-writes, and the authorized happy path. What G2-A deliberately does
+  **not** do: turn the flag on (that is G2-B, and it still requires attributed evidence,
+  so an unattributed E3 proof is refused with `BLOCK_PROOF_EVIDENCE_UNATTRIBUTED`
+  *after* authorization). What it does not prove: PostgreSQL has no session-backed
+  upgrade path test, and `record_supplier_block_proof` still requires an explicit human
+  claim alongside the session (the claim cannot invent authority, but it is redundant).
 
 ### §11.3 Verification of the G1 fix (pack VILLA-E5-VERIFY-001, 2026-11-20)
 

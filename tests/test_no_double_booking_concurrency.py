@@ -545,10 +545,15 @@ class Pack06Case(ConcurrencyTestCase):
             self.assertLessEqual(agencies, {self.kernel.agency_id}, f"foreign tenant rows in {table}")
 
     def confirm_body(self, booking_id, proof, command_id):
+        # One real signer session, minted here on the test thread: the racing writers share
+        # it the way two tabs of one person would. The actor is the signer — the kernel
+        # refuses a claimed owner that the session does not prove (G2-A, AUTH-09).
+        token = self.signer()
+
         def body(kernel: RK.ReservationKernel, index: int):
             return kernel.confirm_booking(
+                session_token=token,
                 booking_id=booking_id, block_proof_id=proof, command_id=command_id,
-                actor="user:owner-1", actor_role="owner",
             )
 
         return body
@@ -647,11 +652,12 @@ class TestHoldVersusBookingRaces(Pack06Case):
             check_in="2026-10-01", check_out="2026-10-03", tag="b2"
         )
         self.kernel.confirm_booking(
+            session_token=self.signer(),
             booking_id=reserved.booking_id,
             block_proof_id=booking_support.supplier_block_proof(
                 self.kernel, reserved.booking_id
             ),
-            command_id="cmd_confirm_b2", actor="user:owner-1", actor_role="owner",
+            command_id="cmd_confirm_b2",
         )
         holds_before = self.row_count("holds")
         wins, losses = self.split(
