@@ -1,0 +1,233 @@
+{
+  "baseline_file": "001_initial.pg.sql",
+  "baseline_file_sha256": "c4af8cc16386dac4f5aeca7e6276c9e777ff345d04f90441ba3cdb200de99e10",
+  "capture_procedure": "apply src/schema/001_initial.pg.sql twin, then every statement of 002_pg_range_exclusions.pg.sql; record every validated CHECK and EXCLUDE on holds/bookings plus the villa_iso_date body, verbatim, with created_by provenance from a before/after constraint snapshot",
+  "captured_by": "scripts/capture_guard_definitions.py",
+  "file_sha256": "156870cf9dddd8b4349672b90136e964459456d371636dc8fd7abe5a4b885849",
+  "function": {
+    "villa_iso_date": "CREATE OR REPLACE FUNCTION public.villa_iso_date(value text)\n RETURNS date\n LANGUAGE sql\n IMMUTABLE STRICT\nAS $function$ SELECT value::date $function$\n"
+  },
+  "objects": [
+    {
+      "created_by": "001",
+      "definition": "CHECK ((adults >= 1))",
+      "kind": "check",
+      "name": "bookings_adults_check",
+      "table": "bookings"
+    },
+    {
+      "created_by": "001",
+      "definition": "CHECK ((amount_paid_minor >= 0))",
+      "kind": "check",
+      "name": "bookings_amount_paid_minor_check",
+      "table": "bookings"
+    },
+    {
+      "created_by": "001",
+      "definition": "CHECK ((children >= 0))",
+      "kind": "check",
+      "name": "bookings_children_check",
+      "table": "bookings"
+    },
+    {
+      "created_by": "001",
+      "definition": "CHECK ((length(currency) = 3))",
+      "kind": "check",
+      "name": "bookings_currency_check",
+      "table": "bookings"
+    },
+    {
+      "created_by": "001",
+      "definition": "CHECK ((length(guest_ref) >= 3))",
+      "kind": "check",
+      "name": "bookings_guest_ref_check",
+      "table": "bookings"
+    },
+    {
+      "created_by": "001",
+      "definition": "CHECK ((length(idempotency_key) >= 8))",
+      "kind": "check",
+      "name": "bookings_idempotency_key_check",
+      "table": "bookings"
+    },
+    {
+      "created_by": "001",
+      "definition": "CHECK ((infants >= 0))",
+      "kind": "check",
+      "name": "bookings_infants_check",
+      "table": "bookings"
+    },
+    {
+      "created_by": "001",
+      "definition": "CHECK ((nights >= 1))",
+      "kind": "check",
+      "name": "bookings_nights_check",
+      "table": "bookings"
+    },
+    {
+      "created_by": "001",
+      "definition": "CHECK ((payment_status = ANY (ARRAY['UNPAID'::text, 'DEPOSIT_CLEARED'::text, 'CLEARED_FULL'::text, 'PARTIALLY_REFUNDED'::text, 'REFUNDED'::text, 'FAILED'::text, 'UNMATCHED'::text])))",
+      "kind": "check",
+      "name": "bookings_payment_status_check",
+      "table": "bookings"
+    },
+    {
+      "created_by": "001",
+      "definition": "CHECK ((length(policy_fingerprint) = 64))",
+      "kind": "check",
+      "name": "bookings_policy_fingerprint_check",
+      "table": "bookings"
+    },
+    {
+      "created_by": "001",
+      "definition": "CHECK ((security_deposit_minor >= 0))",
+      "kind": "check",
+      "name": "bookings_security_deposit_minor_check",
+      "table": "bookings"
+    },
+    {
+      "created_by": "001",
+      "definition": "CHECK ((status = ANY (ARRAY['INQUIRY'::text, 'QUALIFIED'::text, 'AVAILABILITY_PENDING'::text, 'AVAILABILITY_CONFIRMED'::text, 'AVAILABILITY_UNAVAILABLE'::text, 'QUOTE_DRAFTED'::text, 'QUOTE_SENT'::text, 'QUOTE_EXPIRED'::text, 'HOLD_REQUESTED'::text, 'HOLD_ACTIVE'::text, 'HOLD_EXPIRED'::text, 'PAYMENT_PENDING'::text, 'PAYMENT_PARTIAL'::text, 'PAYMENT_UNMATCHED'::text, 'PAYMENT_FAILED'::text, 'DEPOSIT_PAID'::text, 'PAID_IN_FULL'::text, 'CONFIRMED'::text, 'BALANCE_DUE'::text, 'BALANCE_OVERDUE'::text, 'PRE_ARRIVAL'::text, 'IN_STAY'::text, 'COMPLETED'::text, 'CANCELLATION_REQUESTED'::text, 'CANCELLATION_REVIEW'::text, 'CANCELLED'::text, 'REFUND_PENDING'::text, 'REFUNDED'::text, 'NO_SHOW'::text, 'RELOCATED'::text, 'DISPUTED'::text, 'CLOSED'::text])))",
+      "kind": "check",
+      "name": "bookings_status_check",
+      "table": "bookings"
+    },
+    {
+      "created_by": "001",
+      "definition": "CHECK ((total_minor >= 0))",
+      "kind": "check",
+      "name": "bookings_total_minor_check",
+      "table": "bookings"
+    },
+    {
+      "created_by": "001",
+      "definition": "CHECK ((version_lock >= 1))",
+      "kind": "check",
+      "name": "bookings_version_lock_check",
+      "table": "bookings"
+    },
+    {
+      "created_by": "001",
+      "definition": "CHECK ((amount_paid_minor <= total_minor))",
+      "kind": "check",
+      "name": "ck_booking_paid_le_total",
+      "table": "bookings"
+    },
+    {
+      "created_by": "002",
+      "definition": "CHECK ((check_in ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'::text))",
+      "kind": "check",
+      "name": "ck_bookings_check_in_iso",
+      "table": "bookings"
+    },
+    {
+      "created_by": "002",
+      "definition": "CHECK ((check_out ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'::text))",
+      "kind": "check",
+      "name": "ck_bookings_check_out_iso",
+      "table": "bookings"
+    },
+    {
+      "created_by": "001",
+      "definition": "CHECK ((check_in < check_out))",
+      "kind": "check",
+      "name": "ck_bookings_stay",
+      "table": "bookings"
+    },
+    {
+      "created_by": "002",
+      "definition": "EXCLUDE USING gist (unit_id WITH =, daterange(villa_iso_date(check_in), villa_iso_date(check_out), '[)'::text) WITH &&) WHERE ((status = ANY (ARRAY['CONFIRMED'::text, 'BALANCE_DUE'::text, 'BALANCE_OVERDUE'::text, 'PRE_ARRIVAL'::text, 'IN_STAY'::text, 'CANCELLATION_REQUESTED'::text, 'CANCELLATION_REVIEW'::text, 'DISPUTED'::text])))",
+      "kind": "exclusion",
+      "name": "ex_bookings_no_overlap",
+      "table": "bookings"
+    },
+    {
+      "created_by": "002",
+      "definition": "CHECK ((check_in ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'::text))",
+      "kind": "check",
+      "name": "ck_holds_check_in_iso",
+      "table": "holds"
+    },
+    {
+      "created_by": "002",
+      "definition": "CHECK ((check_out ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'::text))",
+      "kind": "check",
+      "name": "ck_holds_check_out_iso",
+      "table": "holds"
+    },
+    {
+      "created_by": "001",
+      "definition": "CHECK (((status = ANY (ARRAY['REQUESTED'::text, 'AWAITING_SUPPLIER'::text, 'CONFIRMED'::text, 'EXTENSION_REQUESTED'::text, 'RELEASE_REQUESTED'::text])) OR (closed_at IS NOT NULL)))",
+      "kind": "check",
+      "name": "ck_holds_closed",
+      "table": "holds"
+    },
+    {
+      "created_by": "001",
+      "definition": "CHECK ((created_at < expires_at))",
+      "kind": "check",
+      "name": "ck_holds_expiry",
+      "table": "holds"
+    },
+    {
+      "created_by": "001",
+      "definition": "CHECK ((check_in < check_out))",
+      "kind": "check",
+      "name": "ck_holds_stay",
+      "table": "holds"
+    },
+    {
+      "created_by": "002",
+      "definition": "EXCLUDE USING gist (unit_id WITH =, daterange(villa_iso_date(check_in), villa_iso_date(check_out), '[)'::text) WITH &&) WHERE ((status = ANY (ARRAY['REQUESTED'::text, 'AWAITING_SUPPLIER'::text, 'CONFIRMED'::text, 'EXTENSION_REQUESTED'::text, 'RELEASE_REQUESTED'::text, 'EXPIRED_PENDING_VERIFICATION'::text])))",
+      "kind": "exclusion",
+      "name": "ex_holds_no_overlap",
+      "table": "holds"
+    },
+    {
+      "created_by": "001",
+      "definition": "CHECK ((length(expires_timezone) >= 3))",
+      "kind": "check",
+      "name": "holds_expires_timezone_check",
+      "table": "holds"
+    },
+    {
+      "created_by": "001",
+      "definition": "CHECK ((extended_count >= 0))",
+      "kind": "check",
+      "name": "holds_extended_count_check",
+      "table": "holds"
+    },
+    {
+      "created_by": "001",
+      "definition": "CHECK ((length(guest_ref) >= 3))",
+      "kind": "check",
+      "name": "holds_guest_ref_check",
+      "table": "holds"
+    },
+    {
+      "created_by": "001",
+      "definition": "CHECK ((length(idempotency_key) >= 8))",
+      "kind": "check",
+      "name": "holds_idempotency_key_check",
+      "table": "holds"
+    },
+    {
+      "created_by": "001",
+      "definition": "CHECK ((nights >= 1))",
+      "kind": "check",
+      "name": "holds_nights_check",
+      "table": "holds"
+    },
+    {
+      "created_by": "001",
+      "definition": "CHECK ((status = ANY (ARRAY['REQUESTED'::text, 'AWAITING_SUPPLIER'::text, 'CONFIRMED'::text, 'REJECTED'::text, 'EXTENSION_REQUESTED'::text, 'RELEASE_REQUESTED'::text, 'RELEASE_CONFIRMED'::text, 'EXPIRED_PENDING_VERIFICATION'::text, 'CONVERTED'::text])))",
+      "kind": "check",
+      "name": "holds_status_check",
+      "table": "holds"
+    }
+  ],
+  "schema_version": 2,
+  "server_version": "16.14",
+  "server_version_num": "160014",
+  "source_file": "002_pg_range_exclusions.pg.sql"
+}

@@ -147,7 +147,7 @@ jobs:
       - name: Apply the twin, compare catalogues, run gate G1 and the concurrency proof
         run: |
           set -o pipefail
-          python -m pytest tests/test_schema.py tests/test_workforce_gate_g1.py tests/test_pg_overlap_concurrency.py -rs 2>&1 | tee pg-parity.log
+          python -m pytest tests/test_schema.py tests/test_workforce_gate_g1.py tests/test_pg_overlap_concurrency.py tests/test_pg_migrations.py -rs 2>&1 | tee pg-parity.log
 
       # Skip diam-diam = bukti palsu. Dengan VILLA_PG_REQUIRED=1 tidak satu tes PG pun boleh SKIP.
       - name: Refuse skipped PostgreSQL tests
