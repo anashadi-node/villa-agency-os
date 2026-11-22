@@ -52,6 +52,11 @@ from generate_pg_twin import generate as generate_pg  # noqa: E402
 SCHEMA_DIR = SL.SCHEMA_DIR
 PG_BASELINE_FILE = "001_initial.pg.sql"
 PG_ONLY_FILE = "002_pg_range_exclusions.pg.sql"
+# PostgreSQL-only hardening, applied in this order. 002 gives each table its own EXCLUDE;
+# 021 adds the cross-table occupancy guard that neither EXCLUDE can express. The runner has
+# to know both, or a database certified "green" can still commit a HOLD and a BOOKING on the
+# same unit and dates.
+PG_ONLY_FILES = (PG_ONLY_FILE, "021_pg_cross_table_occupancy.pg.sql")
 SQLITE_BASELINE_FILE = SL.DIALECT_FILES["sqlite"]
 LEDGER_TABLE = "pg_schema_migrations"
 LOCK_NAME = "villa-agency-os:migrate"
@@ -329,7 +334,11 @@ def discover(schema_dir: Optional[pathlib.Path] = None) -> list[Migration]:
                 fatal=fatal,
             )
         )
-    return [pg_only_migration(directory)] + found
+    found.extend(pg_only_migrations(directory))
+    # One ordered chain: 002 sits between 001 and 003, 021 after 020. Sorting by migration id
+    # is the same rule the ledger uses, so a resumed run and a fresh run see one sequence.
+    found.sort(key=lambda migration: migration.migration_id)
+    return found
 
 
 def _approved_exclusions(path: pathlib.Path) -> tuple[tuple[str, str, str], ...]:
@@ -355,15 +364,25 @@ def _approved_exclusions(path: pathlib.Path) -> tuple[tuple[str, str, str], ...]
 
 
 def pg_only_migration(schema_dir: Optional[pathlib.Path] = None) -> Migration:
-    """002 is PostgreSQL-only hardening, not part of the twin.
+    """The 002 step. Kept as a named call because the ledger and its tests refer to it."""
+    return _pg_only_migration(pathlib.Path(schema_dir or SCHEMA_DIR) / PG_ONLY_FILE)
 
-    It holds the storage-level double-booking guard (two EXCLUDE constraints). The generator
-    pair cannot carry it — SQLite has no range exclusion — so it needs its own tracked step.
-    Without this, a runner could certify a database "green" whose only overlap protection is
-    the kernel's in-transaction check, which a direct write bypasses.
-    """
+
+def pg_only_migrations(schema_dir: Optional[pathlib.Path] = None) -> tuple[Migration, ...]:
+    """Every PostgreSQL-only step, each carrying the objects the fixture credits to it."""
     directory = pathlib.Path(schema_dir or SCHEMA_DIR)
-    path = directory / PG_ONLY_FILE
+    return tuple(_pg_only_migration(directory / name) for name in PG_ONLY_FILES)
+
+
+def _pg_only_migration(path: pathlib.Path) -> Migration:
+    """A PostgreSQL-only step: its objects come from the fixture's ``created_by`` provenance.
+
+    Nothing here names a constraint, a trigger or a function. The inventory is whatever the
+    capture query found when it applied this file — which is why adding a guard object to the
+    SQL cannot leave the runner quietly unaware of it.
+    """
+    if not path.exists():
+        raise MigrationRefused("APPROVED_FILE_UNREADABLE", f"{path.name} is missing")
     statements = [
         body
         for body in (
@@ -372,18 +391,46 @@ def pg_only_migration(schema_dir: Optional[pathlib.Path] = None) -> Migration:
         )
         if body
     ]
+    credited = path.stem.split("_", 1)[0]
+    provenance = _provenance()
+    objects = tuple(
+        obj for obj in guard_objects() if provenance.get(str(obj.describe())) == credited
+    )
+    if not objects:
+        raise MigrationRefused(
+            "APPROVED_FILE_UNPROVENANCED",
+            f"no guard object is credited to {path.name} in {APPROVED_FIXTURE.name}:"
+            f" re-run scripts/capture_guard_definitions.py --write",
+        )
     return Migration(
         migration_id=path.stem,
         source=path,
         sha256=_sha256(path),
         classification=POSTGRESQL_ONLY,
-        objects=tuple(
-            SchemaObject("exclusion", name, table, column="unit_id", expected=body)
-            for name, table, body in _approved_exclusions(path)
-        ),
+        objects=objects,
         ddl=tuple(statements),
         data=(),
     )
+
+
+def _guard_credits() -> set[str]:
+    """Which approved file each guard object is credited to — the PG-only ones, not 001.
+
+    The twin's own CHECKs are the baseline's business; the runner only certifies what the
+    PostgreSQL-only files install, so "002 is pending, do not check its objects yet" must not
+    be confused with "001 is pending".
+    """
+    return {migration.migration_id.split("_", 1)[0] for migration in pg_only_migrations()}
+
+
+def _provenance() -> dict[str, str]:
+    """describe() -> the approved file that created the object, from the fixture itself."""
+    return {
+        f"{item['kind']}:{item['table'] + '.' if item['table'] else ''}{item['name']}": str(
+            item.get("created_by") or ""
+        )
+        for item in approved_guards()["objects"]
+    }
 
 
 def _pg_header() -> str:
@@ -506,13 +553,28 @@ def object_present(conn: Any, obj: SchemaObject) -> bool:
                 (obj.name,),
             )
         elif obj.kind == "trigger":
+            # Guard triggers are compared as definitions, not names: a trigger can be renamed
+            # onto a different function or made non-deferrable while keeping its name. Triggers
+            # that are merely part of the twin (outbox_events, supplier contacts) are not in the
+            # approved inventory, so for those presence is all this check can honestly claim.
             cur.execute(
-                "SELECT EXISTS (SELECT 1 FROM pg_trigger g JOIN pg_class t ON t.oid = g.tgrelid"
+                "SELECT COALESCE((SELECT pg_get_triggerdef(g.oid) FROM pg_trigger g"
+                " JOIN pg_class t ON t.oid = g.tgrelid"
                 " JOIN pg_namespace n ON n.oid = t.relnamespace"
                 " WHERE g.tgname = %s AND NOT g.tgisinternal AND n.nspname = 'public'"
-                " AND (%s::text IS NULL OR t.relname = %s))",
+                " AND (%s::text IS NULL OR t.relname = %s)"
+                " AND g.tgenabled = 'O'), '')",
                 (obj.name, obj.table, obj.table),
             )
+            definition = str(cur.fetchone()[0])
+            if not definition:
+                cur.execute("SELECT false")
+                return bool(cur.fetchone()[0])
+            try:
+                _approved_definition(obj, conn)
+            except MigrationRefused:
+                return True
+            return _definition_matches(obj, definition, conn)
         elif obj.kind == "exclusion":
             # A name is not a guarantee. The guard only counts when the catalogue entry is a
             # validated exclusion constraint over the same unit/range expression AND the same
@@ -599,7 +661,7 @@ def _norm_definition(text: str) -> str:
     raise AssertionError("_norm_definition() must not be used: compare deparse output verbatim")
 
 
-def approved_guards(conn: Any = None) -> dict[str, dict[str, str]]:
+def approved_guards(conn: Any = None) -> dict[str, Any]:
     """The canonical definitions, tied to the approved file by hash and server version."""
     try:
         payload = json.loads(APPROVED_FIXTURE.read_text(encoding="utf-8"))
@@ -612,7 +674,30 @@ def approved_guards(conn: Any = None) -> dict[str, dict[str, str]]:
             "APPROVED_FILE_UNREADABLE", f"{APPROVED_FIXTURE.name} is not valid JSON: {error}"
         ) from error
     current = _sha256(SCHEMA_DIR / PG_ONLY_FILE)
-    if payload.get("file_sha256") != current:
+    sources = payload.get("sources")
+    if isinstance(sources, list) and sources:
+        # Every approved PostgreSQL-only file is hashed, not just 002. A fixture that pins one
+        # file while a second one installs triggers is a certificate for half the guard.
+        for entry in sources:
+            if not isinstance(entry, dict):
+                raise MigrationRefused(
+                    "APPROVED_FILE_UNREADABLE",
+                    f"{APPROVED_FIXTURE.name}: sources entries must be objects",
+                )
+            name = str(entry.get("file") or "")
+            try:
+                digest = _sha256(SCHEMA_DIR / name)
+            except OSError as error:
+                raise MigrationRefused(
+                    "APPROVED_FILE_UNREADABLE", f"cannot read approved source {name}: {error}"
+                ) from error
+            if entry.get("sha256") != digest:
+                raise MigrationRefused(
+                    "APPROVED_FILE_STALE",
+                    f"{APPROVED_FIXTURE.name} was captured from a different {name}: re-run"
+                    f" scripts/capture_guard_definitions.py --write and review the diff",
+                )
+    elif payload.get("file_sha256") != current:
         raise MigrationRefused(
             "APPROVED_FILE_STALE",
             f"{APPROVED_FIXTURE.name} was captured from a different {PG_ONLY_FILE}: re-run"
@@ -656,11 +741,11 @@ def approved_guards(conn: Any = None) -> dict[str, dict[str, str]]:
             )
     # Shape before value: a JSON file that is merely *valid* must not turn into an
     # AttributeError deep inside verification.
-    if payload.get("schema_version") != 2:
+    if payload.get("schema_version") not in (2, 3):
         raise MigrationRefused(
             "APPROVED_FILE_UNREADABLE",
-            f"{APPROVED_FIXTURE.name}: schema_version must be 2 (the inventory is an object"
-            f" list, not three hand-kept dictionaries)",
+            f"{APPROVED_FIXTURE.name}: schema_version must be 2 or 3 (the inventory is an"
+            f" object list, not three hand-kept dictionaries; 3 adds sources and triggers)",
         )
     objects = payload.get("objects")
     if not isinstance(objects, list) or not objects:
@@ -679,12 +764,16 @@ def approved_guards(conn: Any = None) -> dict[str, dict[str, str]]:
         table = str(item.get("table") or "")
         name = str(item.get("name") or "")
         definition = item.get("definition")
-        if kind not in ("check", "exclusion") or not table or not name:
+        if kind not in ("check", "exclusion", "trigger") or not table or not name:
             raise MigrationRefused(
                 "APPROVED_FILE_UNREADABLE",
                 f"{APPROVED_FIXTURE.name}: {item!r} is not a check/exclusion with a table and name",
             )
-        prefix = {"check": "CHECK (", "exclusion": "EXCLUDE USING"}[kind]
+        prefix = {
+            "check": "CHECK (",
+            "exclusion": "EXCLUDE USING",
+            "trigger": "CREATE ",
+        }[kind]
         if not isinstance(definition, str) or prefix not in definition:
             raise MigrationRefused(
                 "APPROVED_FILE_UNREADABLE",
@@ -826,19 +915,30 @@ def _unexpected_objects(conn: Any) -> list[str]:
     return found
 
 
-def verify_guards(conn: Any) -> list[str]:
+def verify_guards(conn: Any, credited: Optional[str] = None) -> list[str]:
     """Guard objects that are absent or are not exactly the approved definition.
 
     Counting them is not verification: two EXCLUDE constraints can exist while a CHECK that
     makes a zero-night hold impossible has been replaced by CHECK (true).
+
+    ``credited`` narrows the check to what one approved file installs. The gate inside apply()
+    uses it: after 002 has run, the objects 021 was supposed to install do not exist yet, and
+    calling them missing would make every intermediate step fail. The full inventory is still
+    checked whenever ``credited`` is None — that is what inspect/plan certify, and it is the
+    only form allowed to claim the database is guarded.
     """
     _pin_search_path(conn)
     approved_guards(conn)  # refuses on stale/unprovenanced/foreign-version definitions
-    return (
-        [obj.describe() for obj in guard_objects() if not object_present(conn, obj)]
-        + _missing_preconditions(conn)
-        + _unexpected_objects(conn)
-    )
+    objects = guard_objects()
+    if credited is not None:
+        provenance = _provenance()
+        objects = tuple(
+            obj for obj in objects if provenance.get(str(obj.describe())) == credited
+        )
+    missing = [obj.describe() for obj in objects if not object_present(conn, obj)]
+    if credited is not None:
+        return missing + _missing_preconditions(conn)
+    return missing + _missing_preconditions(conn) + _unexpected_objects(conn)
 
 
 # An EXCLUDE constraint treats NULLs as non-conflicting, so the two guards only protect rows
@@ -889,7 +989,19 @@ def database_state(conn: Any, migrations: Sequence[Migration]) -> dict[str, Any]
         step.planned_state == PENDING and step.migration.classification == POSTGRESQL_ONLY
         for step in steps
     )
-    missing = verify_guards(conn)
+    pending_guard_files = {
+        step.migration.migration_id.split("_", 1)[0]
+        for step in steps
+        if step.planned_state == PENDING and step.migration.classification == POSTGRESQL_ONLY
+    }
+    if pending_guard_files:
+        missing = [
+            item
+            for credited in sorted(_guard_credits() - pending_guard_files)
+            for item in verify_guards(conn, credited)
+        ] + _unexpected_objects(conn)
+    else:
+        missing = verify_guards(conn)
     conflicts = [step for step in steps if step.planned_state == CONFLICTED]
     if baseline == "EMPTY":
         status = UNKNOWN  # no baseline to recognise: the safe answer is "I cannot say"
@@ -1021,12 +1133,13 @@ def plan(conn: Any, migrations: Sequence[Migration]) -> list[Step]:
                 continue
             have, total = present(conn, migration.objects)
             if have != total:
+                absent = [obj.describe() for obj in migration.objects if not object_present(conn, obj)]
                 steps.append(
                     Step(
                         migration,
                         CONFLICTED,
                         f"ledger says {row['state']} but only {have}/{total} object(s) exist: "
-                        f"the ledger and the schema disagree",
+                        f"missing {', '.join(absent)} — the ledger and the schema disagree",
                     )
                 )
                 continue
@@ -1417,11 +1530,24 @@ def apply(
             )
         # Pre-flight: verify the storage guard BEFORE a single success is written down. A
         # reconciliation row that survives a failed gate is a false record of a migration.
-        guard_setup_pending = any(
-            step.planned_state == PENDING and step.migration.classification == POSTGRESQL_ONLY
+        pending_guard_files = {
+            step.migration.migration_id.split("_", 1)[0]
             for step in steps
-        )
-        missing_guards = [] if guard_setup_pending else verify_guards(conn)
+            if step.planned_state == PENDING
+            and step.migration.classification == POSTGRESQL_ONLY
+        }
+        if pending_guard_files:
+            # A pending PG-only file is allowed to be absent. A *finished* one is not: skipping
+            # 002 because the caller passed a subset must not let the rest of the migrations
+            # commit onto a database whose overlap guard was never installed.
+            missing_guards = [
+                item
+                for credited in sorted(_guard_credits() - pending_guard_files)
+                for item in verify_guards(conn, credited)
+            ]
+            missing_guards += _unexpected_objects(conn)
+        else:
+            missing_guards = verify_guards(conn)
         if missing_guards and not dry_run:
             raise MigrationRefused(
                 "MIGRATION_INCOMPLETE",
@@ -1471,7 +1597,9 @@ def apply(
                         # Same transaction as the DDL: the guard is verified before the row
                         # that says the guard was verified. Otherwise a failed gate leaves a
                         # committed success record behind, which is the lie M1 was about.
-                        premature = verify_guards(conn)
+                        premature = verify_guards(
+                            conn, migration.migration_id.split("_", 1)[0]
+                        )
                         if premature:
                             raise MigrationRefused(
                                 "MIGRATION_INCOMPLETE",

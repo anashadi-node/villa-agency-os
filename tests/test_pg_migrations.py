@@ -39,6 +39,10 @@ from test_pg_overlap_concurrency import _driver as pg_driver
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HISTORICAL = REPO_ROOT / "tests" / "fixtures" / "pg" / "historical_001_f1612cd.pg.sql"
 PG_ONLY = Path(SL.SCHEMA_DIR) / "002_pg_range_exclusions.pg.sql"
+# 021 installs the cross-table occupancy guard on top of 002. A "guarded" database now means
+# both files: 002 alone leaves hold x booking overlap unprotected, which is the P0 this pack
+# exists to close, so a test that stopped at 002 would be certifying half a guard.
+PG_ONLY_FILES = (PG_ONLY, Path(SL.SCHEMA_DIR) / "021_pg_cross_table_occupancy.pg.sql")
 LOCAL_PREFIX = "villa_pgm_"
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 OBJECT = PGM.SCHEMA_OBJECT
@@ -175,13 +179,29 @@ def reference_definitions(conn: Any) -> dict[str, Any]:
             }
             for table, name, contype, definition in cur.fetchall()
         ]
-        cur.execute("SELECT pg_get_functiondef('public.villa_iso_date'::regproc)")
-        row = cur.fetchone()
+        cur.execute(
+            "SELECT t.relname, g.tgname, pg_get_triggerdef(g.oid)"
+            " FROM pg_trigger g JOIN pg_class t ON t.oid = g.tgrelid"
+            " JOIN pg_namespace n ON n.oid = t.relnamespace"
+            " WHERE n.nspname = 'public' AND t.relname IN ('holds', 'bookings')"
+            " AND NOT g.tgisinternal ORDER BY t.relname, g.tgname"
+        )
+        objects += [
+            {"kind": "trigger", "table": str(table), "name": str(name), "definition": str(definition)}
+            for table, name, definition in cur.fetchall()
+        ]
+        cur.execute(
+            "SELECT p.proname, pg_get_functiondef(p.oid) FROM pg_proc p"
+            " JOIN pg_namespace n ON n.oid = p.pronamespace"
+            " WHERE n.nspname = 'public' AND p.proname LIKE 'villa!_%' ESCAPE '!'"
+            " ORDER BY p.proname"
+        )
+        functions = {str(name): str(definition) for name, definition in cur.fetchall()}
     if not objects:
         raise AssertionError("the approved SQL created no constraint on holds/bookings")
-    if row is None:
-        raise AssertionError("approved SQL did not create villa_iso_date()")
-    return {"objects": objects, "function": {"villa_iso_date": str(row[0])}}
+    if not functions:
+        raise AssertionError("approved SQL did not create its helper functions")
+    return {"objects": objects, "function": functions}
 
 
 def seed_booking(conn: Any, *, booking_id: str = "bk_pgm_1") -> None:
@@ -240,7 +260,8 @@ class MigrationCase(unittest.TestCase):
         conn = connect(self.dsn)
         self.addCleanup(conn.close)
         if guarded:
-            run_script(conn, PG_ONLY)
+            for path in PG_ONLY_FILES:
+                run_script(conn, path)
         return conn
 
     def historical(self) -> Any:
@@ -494,8 +515,18 @@ class TestReviewFindings(MigrationCase):
         without_002 = tuple(m for m in PGM.discover() if not m.migration_id.startswith("002"))
         with self.assertRaises(PGM.MigrationRefused) as ctx:
             PGM.apply(conn, migrations=without_002)
-        self.assertEqual(ctx.exception.code, "MIGRATION_INCOMPLETE")
+        # 021 is written against the immutability helper 002 installs, so without 002 it fails
+        # while running rather than while verifying. Both are refusals; neither may leave an
+        # exclusion or a success row behind.
+        self.assertIn(ctx.exception.code, ("MIGRATION_INCOMPLETE", "MIGRATION_FAILED"))
         self.assertEqual(PGM.survey(conn)["range_exclusions"], 0)
+        # The ledger table itself may exist (it is created before the loop); what must not
+        # exist is a row claiming anything succeeded.
+        self.assertEqual(
+            one(conn, "SELECT count(*) FROM public.pg_schema_migrations")
+            if one(conn, "SELECT to_regclass('public.pg_schema_migrations')") else 0,
+            0,
+        )
 
     def test_T28_negated_predicate_with_the_same_literals_is_refused(self):
         # Reviewer probe B: same names, same literals, same columns -- predicate negated.
@@ -579,7 +610,9 @@ class TestReviewFindings(MigrationCase):
         conn.commit()
         with self.assertRaises(PGM.MigrationRefused) as ctx:
             PGM.apply(conn)
-        self.assertEqual(ctx.exception.code, "MIGRATION_INCOMPLETE")
+        # The ledger already recorded 002 as successful, so the right refusal is "this database
+        # conflicts with its own ledger", and it must still name the missing object.
+        self.assertIn(ctx.exception.code, ("MIGRATION_INCOMPLETE", "CONFLICTED"))
         self.assertIn("ck_holds_check_in_iso", ctx.exception.message)
 
     def test_T33_approved_definitions_have_not_drifted_from_the_approved_file(self):
@@ -587,8 +620,17 @@ class TestReviewFindings(MigrationCase):
         # compare its catalogue output to the fixture. Nothing here calls the production matcher
         # or any production normaliser, so a defect in either cannot make this test pass.
         fixture = json.loads(PGM.APPROVED_FIXTURE.read_text())
-        self.assertEqual(fixture["schema_version"], 2)
+        self.assertEqual(fixture["schema_version"], 3)
         self.assertEqual(fixture["file_sha256"], PGM._sha256(PGM.SCHEMA_DIR / PGM.PG_ONLY_FILE))
+        self.assertEqual(
+            [source["file"] for source in fixture["sources"]],
+            [Path(path).name for path in PGM.PG_ONLY_FILES],
+            "the fixture must pin every PostgreSQL-only file, not just the first one",
+        )
+        for source in fixture["sources"]:
+            self.assertEqual(
+                source["sha256"], PGM._sha256(PGM.SCHEMA_DIR / source["file"]), source["file"]
+            )
         self.assertEqual(
             fixture["baseline_file_sha256"], PGM._sha256(PGM.SCHEMA_DIR / fixture["baseline_file"])
         )
@@ -605,8 +647,8 @@ class TestReviewFindings(MigrationCase):
             return (item["kind"], item["table"], item["name"], item["definition"])
 
         self.assertEqual(
-            [identity(item) for item in fixture["objects"]],
-            [identity(item) for item in reference["objects"]],
+            sorted(identity(item) for item in fixture["objects"]),
+            sorted(identity(item) for item in reference["objects"]),
             "the fixture no longer matches what the approved SQL produces: re-capture and review",
         )
         self.assertEqual(
@@ -617,7 +659,12 @@ class TestReviewFindings(MigrationCase):
         provenance = {item["name"]: item["created_by"] for item in fixture["objects"]}
         self.assertEqual(provenance["ck_bookings_stay"], "001")
         self.assertEqual(provenance["ex_holds_no_overlap"], "002")
-        self.assertEqual(fixture["function"], reference["function"])
+        # Only the functions the PostgreSQL-only files create are pinned; the twin's own
+        # villa_reject_mutation() belongs to 001 and the runner does not certify it.
+        for name, definition in fixture["function"].items():
+            self.assertEqual(definition, reference["function"].get(name), f"{name} drifted")
+        self.assertIn("villa_iso_date", fixture["function"])
+        self.assertIn("villa_occupying_states", fixture["function"])
 
         # Coverage of the production inventory too: every object the catalogue holds must be
         # one the runner actually checks. A count can be right while an object is missing.
@@ -1332,7 +1379,7 @@ class TestBlockerRecoveryR6(MigrationCase):
         real = PGM.verify_guards
         calls = {"n": 0}
 
-        def flaky(current: Any) -> list[str]:
+        def flaky(current: Any, credited: Any = None) -> list[str]:
             calls["n"] += 1
             # On a database with no guard yet the pre-flight has nothing to verify, so the first
             # call is the in-loop gate — the one that shares a transaction with the DDL.

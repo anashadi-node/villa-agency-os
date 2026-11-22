@@ -43,6 +43,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_DIR = REPO_ROOT / "src" / "schema"
 PG_001 = SCHEMA_DIR / "001_initial.pg.sql"
 PG_002 = SCHEMA_DIR / "002_pg_range_exclusions.pg.sql"
+PG_021 = SCHEMA_DIR / "021_pg_cross_table_occupancy.pg.sql"
 
 DB_PREFIX = "villa_t_"
 MAX_SERVER_AGE_SECONDS = 3600  # the CI job has a 15 minute timeout; a service older than 1 h is not ours
@@ -165,12 +166,17 @@ def _require_dsn() -> str:
 
 
 def apply_twin(dsn: str) -> None:
-    """Apply 001 then 002 explicitly (the production loader applies 001 only: CONTRACT_DRIFT)."""
+    """Apply 001, 002 then 021 explicitly (the loader applies 001 only: CONTRACT_DRIFT).
+
+    021 is in the twin because a database without it is not the schema this product runs: it
+    would let an occupying hold and an occupying booking own one slot at the same time. A
+    fixture that stopped at 002 would make every cross-table test here certify half a guard.
+    """
     import schema_loader as SL
 
     psycopg = _driver()
     with psycopg.connect(dsn, autocommit=True, connect_timeout=10) as conn:
-        for path in (PG_001, PG_002):
+        for path in (PG_001, PG_002, PG_021):
             for statement in SL.split_statements(path.read_text(encoding="utf-8")):
                 if statement.strip():
                     conn.execute(statement)
@@ -752,11 +758,12 @@ class TestNegativeControl:
         assert weak_name not in _CREATED  # the registry was drained by the context manager
 
 
-class TestKnownGapCrossTable:
-    @pytest.mark.xfail(strict=True, raises=pytest.fail.Exception, reason=(
-        "UNRESOLVED RISK for ADR / kernel pack: holds and bookings carry separate exclusion "
-        "constraints, so the database does not stop an occupying hold and an occupying booking "
-        "from overlapping on one unit. Not a PASS; not claimed as verified."))
+class TestCrossTableOccupancy:
+    # PACK VILLA-PG-CONCURRENCY-001: this was a strict XFAIL — holds and bookings carried
+    # separate exclusion constraints, so the database happily committed an occupying hold and
+    # an occupying booking on one unit. 021 adds the cross-table guard, so the marker is gone
+    # and the original assertion now passes normally. If it ever regresses, this fails loudly
+    # instead of being silently tolerated as "expected".
     def test_hold_and_booking_on_one_unit_are_rejected_across_tables(self, world, observer):
         unit = new_unit(world)
         psycopg = _driver()

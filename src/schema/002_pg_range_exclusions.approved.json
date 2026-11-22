@@ -1,11 +1,16 @@
 {
   "baseline_file": "001_initial.pg.sql",
   "baseline_file_sha256": "c4af8cc16386dac4f5aeca7e6276c9e777ff345d04f90441ba3cdb200de99e10",
-  "capture_procedure": "apply src/schema/001_initial.pg.sql twin, then every statement of 002_pg_range_exclusions.pg.sql; record every validated CHECK and EXCLUDE on holds/bookings plus the villa_iso_date body, verbatim, with created_by provenance from a before/after constraint snapshot",
+  "capture_procedure": "apply src/schema/001_initial.pg.sql twin, then every statement of each PostgreSQL-only migration in order (002, 021); record every validated CHECK and EXCLUDE on holds/bookings, every non-internal trigger on those tables with its enabled state, and every villa_* function body, verbatim, with created_by provenance from a before/after catalogue snapshot",
   "captured_by": "scripts/capture_guard_definitions.py",
   "file_sha256": "156870cf9dddd8b4349672b90136e964459456d371636dc8fd7abe5a4b885849",
   "function": {
-    "villa_iso_date": "CREATE OR REPLACE FUNCTION public.villa_iso_date(value text)\n RETURNS date\n LANGUAGE sql\n IMMUTABLE STRICT\nAS $function$ SELECT value::date $function$\n"
+    "villa_booking_occupancy_guard": "CREATE OR REPLACE FUNCTION public.villa_booking_occupancy_guard()\n RETURNS trigger\n LANGUAGE plpgsql\n SET search_path TO 'public', 'pg_catalog'\nAS $function$\nDECLARE\n    v_conflict text;\nBEGIN\n    IF NEW.status <> ALL (villa_occupying_states('booking')) THEN\n        RETURN NEW;\n    END IF;\n    IF TG_OP = 'UPDATE'\n       AND OLD.agency_id = NEW.agency_id\n       AND OLD.status = NEW.status\n       AND OLD.unit_id = NEW.unit_id\n       AND OLD.check_in = NEW.check_in\n       AND OLD.check_out = NEW.check_out THEN\n        RETURN NEW;\n    END IF;\n    PERFORM pg_advisory_xact_lock(hashtextextended('villa-occupancy-unit:' || NEW.unit_id, 0));\n    v_conflict := villa_cross_table_conflict(\n        NEW.unit_id, NEW.check_in, NEW.check_out, 'booking', NEW.booking_id, NEW.hold_ref\n    );\n    IF v_conflict IS NOT NULL THEN\n        RAISE EXCEPTION\n            'unit % is already occupied: booking % (%) overlaps %',\n            NEW.unit_id, NEW.booking_id, NEW.status, v_conflict\n            USING ERRCODE = '23P01', CONSTRAINT = 'ex_holds_bookings_no_overlap',\n                  TABLE = 'bookings';\n    END IF;\n    RETURN NEW;\nEND\n$function$\n",
+    "villa_cross_table_conflict": "CREATE OR REPLACE FUNCTION public.villa_cross_table_conflict(p_unit_id text, p_check_in text, p_check_out text, p_side text, p_self_id text, p_hold_ref text)\n RETURNS text\n LANGUAGE plpgsql\n STABLE\n SET search_path TO 'public', 'pg_catalog'\nAS $function$\nDECLARE\n    v_window daterange := daterange(\n        villa_iso_date(p_check_in), villa_iso_date(p_check_out), '[)'\n    );\n    v_found text;\nBEGIN\n    IF p_side = 'hold' THEN\n        -- A booking that names this very hold is the reservation this hold belongs to; its\n        -- overlap is the conversion, not a conflict. Dates and unit must match as well, so\n        -- a stale hold_ref cannot launder a different stay.\n        SELECT b.booking_id INTO v_found\n        FROM public.bookings b\n        WHERE b.unit_id = p_unit_id\n          AND b.status = ANY (villa_occupying_states('booking'))\n          AND daterange(villa_iso_date(b.check_in), villa_iso_date(b.check_out), '[)') && v_window\n          AND NOT (\n              b.hold_ref IS NOT DISTINCT FROM p_self_id\n              AND p_self_id IS NOT NULL\n              AND b.check_in = p_check_in\n              AND b.check_out = p_check_out\n          )\n        LIMIT 1;\n        RETURN CASE WHEN v_found IS NULL THEN NULL ELSE 'booking:' || v_found END;\n    END IF;\n\n    IF p_side = 'booking' THEN\n        SELECT h.hold_id INTO v_found\n        FROM public.holds h\n        WHERE h.unit_id = p_unit_id\n          AND h.status = ANY (villa_occupying_states('hold'))\n          AND daterange(villa_iso_date(h.check_in), villa_iso_date(h.check_out), '[)') && v_window\n          AND NOT (\n              p_hold_ref IS NOT NULL\n              AND h.hold_id = p_hold_ref\n              AND h.status = 'CONFIRMED'\n              AND h.check_in = p_check_in\n              AND h.check_out = p_check_out\n              AND NOT EXISTS (\n                  SELECT 1 FROM public.bookings b2\n                  WHERE b2.hold_ref = h.hold_id\n                    AND b2.agency_id = h.agency_id\n                    AND b2.booking_id IS DISTINCT FROM p_self_id\n                    AND b2.status = ANY (villa_occupying_states('booking'))\n              )\n          )\n        LIMIT 1;\n        RETURN CASE WHEN v_found IS NULL THEN NULL ELSE 'hold:' || v_found END;\n    END IF;\n\n    RAISE EXCEPTION 'unknown occupancy side: %', p_side USING ERRCODE = '22023';\nEND\n$function$\n",
+    "villa_hold_occupancy_guard": "CREATE OR REPLACE FUNCTION public.villa_hold_occupancy_guard()\n RETURNS trigger\n LANGUAGE plpgsql\n SET search_path TO 'public', 'pg_catalog'\nAS $function$\nDECLARE\n    v_conflict text;\nBEGIN\n    IF NEW.status <> ALL (villa_occupying_states('hold')) THEN\n        RETURN NEW;  -- not occupying: nothing to protect, no lock to take\n    END IF;\n    IF TG_OP = 'UPDATE'\n       AND OLD.agency_id = NEW.agency_id\n       AND OLD.status = NEW.status\n       AND OLD.unit_id = NEW.unit_id\n       AND OLD.check_in = NEW.check_in\n       AND OLD.check_out = NEW.check_out THEN\n        RETURN NEW;  -- an update that cannot change the occupied slot\n    END IF;\n    -- Same key for both tables, so the two write paths queue behind one another. Keyed on the\n    -- unit alone: the unit is the physical resource, and 002's EXCLUDE is keyed the same way.\n    -- A hash collision only over-serialises two unrelated units; it cannot admit a conflict.\n    PERFORM pg_advisory_xact_lock(hashtextextended('villa-occupancy-unit:' || NEW.unit_id, 0));\n    v_conflict := villa_cross_table_conflict(\n        NEW.unit_id, NEW.check_in, NEW.check_out, 'hold', NEW.hold_id, NULL\n    );\n    IF v_conflict IS NOT NULL THEN\n        RAISE EXCEPTION\n            'unit % is already occupied: hold % (%) overlaps %',\n            NEW.unit_id, NEW.hold_id, NEW.status, v_conflict\n            USING ERRCODE = '23P01', CONSTRAINT = 'ex_holds_bookings_no_overlap',\n                  TABLE = 'holds';\n    END IF;\n    RETURN NEW;\nEND\n$function$\n",
+    "villa_iso_date": "CREATE OR REPLACE FUNCTION public.villa_iso_date(value text)\n RETURNS date\n LANGUAGE sql\n IMMUTABLE STRICT\nAS $function$ SELECT value::date $function$\n",
+    "villa_occupancy_commit_guard": "CREATE OR REPLACE FUNCTION public.villa_occupancy_commit_guard()\n RETURNS trigger\n LANGUAGE plpgsql\n SET search_path TO 'public', 'pg_catalog'\nAS $function$\nDECLARE\n    v_conflict text;\n    v_status text;\n    v_unit text;\n    v_check_in text;\n    v_check_out text;\n    v_hold_ref text;\nBEGIN\n    -- Read the row as it stands NOW, not as it stood when the event was queued. A deferred\n    -- trigger carries the NEW of its own event: a hold inserted CONFIRMED and then converted\n    -- in the same transaction still arrives here with NEW.status = 'CONFIRMED', and judging\n    -- that stale tuple would refuse the very conversion this design exists to allow.\n    IF TG_TABLE_NAME = 'bookings' THEN\n        SELECT b.status, b.unit_id, b.check_in, b.check_out, b.hold_ref\n          INTO v_status, v_unit, v_check_in, v_check_out, v_hold_ref\n          FROM public.bookings b WHERE b.booking_id = NEW.booking_id;\n    ELSE\n        SELECT h.status, h.unit_id, h.check_in, h.check_out, NULL\n          INTO v_status, v_unit, v_check_in, v_check_out, v_hold_ref\n          FROM public.holds h WHERE h.hold_id = NEW.hold_id;\n    END IF;\n    IF NOT FOUND THEN\n        RETURN NULL;  -- inserted and deleted in this transaction: nothing to assert\n    END IF;\n\n    IF TG_TABLE_NAME = 'bookings' THEN\n        IF v_status <> ALL (villa_occupying_states('booking')) THEN\n            RETURN NULL;\n        END IF;\n        -- The linked hold must already have stopped occupying. Booking CONFIRMED and its\n        -- hold still CONFIRMED at commit is the invalid final state: one slot, two owners.\n        IF v_hold_ref IS NOT NULL THEN\n            SELECT h.status INTO v_status FROM public.holds h WHERE h.hold_id = v_hold_ref;\n            IF NOT FOUND THEN\n                RAISE EXCEPTION\n                    'booking % names hold % which does not exist: an occupying booking needs'\n                    ' a real hold', NEW.booking_id, v_hold_ref\n                    USING ERRCODE = '23P01', CONSTRAINT = 'ex_holds_bookings_no_overlap',\n                          TABLE = 'bookings';\n            END IF;\n            IF v_status = ANY (villa_occupying_states('hold')) THEN\n                RAISE EXCEPTION\n                    'booking % is occupying while its hold % is still %: convert or release'\n                    ' the hold in the same transaction',\n                    NEW.booking_id, v_hold_ref, v_status\n                    USING ERRCODE = '23P01', CONSTRAINT = 'ex_holds_bookings_no_overlap',\n                          TABLE = 'bookings';\n            END IF;\n            IF NOT EXISTS (\n                SELECT 1 FROM public.holds h\n                 WHERE h.hold_id = v_hold_ref\n                   AND h.unit_id = v_unit\n                   AND h.check_in = v_check_in\n                   AND h.check_out = v_check_out\n            ) THEN\n                RAISE EXCEPTION\n                    'booking % converts hold % for a different unit or window: a conversion'\n                    ' releases exactly the slot the hold owned', NEW.booking_id, v_hold_ref\n                    USING ERRCODE = '23P01', CONSTRAINT = 'ex_holds_bookings_no_overlap',\n                          TABLE = 'bookings';\n            END IF;\n            -- restore the booking's own status for the generic check below\n            SELECT b.status INTO v_status FROM public.bookings b WHERE b.booking_id = NEW.booking_id;\n        END IF;\n        v_conflict := villa_cross_table_conflict(\n            v_unit, v_check_in, v_check_out, 'booking', NEW.booking_id, v_hold_ref\n        );\n        IF v_conflict IS NOT NULL THEN\n            RAISE EXCEPTION\n                'committed state would leave unit % double-booked: booking % overlaps %',\n                v_unit, NEW.booking_id, v_conflict\n                USING ERRCODE = '23P01', CONSTRAINT = 'ex_holds_bookings_no_overlap',\n                      TABLE = 'bookings';\n        END IF;\n        RETURN NULL;\n    END IF;\n\n    IF v_status <> ALL (villa_occupying_states('hold')) THEN\n        RETURN NULL;\n    END IF;\n    -- p_self_id is NULL on purpose: the linked-booking exemption belongs to the immediate\n    -- trigger, where it only forgives the ordering of one conversion. At COMMIT the pair is\n    -- either resolved (this row is CONVERTED, returned above) or it is a double occupancy \u2014\n    -- including a converted hold re-opened while its booking occupies.\n    v_conflict := villa_cross_table_conflict(\n        v_unit, v_check_in, v_check_out, 'hold', NULL, NULL\n    );\n    IF v_conflict IS NOT NULL THEN\n        RAISE EXCEPTION\n            'committed state would leave unit % double-booked: hold % overlaps %',\n            v_unit, NEW.hold_id, v_conflict\n            USING ERRCODE = '23P01', CONSTRAINT = 'ex_holds_bookings_no_overlap',\n                  TABLE = 'holds';\n    END IF;\n    RETURN NULL;\nEND\n$function$\n",
+    "villa_occupying_states": "CREATE OR REPLACE FUNCTION public.villa_occupying_states(side text)\n RETURNS text[]\n LANGUAGE sql\n IMMUTABLE STRICT\n SET search_path TO 'public', 'pg_catalog'\nAS $function$\n    SELECT CASE side\n        WHEN 'hold' THEN ARRAY[\n            'REQUESTED', 'AWAITING_SUPPLIER', 'CONFIRMED', 'EXTENSION_REQUESTED',\n            'RELEASE_REQUESTED', 'EXPIRED_PENDING_VERIFICATION'\n        ]::text[]\n        WHEN 'booking' THEN ARRAY[\n            'CONFIRMED', 'BALANCE_DUE', 'BALANCE_OVERDUE', 'PRE_ARRIVAL', 'IN_STAY',\n            'CANCELLATION_REQUESTED', 'CANCELLATION_REVIEW', 'DISPUTED'\n        ]::text[]\n        ELSE ARRAY[]::text[]\n    END\n$function$\n"
   },
   "objects": [
     {
@@ -142,6 +147,20 @@
       "table": "bookings"
     },
     {
+      "created_by": "021",
+      "definition": "CREATE TRIGGER trg_bookings_cross_table_occupancy BEFORE INSERT OR UPDATE ON public.bookings FOR EACH ROW EXECUTE FUNCTION villa_booking_occupancy_guard()",
+      "kind": "trigger",
+      "name": "trg_bookings_cross_table_occupancy",
+      "table": "bookings"
+    },
+    {
+      "created_by": "021",
+      "definition": "CREATE CONSTRAINT TRIGGER trg_bookings_occupancy_at_commit AFTER INSERT OR UPDATE ON public.bookings DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION villa_occupancy_commit_guard()",
+      "kind": "trigger",
+      "name": "trg_bookings_occupancy_at_commit",
+      "table": "bookings"
+    },
+    {
       "created_by": "002",
       "definition": "CHECK ((check_in ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'::text))",
       "kind": "check",
@@ -174,13 +193,6 @@
       "definition": "CHECK ((check_in < check_out))",
       "kind": "check",
       "name": "ck_holds_stay",
-      "table": "holds"
-    },
-    {
-      "created_by": "002",
-      "definition": "EXCLUDE USING gist (unit_id WITH =, daterange(villa_iso_date(check_in), villa_iso_date(check_out), '[)'::text) WITH &&) WHERE ((status = ANY (ARRAY['REQUESTED'::text, 'AWAITING_SUPPLIER'::text, 'CONFIRMED'::text, 'EXTENSION_REQUESTED'::text, 'RELEASE_REQUESTED'::text, 'EXPIRED_PENDING_VERIFICATION'::text])))",
-      "kind": "exclusion",
-      "name": "ex_holds_no_overlap",
       "table": "holds"
     },
     {
@@ -224,10 +236,41 @@
       "kind": "check",
       "name": "holds_status_check",
       "table": "holds"
+    },
+    {
+      "created_by": "002",
+      "definition": "EXCLUDE USING gist (unit_id WITH =, daterange(villa_iso_date(check_in), villa_iso_date(check_out), '[)'::text) WITH &&) WHERE ((status = ANY (ARRAY['REQUESTED'::text, 'AWAITING_SUPPLIER'::text, 'CONFIRMED'::text, 'EXTENSION_REQUESTED'::text, 'RELEASE_REQUESTED'::text, 'EXPIRED_PENDING_VERIFICATION'::text])))",
+      "kind": "exclusion",
+      "name": "ex_holds_no_overlap",
+      "table": "holds"
+    },
+    {
+      "created_by": "021",
+      "definition": "CREATE TRIGGER trg_holds_cross_table_occupancy BEFORE INSERT OR UPDATE ON public.holds FOR EACH ROW EXECUTE FUNCTION villa_hold_occupancy_guard()",
+      "kind": "trigger",
+      "name": "trg_holds_cross_table_occupancy",
+      "table": "holds"
+    },
+    {
+      "created_by": "021",
+      "definition": "CREATE CONSTRAINT TRIGGER trg_holds_occupancy_at_commit AFTER INSERT OR UPDATE ON public.holds DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION villa_occupancy_commit_guard()",
+      "kind": "trigger",
+      "name": "trg_holds_occupancy_at_commit",
+      "table": "holds"
     }
   ],
-  "schema_version": 2,
+  "schema_version": 3,
   "server_version": "16.14",
   "server_version_num": "160014",
-  "source_file": "002_pg_range_exclusions.pg.sql"
+  "source_file": "002_pg_range_exclusions.pg.sql",
+  "sources": [
+    {
+      "file": "002_pg_range_exclusions.pg.sql",
+      "sha256": "156870cf9dddd8b4349672b90136e964459456d371636dc8fd7abe5a4b885849"
+    },
+    {
+      "file": "021_pg_cross_table_occupancy.pg.sql",
+      "sha256": "3f946cb895c87ffc7206a73de30fd4ed24bfbd46ffbf154f31766e9e0c4ef7b8"
+    }
+  ]
 }

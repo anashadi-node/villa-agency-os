@@ -2,14 +2,19 @@
 """Capture the PostgreSQL guard definitions the runner is allowed to certify.
 
 The inventory is derived from the approved SQL, not typed by hand: apply 001_initial.pg.sql
-(the twin baseline) and every statement of 002_pg_range_exclusions.pg.sql in a scratch
-database, then record every validated CHECK and EXCLUDE on ``holds`` and ``bookings`` plus the
-``villa_iso_date`` body, verbatim.
+(the twin baseline) and then every statement of each PostgreSQL-only migration in order, in a
+scratch database, and record verbatim:
+
+* every validated CHECK and EXCLUDE on ``holds`` and ``bookings``;
+* every non-internal trigger on those two tables (definition and enabled state);
+* the body of every function the PostgreSQL-only files create.
 
 Why derived: reviewing by hand missed ``ck_bookings_stay`` once and the status-enum CHECKs
 after that. A hand-written list is a promise to remember; a query is a fact. A status outside
 the enum is never compared against the exclusion predicate, so dropping or widening that CHECK
-protects nothing — and a runner that never looks at it will call the database safe.
+protects nothing — and a runner that never looks at it will call the database safe. The same
+argument is why 021's triggers are captured: a guard the runner cannot name is a guard it
+cannot notice has been dropped.
 
 Nothing here normalises the text. ``pg_get_constraintdef`` output IS the approved artefact;
 stripping casts would also strip them inside quoted literals, which is how a forged
@@ -30,14 +35,19 @@ from typing import Any
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCHEMA_DIR = REPO_ROOT / "src" / "schema"
-APPROVED_FILE = SCHEMA_DIR / "002_pg_range_exclusions.pg.sql"
 BASELINE_FILE = SCHEMA_DIR / "001_initial.pg.sql"
+# Ordered: each file is applied on top of the previous one, and its hash is pinned.
+PG_ONLY_FILES = (
+    SCHEMA_DIR / "002_pg_range_exclusions.pg.sql",
+    SCHEMA_DIR / "021_pg_cross_table_occupancy.pg.sql",
+)
+# The fixture keeps its historical name: the ledger and the runner already refer to it, and
+# renaming a committed artefact buys nothing.
 FIXTURE = SCHEMA_DIR / "002_pg_range_exclusions.approved.json"
-FUNCTION = "villa_iso_date"
 GUARD_TABLES = ("bookings", "holds")
 KINDS = {"c": "check", "x": "exclusion"}
-PREFIX = {"check": "CHECK (", "exclusion": "EXCLUDE USING"}
-SCHEMA_VERSION = 2
+PREFIX = {"check": "CHECK (", "exclusion": "EXCLUDE USING", "trigger": "CREATE "}
+SCHEMA_VERSION = 3
 
 
 def _verbatim(text: str) -> str:
@@ -51,6 +61,51 @@ def _verbatim(text: str) -> str:
     return text
 
 
+def _statements(path: pathlib.Path, sl: Any) -> list[str]:
+    return [
+        body
+        for body in (
+            sl._strip_leading_comments(raw)
+            for raw in sl.split_statements(path.read_text(encoding="utf-8"))
+        )
+        if body
+    ]
+
+
+def _constraints(cur: Any) -> dict[str, tuple[str, str, str]]:
+    cur.execute(
+        "SELECT t.relname, c.conname, c.contype, pg_get_constraintdef(c.oid)"
+        " FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid"
+        " JOIN pg_namespace n ON n.oid = t.relnamespace"
+        " WHERE n.nspname = 'public' AND t.relname = ANY(%s)"
+        " AND c.contype IN ('c', 'x') AND c.convalidated"
+        " AND (c.contype = 'c' OR EXISTS (SELECT 1 FROM pg_index i"
+        "      WHERE i.indexrelid = c.conindid AND i.indisvalid))",
+        (list(GUARD_TABLES),),
+    )
+    return {row[1]: (row[0], str(row[2]), str(row[3])) for row in cur.fetchall()}
+
+
+def _triggers(cur: Any) -> dict[str, tuple[str, str, str]]:
+    cur.execute(
+        "SELECT t.relname, g.tgname, pg_get_triggerdef(g.oid), g.tgenabled"
+        " FROM pg_trigger g JOIN pg_class t ON t.oid = g.tgrelid"
+        " JOIN pg_namespace n ON n.oid = t.relnamespace"
+        " WHERE n.nspname = 'public' AND t.relname = ANY(%s) AND NOT g.tgisinternal",
+        (list(GUARD_TABLES),),
+    )
+    return {row[1]: (row[0], str(row[2]), str(row[3])) for row in cur.fetchall()}
+
+
+def _functions(cur: Any) -> dict[str, str]:
+    cur.execute(
+        "SELECT p.proname, pg_get_functiondef(p.oid)"
+        " FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace"
+        " WHERE n.nspname = 'public' AND p.proname LIKE 'villa!_%' ESCAPE '!'"
+    )
+    return {row[0]: str(row[1]) for row in cur.fetchall()}
+
+
 def capture(dsn: str) -> dict[str, Any]:
     import psycopg
     from psycopg import sql
@@ -59,14 +114,12 @@ def capture(dsn: str) -> dict[str, Any]:
     sys.path.insert(0, str(REPO_ROOT / "src"))
     import schema_loader as SL  # noqa: PLC0415 - kept local: the script must run standalone
 
-    source_text = APPROVED_FILE.read_text(encoding="utf-8")
-    if FUNCTION not in source_text:
-        raise SystemExit(f"{FUNCTION} is missing from {APPROVED_FILE.name}")
-    statements = [
-        body
-        for body in (SL._strip_leading_comments(raw) for raw in SL.split_statements(source_text))
-        if body
-    ]
+    for path in PG_ONLY_FILES:
+        if not path.exists():
+            raise SystemExit(f"{path.name} is missing")
+    prepared = {path.name: _statements(path, SL) for path in PG_ONLY_FILES}
+    if not prepared[PG_ONLY_FILES[0].name]:
+        raise SystemExit(f"{PG_ONLY_FILES[0].name} contains no statements")
 
     scratch = f"villa_capture_{secrets.token_hex(4)}"
     with psycopg.connect(dsn, autocommit=True) as admin:
@@ -78,16 +131,21 @@ def capture(dsn: str) -> dict[str, Any]:
         SL.connect_pg(target, apply=True)  # twin baseline = 001_initial.pg.sql
         payload: dict[str, Any] = {
             "schema_version": SCHEMA_VERSION,
-            "source_file": APPROVED_FILE.name,
-            "file_sha256": hashlib.sha256(APPROVED_FILE.read_bytes()).hexdigest(),
+            "source_file": PG_ONLY_FILES[0].name,
+            "file_sha256": hashlib.sha256(PG_ONLY_FILES[0].read_bytes()).hexdigest(),
+            "sources": [
+                {"file": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+                for path in PG_ONLY_FILES
+            ],
             "baseline_file": BASELINE_FILE.name,
             "baseline_file_sha256": hashlib.sha256(BASELINE_FILE.read_bytes()).hexdigest(),
             "captured_by": "scripts/capture_guard_definitions.py",
             "capture_procedure": (
-                "apply src/schema/001_initial.pg.sql twin, then every statement of"
-                " 002_pg_range_exclusions.pg.sql; record every validated CHECK and EXCLUDE on"
-                " holds/bookings plus the villa_iso_date body, verbatim, with created_by"
-                " provenance from a before/after constraint snapshot"
+                "apply src/schema/001_initial.pg.sql twin, then every statement of each"
+                " PostgreSQL-only migration in order (002, 021); record every validated CHECK"
+                " and EXCLUDE on holds/bookings, every non-internal trigger on those tables"
+                " with its enabled state, and every villa_* function body, verbatim, with"
+                " created_by provenance from a before/after catalogue snapshot"
             ),
             "server_version": "",
             "server_version_num": "",
@@ -104,47 +162,67 @@ def capture(dsn: str) -> dict[str, Any]:
                 payload["server_version"] = str(version)
                 payload["server_version_num"] = str(version_num)
                 cur.execute("SET search_path = public, pg_catalog")
-                cur.execute(
-                    "SELECT c.conname FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid"
-                    " JOIN pg_namespace n ON n.oid = t.relnamespace WHERE n.nspname = 'public'"
-                )
-                from_baseline = {row[0] for row in cur.fetchall()}
-                for statement in statements:
-                    cur.execute(sql.SQL(statement))
-                cur.execute(
-                    "SELECT t.relname, c.conname, c.contype, pg_get_constraintdef(c.oid)"
-                    " FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid"
-                    " JOIN pg_namespace n ON n.oid = t.relnamespace"
-                    " WHERE n.nspname = 'public' AND t.relname = ANY(%s)"
-                    " AND c.contype IN ('c', 'x') AND c.convalidated"
-                    " AND (c.contype = 'c' OR EXISTS (SELECT 1 FROM pg_index i"
-                    "      WHERE i.indexrelid = c.conindid AND i.indisvalid))"
-                    " ORDER BY t.relname, c.conname",
-                    (list(GUARD_TABLES),),
-                )
-                for table, name, contype, definition in cur.fetchall():
-                    kind = KINDS[str(contype)]
-                    text = _verbatim(str(definition))
-                    if PREFIX[kind] not in text:
-                        raise SystemExit(f"{table}.{name} does not look like a {kind}: {text[:60]}")
-                    payload["objects"].append(
-                        {
-                            "kind": kind,
-                            "table": table,
-                            "name": name,
-                            "definition": text,
-                            "created_by": "001" if name in from_baseline else "002",
-                        }
-                    )
+                baseline_constraints = _constraints(cur)
+                recorded: set[tuple[str, str]] = set()
+                functions = _functions(cur)
+                for path in PG_ONLY_FILES:
+                    credited = path.stem.split("_", 1)[0]
+                    for statement in prepared[path.name]:
+                        cur.execute(sql.SQL(statement))
+                    after_constraints = _constraints(cur)
+                    after_triggers = _triggers(cur)
+                    after_functions = _functions(cur)
+                    for name, (table, contype, definition) in after_constraints.items():
+                        if ("constraint", name) in recorded:
+                            continue
+                        kind = KINDS[str(contype)]
+                        text = _verbatim(definition)
+                        if PREFIX[kind] not in text:
+                            raise SystemExit(
+                                f"{table}.{name} does not look like a {kind}: {text[:60]}"
+                            )
+                        # Constraint names are unique per schema, so the baseline snapshot is
+                        # enough to attribute provenance without trusting the SQL text.
+                        payload["objects"].append(
+                            {
+                                "kind": kind,
+                                "table": table,
+                                "name": name,
+                                "definition": text,
+                                "created_by": (
+                                    "001" if name in baseline_constraints else credited
+                                ),
+                            }
+                        )
+                        recorded.add(("constraint", name))
+                    for name, (table, definition, enabled) in after_triggers.items():
+                        if ("trigger", name) in recorded:
+                            continue
+                        if enabled != "O":
+                            raise SystemExit(
+                                f"{table}.{name} was created disabled (tgenabled={enabled})"
+                            )
+                        payload["objects"].append(
+                            {
+                                "kind": "trigger",
+                                "table": table,
+                                "name": name,
+                                "definition": _verbatim(definition),
+                                "created_by": credited,
+                            }
+                        )
+                        recorded.add(("trigger", name))
+                    for name, definition in after_functions.items():
+                        if name not in functions:
+                            payload["function"][name] = _verbatim(definition)
+                    functions = after_functions
                 if not payload["objects"]:
                     raise SystemExit(
-                        "the approved SQL created no verified constraint on holds/bookings"
+                        "the approved SQL created no verified object on holds/bookings"
                     )
-                cur.execute("SELECT pg_get_functiondef(%s::regproc)", (FUNCTION,))
-                found = cur.fetchone()
-                if found is None:
-                    raise SystemExit(f"approved file did not create {FUNCTION}")
-                payload["function"][FUNCTION] = _verbatim(str(found[0]))
+                payload["objects"].sort(
+                    key=lambda item: (item["table"], item["kind"], item["name"])
+                )
     finally:
         with psycopg.connect(dsn, autocommit=True) as admin:
             admin.execute(
@@ -166,12 +244,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     current = FIXTURE.read_text(encoding="utf-8") if FIXTURE.exists() else ""
     if current != rendered:
-        print("fixture differs from what the approved file produces", file=sys.stderr)
+        print("fixture differs from what the approved files produce", file=sys.stderr)
         return 1
+    counts = {
+        kind: sum(1 for item in payload["objects"] if item["kind"] == kind)
+        for kind in ("exclusion", "check", "trigger")
+    }
     print(
-        f"fixture matches the approved file — postgresql {payload['server_version']}:"
-        f" {sum(1 for o in payload['objects'] if o['kind'] == 'exclusion')} EXCLUDE,"
-        f" {sum(1 for o in payload['objects'] if o['kind'] == 'check')} CHECK,"
+        f"fixture matches the approved files — postgresql {payload['server_version']}:"
+        f" {counts['exclusion']} EXCLUDE, {counts['check']} CHECK, {counts['trigger']} trigger,"
         f" {len(payload['function'])} function"
     )
     return 0
