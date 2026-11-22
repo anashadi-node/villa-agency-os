@@ -743,3 +743,372 @@ class TestNightScopedLocking(GuardCase):
             holder.rollback()
             holder.close()
         self.assertEqual(self.occupying_count(unit), 0)
+
+
+# ============================================================ PACK-004C — canonical batch prelocking
+#
+# The module under test is an application-path mitigation, not a database guarantee: these tests
+# pin both halves. The successful half (canonical order, dedup, dedup'd lock count, atomicity,
+# capacity refusal before mutation, classification) and the negative half (a writer that skips the
+# module still deadlocks — T004C-10), because a suite that only proved the first half would let
+# somebody claim RISK-M1 is closed.
+
+import hashlib  # noqa: E402
+import time  # noqa: E402
+
+import pg_batch_prelock as PB  # noqa: E402
+
+APPROVED_021_SHA256 = "ec9af60372d956216594d5605d151fd65a12bcf232a00a40fed73fb753550b62"
+APPROVED_002_FIXTURE_SHA256 = hashlib.sha256(
+    (SCHEMA / "002_pg_range_exclusions.approved.json").read_bytes()
+).hexdigest()
+
+
+def _writer_connection(dsn: str) -> Any:
+    psycopg = _driver()
+    return psycopg.connect(
+        dsn, connect_timeout=10, options="-c lock_timeout=5000 -c statement_timeout=20000"
+    )
+
+
+def _prelocked_writer(
+    dsn: str,
+    slots: list[tuple[str, str, str]],
+    statements: list[tuple[str, dict, str]],
+    gate: threading.Barrier | None,
+    out: dict[str, str],
+    label: str,
+) -> None:
+    """One racing writer that DOES use the module: prelock the whole batch, then insert."""
+    try:
+        with _writer_connection(dsn) as conn:
+            if gate is not None:
+                gate.wait(20)
+
+            def operation(cursor: Any) -> None:
+                for sql_text, params, _rid in statements:
+                    cursor.execute(sql_text, params)
+
+            PB.prelock_and_run(conn, slots, operation)
+        out[label] = "commit"
+    except PB.ClassifiedDatabaseError as error:
+        out[label] = str(error.sqlstate or error.code)
+    except PB.PrelockError as error:
+        out[label] = error.code
+    except BaseException as error:  # noqa: BLE001 - sqlstate string is the observed outcome
+        out[label] = str(getattr(error, "sqlstate", type(error).__name__))
+
+
+def _bypass_writer(
+    dsn: str,
+    statements: list[tuple[str, dict, str]],
+    gate: threading.Barrier,
+    mid: threading.Barrier,
+    out: dict[str, str],
+    label: str,
+) -> None:
+    """One racing writer that SKIPS the module, two statements, synchronised between them."""
+    try:
+        with _writer_connection(dsn) as conn:
+            gate.wait(20)
+            for index, (sql_text, params, _rid) in enumerate(statements):
+                if index:
+                    mid.wait(20)
+                conn.execute(sql_text, params)
+            conn.commit()
+        out[label] = "commit"
+    except BaseException as error:  # noqa: BLE001
+        out[label] = str(getattr(error, "sqlstate", type(error).__name__))
+
+
+def _race(readers: list[tuple[str, tuple]]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    threads = []
+    for entry in readers:
+        label, (fn, args) = entry
+        threads.append(
+            threading.Thread(target=fn, args=tuple(args) + (out, label), daemon=True)
+        )
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(45)
+    return out
+
+
+class TestCanonicalBatchPrelocking(GuardCase):
+    """PACK-004C: FR-PG-004C-01 — deterministic occupancy lock acquisition."""
+
+    def test_T004C_00_approved_sql_and_fixture_are_unchanged(self) -> None:
+        """This pack is additive: if either digest moves, the pack broke its own scope."""
+        self.assertEqual(hashlib.sha256(PG_021.read_bytes()).hexdigest(), APPROVED_021_SHA256)
+        self.assertEqual(
+            hashlib.sha256((SCHEMA / "002_pg_range_exclusions.approved.json").read_bytes()).hexdigest(),
+            APPROVED_002_FIXTURE_SHA256,
+        )
+
+    def test_T004C_01_complete_lock_set_is_canonicalized(self) -> None:
+        """Units out of order, nights out of order: the plan and the locks are both sorted."""
+        # The plan orders by unit_id, so make the expected order explicit rather than relying on
+        # the random suffix of new_unit() sorting the way the calls were written.
+        first, second = sorted([new_unit(self.dsn), new_unit(self.dsn)])
+        plan = PB.canonical_plan([
+            (second, "2030-03-05", "2030-03-08"),
+            (first, "2030-03-01", "2030-03-03"),
+        ])
+        expected = sorted(
+            [(first, _dt_date("2030-03-01")), (first, _dt_date("2030-03-02")),
+             (second, _dt_date("2030-03-05")), (second, _dt_date("2030-03-06")),
+             (second, _dt_date("2030-03-07"))],
+            key=lambda item: (item[0], item[1]),
+        )
+        self.assertEqual(list(plan.nights), expected)
+        self.assertEqual(plan.ranges, ((first, "2030-03-01", "2030-03-03"),
+                                       (second, "2030-03-05", "2030-03-08")))
+        with _writer_connection(self.dsn) as conn:
+            PB.prelock(conn, plan.stays)
+            held = conn.execute(
+                "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid()"
+            ).fetchone()[0]
+            conn.rollback()
+        self.assertEqual(held, plan.lock_count, "one lock per unit-night, no extras")
+
+    def test_T004C_02_overlapping_slot_identities_are_deduplicated(self) -> None:
+        unit = new_unit(self.dsn)
+        plan = PB.canonical_plan([
+            (unit, "2030-04-01", "2030-04-04"),
+            (unit, "2030-04-02", "2030-04-05"),
+            (unit, "2030-04-01", "2030-04-04"),
+        ])
+        self.assertEqual(plan.lock_count, 4, "three stays, four distinct nights")
+        with _writer_connection(self.dsn) as conn:
+            PB.prelock(conn, plan.stays)
+            held = conn.execute(
+                "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid()"
+            ).fetchone()[0]
+            conn.rollback()
+        self.assertEqual(held, 4)
+
+    def test_T004C_02b_a_forged_plan_cannot_lock_less_than_it_declares(self) -> None:
+        """A hand-built plan must not become a subset pretending to be the complete set."""
+        unit = new_unit(self.dsn)
+        plan = PB.canonical_plan([(unit, "2030-04-10", "2030-04-13")])
+        partial = PB.LockPlan(
+            stays=plan.stays, nights=plan.nights, ranges=((unit, "2030-04-10", "2030-04-11"),)
+        )
+        unordered = PB.LockPlan(
+            stays=plan.stays, nights=tuple(reversed(plan.nights)), ranges=plan.ranges
+        )
+        with _writer_connection(self.dsn) as conn:
+            for forged in (partial, unordered):
+                with self.assertRaises(PB.UnsupportedOperation, msg=str(forged.ranges)):
+                    PB.lock_batch(conn, forged)
+            held = conn.execute(
+                "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid()"
+            ).fetchone()[0]
+            conn.rollback()
+        self.assertEqual(held, 0, "a refused plan must not take a single lock")
+
+    def test_T004C_03_opposite_order_writers_never_deadlock(self) -> None:
+        """The PACK-004A shape: two writers, two units, inverted declaration order."""
+        outcomes: list[dict[str, str]] = []
+        for _ in range(3):
+            left, right = new_unit(self.dsn), new_unit(self.dsn)
+            window = ("2030-05-01", "2030-05-03")
+            a_slots = [(left, *window), (right, *window)]
+            b_slots = [(right, *window), (left, *window)]
+            a_rows = [make_insert("hold", left, *window), make_insert("hold", right, *window)]
+            b_rows = [make_insert("hold", right, *window), make_insert("hold", left, *window)]
+            gate = threading.Barrier(2)
+            outcomes.append(_race([
+                ("A", (_prelocked_writer, (self.dsn, a_slots, a_rows, gate))),
+                ("B", (_prelocked_writer, (self.dsn, b_slots, b_rows, gate))),
+            ]))
+            self.assertEqual(self.occupying_count(left), 1)
+            self.assertEqual(self.occupying_count(right), 1)
+            self.assertEqual(self.cross_table_overlaps(), 0)
+
+        for outcome in outcomes:
+            self.assertNotIn("40P01", outcome.values(), f"deadlock under prelocking: {outcome}")
+            self.assertEqual(sorted(outcome.values()).count("commit"), 1, outcome)
+            loser = [value for value in outcome.values() if value != "commit"][0]
+            self.assertIn(loser, {"23P01", "23505"}, outcome)
+
+    def test_T004C_04_multi_row_operation_stays_atomic(self) -> None:
+        """One conflicting row refuses the whole batch: the free unit stays empty."""
+        free, busy = new_unit(self.dsn), new_unit(self.dsn)
+        self.write(make_insert("hold", busy, "2030-06-01", "2030-06-03"))
+        rows = [make_insert("hold", free, "2030-06-01", "2030-06-03"),
+                make_insert("hold", busy, "2030-06-02", "2030-06-04")]
+        with _writer_connection(self.dsn) as conn:
+            with self.assertRaises(PB.ClassifiedDatabaseError) as caught:
+                PB.prelock_and_run(
+                    conn,
+                    [(free, "2030-06-01", "2030-06-03"), (busy, "2030-06-02", "2030-06-04")],
+                    lambda cursor: [cursor.execute(sql, params) for sql, params, _ in rows],
+                )
+        self.assertEqual(caught.exception.sqlstate, CONFLICT_SQLSTATE)
+        self.assertEqual(caught.exception.details["classification"], "EXCLUSION_VIOLATION")
+        self.assertEqual(self.occupying_count(free), 0, "the free unit must not keep a partial write")
+        self.assertEqual(self.occupying_count(busy), 1)
+
+    def test_T004C_05_back_to_back_stays_remain_nonblocking(self) -> None:
+        unit = new_unit(self.dsn)
+        first = make_insert("hold", unit, "2030-07-01", "2030-07-03")
+        second = make_insert("hold", unit, "2030-07-03", "2030-07-05")
+        gate = threading.Barrier(2)
+        started = time.perf_counter()
+        outcome = _race([
+            ("A", (_prelocked_writer, (self.dsn, [(unit, "2030-07-01", "2030-07-03")], [first], gate))),
+            ("B", (_prelocked_writer, (self.dsn, [(unit, "2030-07-03", "2030-07-05")], [second], gate))),
+        ])
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        self.assertEqual(outcome, {"A": "commit", "B": "commit"})
+        self.assertLess(elapsed_ms, 2000, f"adjacent stays queued: {elapsed_ms:.0f} ms")
+        self.assertEqual(self.occupying_count(unit), 2)
+
+    def test_T004C_06_same_unit_overlap_remains_rejected(self) -> None:
+        unit = new_unit(self.dsn)
+        self.write(make_insert("hold", unit, "2030-08-01", "2030-08-04"))
+        rows = [make_insert("hold", unit, "2030-08-02", "2030-08-05")]
+        with _writer_connection(self.dsn) as conn:
+            with self.assertRaises(PB.ClassifiedDatabaseError) as caught:
+                PB.prelock_and_run(conn, [(unit, "2030-08-02", "2030-08-05")],
+                                   lambda cursor: cursor.execute(rows[0][0], rows[0][1]))
+        self.assertEqual(caught.exception.sqlstate, CONFLICT_SQLSTATE)
+        self.assertEqual(self.occupying_count(unit), 1)
+
+    def test_T004C_07_hold_to_booking_conversion_stays_valid(self) -> None:
+        unit = new_unit(self.dsn)
+        hold = make_insert("hold", unit, "2030-09-01", "2030-09-04", status="CONFIRMED")
+        booking = booking_with_hold(unit, "2030-09-01", "2030-09-04", hold[2])
+
+        def convert(cursor: Any) -> None:
+            cursor.execute(hold[0], hold[1])
+            cursor.execute(*booking[:2])
+            cursor.execute(
+                "UPDATE holds SET status = 'CONVERTED', closed_at = %(ts)s,"
+                " close_reason = 'converted' WHERE hold_id = %(id)s",
+                {"ts": "2026-09-22", "id": hold[2]},
+            )
+
+        with _writer_connection(self.dsn) as conn:
+            PB.prelock_and_run(conn, [(unit, "2030-09-01", "2030-09-04")], convert)
+        statuses = {row[1]: row[2] for row in self.rows(unit)}
+        self.assertEqual(statuses[hold[2]], "CONVERTED")
+        self.assertEqual(statuses[booking[2]], "CONFIRMED")
+        self.assertEqual(self.occupying_count(unit), 1)
+        self.assertEqual(self.cross_table_overlaps(), 0)
+
+    def test_T004C_08_limits_fail_closed_before_any_mutation(self) -> None:
+        units = [new_unit(self.dsn) for _ in range(20)]
+        with _writer_connection(self.dsn) as conn:
+            # rows: 21 > 20
+            with self.assertRaises(PB.BatchCapacityRefused) as rows_refused:
+                PB.prelock_and_run(
+                    conn, [(units[0], "2030-10-01", "2030-10-02")] * 21, lambda cursor: None
+                )
+            self.assertEqual(rows_refused.exception.code, "BATCH_CAPACITY_REFUSED")
+            # nights: a 366-night stay
+            with self.assertRaises(PB.BatchCapacityRefused):
+                PB.prelock_and_run(conn, [(units[0], "2031-01-01", "2032-01-02")], lambda cursor: None)
+            # distinct locks: 20 rows x 260 nights = 5 200 > 5 000 while each stay is legal
+            wide = [(unit, "2033-01-01", "2033-09-18") for unit in units]
+            self.assertEqual(PB.canonical_plan([(units[0], "2033-01-01", "2033-09-18")]).lock_count, 260)
+            with self.assertRaises(PB.BatchCapacityRefused) as locks_refused:
+                PB.prelock_and_run(conn, wide, lambda cursor: None)
+            self.assertEqual(locks_refused.exception.details["distinct_locks"], 5200)
+            held = conn.execute(
+                "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid()"
+            ).fetchone()[0]
+            conn.rollback()
+        self.assertEqual(held, 0, "a refused batch must not take a single lock")
+        self.assertEqual(self.cross_table_overlaps(), 0)
+
+    def test_T004C_09_sqlstates_receive_their_contract_classification(self) -> None:
+        class FakeError(Exception):
+            def __init__(self, sqlstate: str) -> None:
+                super().__init__(sqlstate)
+                self.sqlstate = sqlstate
+
+        expected = {
+            "40P01": ("DEADLOCK", "retry_candidate"),
+            "55P03": ("LOCK_UNAVAILABLE", "conditional_retry_candidate"),
+            "57014": ("QUERY_CANCELED", "fail_closed"),
+            "53200": ("SHARED_MEMORY_EXHAUSTED", "fail_closed"),
+            "23P01": ("EXCLUSION_VIOLATION", "domain_conflict"),
+            "23505": ("UNIQUE_VIOLATION", "inspect_idempotency_or_conflict"),
+            "40001": ("SERIALIZATION_FAILURE", "report_separately"),
+            "XX000": ("UNMAPPED", "no_retry"),
+        }
+        for sqlstate, (name, hint) in expected.items():
+            classification = PB.classify(FakeError(sqlstate))
+            self.assertEqual((classification.name, classification.retry_hint), (name, hint))
+        with self.assertRaises(PB.ClassifiedDatabaseError) as wrapped:
+            raise PB.ClassifiedDatabaseError(FakeError("55P03"))
+        self.assertEqual(wrapped.exception.sqlstate, "55P03")
+        self.assertEqual(wrapped.exception.details["classification"], "LOCK_UNAVAILABLE")
+
+    def test_T004C_09b_unsafe_transaction_states_are_refused(self) -> None:
+        psycopg = _driver()
+        with psycopg.connect(self.dsn, autocommit=True, connect_timeout=10) as autocommit:
+            with self.assertRaises(PB.UnsafeTransactionState):
+                PB.prelock(autocommit, [(new_unit(self.dsn), "2030-11-01", "2030-11-03")])
+        with _writer_connection(self.dsn) as conn:
+            conn.execute("SELECT 1")  # transaction now open
+            with self.assertRaises(PB.UnsafeTransactionState):
+                PB.prelock(conn, [(new_unit(self.dsn), "2030-11-01", "2030-11-03")])
+            conn.rollback()
+
+    def test_T004C_09c_invalid_slots_are_rejected_before_sql(self) -> None:
+        unit = new_unit(self.dsn)
+        bad = [
+            ("", "2030-12-01", "2030-12-03"),
+            (" padded", "2030-12-01", "2030-12-03"),
+            (unit, "2030-12-03", "2030-12-03"),
+            (unit, "2030-12-03", "2030-12-01"),
+            (unit, "2027-02-30", "2027-03-02"),
+            (unit, "12/01/2030", "2030-12-03"),
+        ]
+        for slot in bad:
+            with self.assertRaises(PB.SlotRejected, msg=str(slot)):
+                PB.canonical_plan([slot])
+        with self.assertRaises(PB.SlotRejected):
+            PB.canonical_plan([])
+
+    def test_T004C_10_a_writer_that_skips_the_module_still_deadlocks(self) -> None:
+        """Negative control. Without this, a green suite would be a claim nobody tested."""
+        observed: list[str] = []
+        for _ in range(2):
+            left, right = new_unit(self.dsn), new_unit(self.dsn)
+            window = ("2031-02-01", "2031-02-04")
+            gate, mid = threading.Barrier(2), threading.Barrier(2)
+            outcome = _race([
+                ("A", (_bypass_writer, (self.dsn, [make_insert("hold", left, *window),
+                                                   make_insert("hold", right, *window)], gate, mid))),
+                ("B", (_bypass_writer, (self.dsn, [make_insert("hold", right, *window),
+                                                   make_insert("hold", left, *window)], gate, mid))),
+            ])
+            observed.append(outcome.get("A", "") + "/" + outcome.get("B", ""))
+            self.assertEqual(self.cross_table_overlaps(), 0)
+        self.assertTrue(
+            any("40P01" in value for value in observed),
+            f"expected the unmitigated shape to deadlock, saw {observed}",
+        )
+
+    def cross_table_overlaps(self) -> int:
+        psycopg = _driver()
+        with psycopg.connect(self.dsn, connect_timeout=10) as conn:
+            return conn.execute(
+                "SELECT count(*) FROM holds h JOIN bookings b ON b.unit_id = h.unit_id"
+                " AND daterange(villa_iso_date(h.check_in), villa_iso_date(h.check_out), '[)')"
+                "  && daterange(villa_iso_date(b.check_in), villa_iso_date(b.check_out), '[)')"
+                " WHERE h.status = ANY(villa_occupying_states('hold'))"
+                " AND b.status = ANY(villa_occupying_states('booking'))"
+            ).fetchone()[0]
+
+
+def _dt_date(value: str) -> Any:
+    import datetime
+
+    return datetime.date.fromisoformat(value)
