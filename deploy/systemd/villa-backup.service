@@ -1,0 +1,36 @@
+[Unit]
+# PACK-005C draft only. No [Install] section: this unit cannot be enabled until
+# the Owner approves activation, the env file exists, and the backup destination
+# has been created with mode 0700.
+Description=Villa Agency OS private SQLite backup (disabled draft)
+Documentation=file://%h/villa-agency-os/docs/OPERATIONS_RUNBOOK.md
+ConditionPathExists=%h/.config/villa/backup.env
+After=local-fs.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/villa-agency-os
+EnvironmentFile=%h/.config/villa/backup.env
+# VILLA_BACKUP_DB and VILLA_BACKUP_DIR are configuration, not defaults. Do not
+# put paths with whitespace in these values; systemd splits ExecStart words.
+ExecStart=/usr/bin/python3 %h/villa-agency-os/scripts/backup_sqlite.py --db ${VILLA_BACKUP_DB} --dest-dir ${VILLA_BACKUP_DIR}
+UMask=0077
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=true
+ReadOnlyPaths=%h/villa-agency-os/data
+ReadWritePaths=%h/.local/state/villa-agency-backups
+TimeoutStartSec=15min
+Nice=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=villa-backup
+
+# Deliberately no [Install] section. Activation requires separate Owner approval:
+# systemctl --user daemon-reload
+# systemctl --user enable --now villa-backup.timer

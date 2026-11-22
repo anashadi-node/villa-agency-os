@@ -1,0 +1,15 @@
+[Unit]
+# PACK-005C disabled-by-default draft. No [Install] section means `systemctl
+# enable` will refuse; this is intentional until Owner approval.
+Description=Villa Agency OS daily SQLite backup timer (disabled draft)
+
+[Timer]
+OnCalendar=*-*-* 02:15:00
+RandomizedDelaySec=5min
+AccuracySec=1min
+Persistent=true
+Unit=villa-backup.service
+
+# No [Install] section. Do not enable or start this timer on the live host in
+# PACK-005C. The service's exclusive lock is the overlap guard if it is ever
+# activated.
