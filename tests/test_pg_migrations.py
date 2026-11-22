@@ -1539,5 +1539,253 @@ class TestBlockerRecoveryR6(MigrationCase):
         self.assertIsNone(one(conn, "SELECT to_regclass('public.r6_should_not_exist')"))
 
 
+class TestFunctionProvenance(MigrationCase):
+    """A guard function is guard material: per-migration credit has to cover its body.
+
+    ``_provenance()`` used to map only the fixture's constraint and trigger entries, so
+    ``verify_guards(conn, "021")`` — the gate ``apply()`` runs inside the migration transaction —
+    never opened a single function. A body could be replaced, the run would still write a
+    success row, and only the post-loop full inventory would complain, after the commit.
+    """
+
+    LOCK = "villa_lock_occupied_nights"
+    ISO = "villa_iso_date"
+
+    def migrated(self) -> Any:
+        conn = self.fresh()
+        PGM.apply(conn)
+        return conn
+
+    def signature(self, conn: Any, name: str) -> tuple[str, str]:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT pg_get_function_identity_arguments(p.oid), pg_get_function_result(p.oid)"
+                " FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace"
+                " WHERE p.proname = %s AND n.nspname = 'public'",
+                (name,),
+            )
+            args, result = cur.fetchone()
+        return str(args), str(result)
+
+    def live_definition(self, conn: Any, name: str) -> str:
+        return str(
+            one(
+                conn,
+                "SELECT pg_get_functiondef(p.oid) FROM pg_proc p JOIN pg_namespace n"
+                " ON n.oid = p.pronamespace WHERE p.proname = %s AND n.nspname = 'public'",
+                (name,),
+            )
+        )
+
+    def replace_body(self, conn: Any, name: str, body: str) -> None:
+        """Same name, same signature, different implementation — a body-only mutation."""
+        args, result = self.signature(conn, name)
+        with conn.cursor() as cur:
+            cur.execute(
+                f"CREATE OR REPLACE FUNCTION {name}({args}) RETURNS {result}"
+                f" LANGUAGE sql STABLE AS $mutation$ {body} $mutation$"
+            )
+        conn.commit()
+
+    def approved_declaration(self, name: str) -> str:
+        """The declaration for ``name`` copied verbatim out of the approved file."""
+        for path in PG_ONLY_FILES:
+            for statement in SL.split_statements(path.read_text(encoding="utf-8")):
+                if f"FUNCTION {name}(" in statement:
+                    return SL._strip_leading_comments(statement)
+        raise AssertionError(f"{name} is not declared in the approved files")
+
+    def declared_credit(self, name: str) -> str:
+        """Independent oracle: which approved file contains the declaration."""
+        found = [
+            path.stem.split("_", 1)[0]
+            for path in PG_ONLY_FILES
+            if f"FUNCTION {name}(" in path.read_text(encoding="utf-8")
+        ]
+        self.assertEqual(len(found), 1, f"{name} must be declared by exactly one approved file")
+        return found[0]
+
+    def test_T003B_01_correct_002_function_definitions_pass(self):
+        conn = self.migrated()
+        self.assertEqual(PGM.verify_guards(conn, "002"), [])
+        self.assertEqual(
+            self.live_definition(conn, self.ISO).strip(),
+            PGM.approved_guards()["function"][self.ISO].strip(),
+        )
+
+    def test_T003B_02_correct_021_function_definitions_pass(self):
+        conn = self.migrated()
+        self.assertEqual(PGM.verify_guards(conn, "021"), [])
+        credited = {name for name in PGM.approved_guards()["function"] if name != self.ISO}
+        self.assertEqual(len(credited), 6)
+        for name in sorted(credited):
+            with self.subTest(function=name):
+                self.assertEqual(
+                    self.live_definition(conn, name).strip(),
+                    PGM.approved_guards()["function"][name].strip(),
+                )
+
+    def test_T003B_03_mutation_proof_an_altered_body_is_refused_and_restoring_clears_it(self):
+        # 1. the unmodified database passes
+        conn = self.migrated()
+        self.assertEqual(PGM.verify_guards(conn, "021"), [])
+        # 2. same name, same signature, deliberately different body
+        self.replace_body(conn, self.LOCK, "SELECT NULL::void")
+        self.assertNotEqual(
+            self.live_definition(conn, self.LOCK).strip(),
+            PGM.approved_guards()["function"][self.LOCK].strip(),
+        )
+        # 3. the per-migration path now sees it — this is the check that used to be empty
+        self.assertIn(f"function:{self.LOCK}", PGM.verify_guards(conn, "021"))
+        self.assertIn(f"function:{self.LOCK}", PGM.verify_guards(conn))
+        self.assertEqual(PGM.verify_guards(conn, "002"), [], "021's function is not 002's")
+        step = [
+            s for s in PGM.plan(conn, PGM.discover())
+            if s.migration.migration_id.startswith("021")
+        ][0]
+        self.assertEqual(step.planned_state, PGM.CONFLICTED)
+        self.assertIn(self.LOCK, step.reason)
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM pg_schema_migrations WHERE migration_id LIKE '021%'")
+        conn.commit()
+        step = [
+            s for s in PGM.plan(conn, PGM.discover())
+            if s.migration.migration_id.startswith("021")
+        ][0]
+        self.assertEqual(step.planned_state, PGM.CONFLICTED)
+        self.assertIn("not the approved definition", step.reason)
+        # 4. restoring the approved text returns verification to clean
+        with conn.cursor() as cur:
+            cur.execute(_pgsql.SQL(self.approved_declaration(self.LOCK)))
+        conn.commit()
+        self.assertEqual(PGM.verify_guards(conn, "021"), [])
+        self.assertEqual(PGM.verify_guards(conn), [])
+
+    def test_T003B_04_a_missing_guard_function_is_reported_by_its_own_credit(self):
+        conn = self.fresh()  # twin applied, neither PostgreSQL-only file run
+        missing = PGM.verify_guards(conn, "002")
+        self.assertIn(f"function:{self.ISO}", missing)
+        self.assertIn("check:holds.ck_holds_check_in_iso", missing)
+        missing_021 = PGM.verify_guards(conn, "021")
+        self.assertIn(f"function:{self.LOCK}", missing_021)
+        self.assertNotIn(f"function:{self.ISO}", missing_021)
+
+    def test_T003B_05_an_unexpected_overload_is_an_ambiguous_refusal(self):
+        conn = self.migrated()
+        with conn.cursor() as cur:
+            cur.execute(
+                "CREATE FUNCTION villa_iso_date(value text, fmt text) RETURNS date"
+                " LANGUAGE sql AS $overload$ SELECT NULL::date $overload$"
+            )
+        conn.commit()
+        with self.assertRaises(PGM.MigrationRefused) as caught:
+            PGM.verify_guards(conn, "002")
+        self.assertEqual(caught.exception.code, "FUNCTION_AMBIGUOUS")
+
+    def test_T003B_06_a_same_named_no_op_is_rejected(self):
+        conn = self.migrated()
+        self.replace_body(conn, self.ISO, "SELECT NULL::date")
+        self.assertIn(f"function:{self.ISO}", PGM.verify_guards(conn, "002"))
+        self.assertEqual(PGM.verify_guards(conn, "021"), [])
+
+    def test_T003B_07_every_fixture_function_is_credited_to_the_file_that_declares_it(self):
+        provenance = PGM._provenance()
+        functions = PGM.approved_guards()["function"]
+        self.assertEqual(len(functions), 7)
+        for name in sorted(functions):
+            with self.subTest(function=name):
+                self.assertEqual(provenance[f"function:{name}"], self.declared_credit(name))
+        self.assertEqual({provenance[f"function:{name}"] for name in functions}, {"002", "021"})
+        # fail closed: a fixture function no approved file declares cannot be credited
+        from unittest import mock
+
+        payload = dict(PGM.approved_guards())
+        payload["function"] = {**functions, "villa_orphan_guard": "CREATE FUNCTION ..."}
+        with mock.patch.object(PGM, "approved_guards", return_value=payload):
+            with self.assertRaises(PGM.MigrationRefused) as caught:
+                PGM._function_credits()
+        self.assertEqual(caught.exception.code, "APPROVED_FILE_UNPROVENANCED")
+
+    def test_T003B_08_021_pending_while_002_is_correct_is_a_valid_intermediate_state(self):
+        conn = self.fresh()
+        run_script(conn, PG_ONLY_FILES[0])  # 002 only, the way an upgrade stops half-way
+        steps = {s.migration.migration_id.split("_", 1)[0]: s.planned_state
+                 for s in PGM.plan(conn, PGM.discover()) if s.migration.classification == PGM.POSTGRESQL_ONLY}
+        self.assertEqual(steps["002"], PGM.BASELINE_RECONCILED)
+        self.assertEqual(steps["021"], PGM.PENDING)
+        self.assertEqual(PGM.verify_guards(conn, "002"), [])
+        self.assertEqual(len(PGM.verify_guards(conn, "021")), 10)
+        report = PGM.apply(conn)
+        self.assertEqual((report.failed, report.missing_guards), ([], []))
+        self.assertEqual(PGM.verify_guards(conn), [])
+        self.assertEqual(PGM.database_state(conn, PGM.discover())["status"], PGM.READY)
+
+    def test_T003B_09_a_drifted_002_function_is_refused_by_its_own_migration(self):
+        conn = self.migrated()
+        self.replace_body(conn, self.ISO, "SELECT '1970-01-01'::date")
+        self.assertIn(f"function:{self.ISO}", PGM.verify_guards(conn, "002"))
+        self.assertNotIn(f"function:{self.ISO}", PGM.verify_guards(conn, "021"))
+
+    def test_T003B_10_the_full_inventory_still_passes_on_an_untouched_database(self):
+        conn = self.migrated()
+        self.assertEqual(PGM.verify_guards(conn), [])
+        self.assertEqual(PGM._unexpected_objects(conn), [])
+        state = PGM.database_state(conn, PGM.discover())
+        self.assertEqual((state["status"], state["missing_guards"]), (PGM.READY, []))
+
+    def test_T003B_11_a_wrong_function_never_yields_a_success_ledger_row(self):
+        conn = self.migrated()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT tgname, tgrelid::regclass::text FROM pg_trigger"
+                " WHERE NOT tgisinternal AND tgname LIKE 'trg%occupancy%'"
+            )
+            for name, table in cur.fetchall():
+                cur.execute(f'DROP TRIGGER "{name}" ON {table}')
+            cur.execute(
+                "DELETE FROM pg_schema_migrations WHERE migration_id LIKE '002%'"
+                " OR migration_id LIKE '021%'"
+            )
+        conn.commit()
+        self.replace_body(conn, self.ISO, "SELECT '1970-01-01'::date")
+        with self.assertRaises(PGM.MigrationRefused) as caught:
+            PGM.apply(conn)
+        self.assertIn(caught.exception.code, ("CONFLICTED", "MIGRATION_INCOMPLETE"))
+        self.assertEqual(
+            one(
+                conn,
+                "SELECT count(*) FROM pg_schema_migrations WHERE state IN"
+                " ('ALREADY_APPLIED','BASELINE_RECONCILED') AND (migration_id LIKE '002%'"
+                " OR migration_id LIKE '021%')",
+            ),
+            0,
+        )
+        # and a database that is actually put back in order still migrates
+        with conn.cursor() as cur:
+            cur.execute(_pgsql.SQL(self.approved_declaration(self.ISO)))
+        conn.commit()
+        run_script(conn, PG_ONLY_FILES[1])  # the dropped 021 triggers, from the approved file
+        conn.close()
+        report = migrate(self.dsn)
+        self.assertEqual((report.failed, report.missing_guards), ([], []))
+        again = connect(self.dsn)
+        self.addCleanup(again.close)
+        self.assertEqual(PGM.verify_guards(again), [])
+
+    def test_T003B_12_the_approved_path_is_unchanged_and_idempotent(self):
+        conn = self.migrated()
+        first = one(conn, "SELECT count(*) FROM pg_schema_migrations")
+        report = PGM.apply(conn)
+        self.assertEqual((report.applied, report.reconciled, report.failed), ([], [], []))
+        self.assertEqual(one(conn, "SELECT count(*) FROM pg_schema_migrations"), first)
+        self.assertEqual(PGM.verify_guards(conn, "002"), [])
+        self.assertEqual(PGM.verify_guards(conn, "021"), [])
+        self.assertEqual(
+            one(conn, "SELECT count(*) FROM pg_schema_migrations WHERE"
+                      " migration_id LIKE '021%' AND state='ALREADY_APPLIED'"),
+            1,
+        )
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

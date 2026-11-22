@@ -38,6 +38,7 @@ import json
 import dataclasses
 import hashlib
 import pathlib
+import re
 import sys
 from typing import Any, Callable, Iterable, Optional, Sequence
 
@@ -423,14 +424,75 @@ def _guard_credits() -> set[str]:
     return {migration.migration_id.split("_", 1)[0] for migration in pg_only_migrations()}
 
 
+#: ``CREATE [OR REPLACE] FUNCTION <name>(`` as the approved files spell it. The declaration is
+#: the only place a migration states which function it owns, so it is read, not retyped.
+_FUNCTION_DECLARATION = re.compile(
+    r"CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?(?P<name>[A-Za-z_][\w]*)\s*\(",
+    re.IGNORECASE,
+)
+
+
+def _function_credits() -> dict[str, str]:
+    """function name -> the approved PostgreSQL-only file that declares it.
+
+    The fixture records function *definitions* but no ``created_by``; without an attribution
+    every per-migration check (``verify_guards(conn, "002" | "021")``, and therefore the gate
+    inside ``apply()``) silently skipped all of them. A hand-kept map would drift from the SQL,
+    so the credit is parsed out of the approved files themselves — the same files whose
+    SHA-256 the fixture already pins.
+
+    Fail closed on anything the parser cannot attribute: a fixture function declared by no
+    file, or by two, is a fixture the runner cannot certify.
+    """
+    declarations: dict[str, set[str]] = {}
+    for name in PG_ONLY_FILES:
+        path = pathlib.Path(SCHEMA_DIR) / name
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as error:
+            raise MigrationRefused(
+                "APPROVED_FILE_UNREADABLE", f"cannot read {path.name}: {error}"
+            ) from error
+        credit = path.stem.split("_", 1)[0]
+        for match in _FUNCTION_DECLARATION.finditer(text):
+            declarations.setdefault(match.group("name").lower(), set()).add(credit)
+    contested = {name: sorted(credits) for name, credits in declarations.items() if len(credits) > 1}
+    if contested:
+        raise MigrationRefused(
+            "APPROVED_FILE_UNPROVENANCED",
+            "these functions are declared by more than one approved file, so no migration may"
+            f" be credited with them: {contested}",
+        )
+    credits = {name: next(iter(found)) for name, found in declarations.items()}
+    unattributed = sorted(set(approved_guards()["function"]) - set(credits))
+    if unattributed:
+        raise MigrationRefused(
+            "APPROVED_FILE_UNPROVENANCED",
+            f"{APPROVED_FIXTURE.name} lists function(s) no approved file declares:"
+            f" {', '.join(unattributed)} — re-run scripts/capture_guard_definitions.py --write",
+        )
+    return credits
+
+
 def _provenance() -> dict[str, str]:
-    """describe() -> the approved file that created the object, from the fixture itself."""
-    return {
+    """describe() -> the approved file that created the object, from the fixture and the SQL.
+
+    Objects carry ``created_by`` in the fixture. Functions do not, so their credit comes from
+    the declarations in the approved files (``_function_credits``). Leaving them out made the
+    per-migration gate blind to every function body: a drifted
+    ``villa_lock_occupied_nights`` passed ``verify_guards(conn, "021")`` and the run recorded
+    success before the full inventory noticed.
+    """
+    provenance = {
         f"{item['kind']}:{item['table'] + '.' if item['table'] else ''}{item['name']}": str(
             item.get("created_by") or ""
         )
         for item in approved_guards()["objects"]
     }
+    provenance.update(
+        {f"function:{name}": credit for name, credit in _function_credits().items()}
+    )
+    return provenance
 
 
 def _pg_header() -> str:
@@ -1194,13 +1256,21 @@ def plan(conn: Any, migrations: Sequence[Migration]) -> list[Step]:
                 continue
             steps.append(Step(migration, PENDING, f"0/{total} object(s) present"))
         else:
-            steps.append(
-                Step(
-                    migration,
-                    CONFLICTED,
-                    f"{have}/{total} object(s) present — partial schema, not a known state",
+            drifted = [
+                obj.describe()
+                for obj in migration.objects
+                if obj.kind == "function" and name_shadowed(conn, obj)
+            ]
+            note = f"{have}/{total} object(s) present — partial schema, not a known state"
+            if drifted:
+                # A function that answers to the approved name with another body is not a
+                # missing object: saying "partial schema" would send an operator looking for
+                # something absent while the actual fault is a body that was replaced.
+                note += (
+                    f"; {', '.join(drifted)} exists by name but is not the approved definition:"
+                    f" an operator must inspect it"
                 )
-            )
+            steps.append(Step(migration, CONFLICTED, note))
     baseline_row = rows.get(BASELINE_ID)
     if baseline_row is not None and baseline_row["source_sha256"] != current_baseline:
         steps.insert(
