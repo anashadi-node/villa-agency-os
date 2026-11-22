@@ -119,3 +119,58 @@ def test_parity_job_runs_the_concurrency_proof_with_a_least_privilege_role():
     assert re.search(r"grep -Eq .*skipped.*pg-parity\.log", job), (
         "a skipped PostgreSQL test must fail the job, not pass it"
     )
+
+
+#: Modules the parity job must actually hand to pytest. Naming a file in a comment does not
+#: count: the check reads the arguments of the `python -m pytest` command, because coverage
+#: that exists only in prose is the exact failure this file exists to catch.
+REQUIRED_PARITY_MODULES = (
+    "tests/test_pg_overlap_concurrency.py",
+    "tests/test_pg_migrations.py",
+    "tests/test_pg_cross_table_occupancy.py",
+)
+
+
+def _parity_job(workflow: str) -> str:
+    jobs = re.split(r"^  (?=[a-z0-9_-]+:\s*$)", workflow, flags=re.MULTILINE)
+    return next(job for job in jobs if "postgres" in job and "VILLA_PG_REQUIRED" in job)
+
+
+def _pytest_arguments(job: str) -> set[str]:
+    """Every argument the job's pytest invocations name, one token per space-separated word."""
+    arguments: set[str] = set()
+    for line in job.splitlines():
+        if "pytest" not in line or line.strip().startswith("#"):
+            continue
+        tokens = line.replace("\\", " ").replace('"', " ").split()
+        start = next((i for i, token in enumerate(tokens) if token.endswith("pytest")), None)
+        if start is None:
+            continue
+        arguments.update(token for token in tokens[start + 1 :] if token.endswith(".py"))
+    return arguments
+
+
+def test_parity_job_executes_every_mandatory_postgresql_module():
+    """PACK-002A: 021's cross-table proof was absent from the job while the job looked complete.
+
+    Measured before this guard: ``tests/test_pg_cross_table_occupancy.py`` existed and passed
+    locally, but the parity job never named it, so the 26 tests only reached CI through
+    ``make check`` in a matrix job with no database — where they skip and nothing complains.
+    """
+    job = _parity_job(WORKFLOW.read_text(encoding="utf-8"))
+    executed = _pytest_arguments(job)
+    missing = [module for module in REQUIRED_PARITY_MODULES if module not in executed]
+    assert missing == [], (
+        "the parity job must execute these PostgreSQL modules, not merely contain the file: "
+        f"{missing}"
+    )
+
+
+def test_the_gate_fails_when_a_mandatory_module_is_dropped_from_the_job():
+    """The guard has to be able to go red, or it is decoration."""
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    job = _parity_job(workflow)
+    for module in REQUIRED_PARITY_MODULES:
+        doctored = job.replace(module, "")
+        executed = _pytest_arguments(doctored)
+        assert module not in executed, f"removing {module} still looked like coverage"

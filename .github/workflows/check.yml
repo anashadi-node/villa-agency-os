@@ -141,13 +141,14 @@ jobs:
           echo "VILLA_PG_DSN=postgresql://villa_ci:${ROLE_PASSWORD}@localhost:5432/postgres" >> "$GITHUB_ENV"
           echo "VILLA_PG_DISPOSABLE_RUN=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
 
-      # Tiga berkas di server sungguhan: paritas katalog (skema), gerbang G1 (kunci idempoten
-      # + bukti append-only), dan bukti konkurensi constraint (FR-904, lapisan DB saja).
+      # Empat berkas di server sungguhan: paritas katalog (skema), gerbang G1 (kunci idempoten
+      # + bukti append-only), bukti konkurensi constraint (FR-904, lapisan DB saja), dan bukti
+      # kepemilikan slot lintas tabel (021: HOLD x BOOKING pada unit yang sama).
       # `-rs` mencetak setiap SKIP; langkah berikutnya menolak SKIP di berkas wajib.
       - name: Apply the twin, compare catalogues, run gate G1 and the concurrency proof
         run: |
           set -o pipefail
-          python -m pytest tests/test_schema.py tests/test_workforce_gate_g1.py tests/test_pg_overlap_concurrency.py tests/test_pg_migrations.py -rs 2>&1 | tee pg-parity.log
+          python -m pytest tests/test_schema.py tests/test_workforce_gate_g1.py tests/test_pg_overlap_concurrency.py tests/test_pg_migrations.py tests/test_pg_cross_table_occupancy.py -rs 2>&1 | tee pg-parity.log
 
       # Skip diam-diam = bukti palsu. Dengan VILLA_PG_REQUIRED=1 tidak satu tes PG pun boleh SKIP.
       - name: Refuse skipped PostgreSQL tests
