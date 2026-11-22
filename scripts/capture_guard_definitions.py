@@ -27,8 +27,11 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
+import os
 import pathlib
+import re
 import secrets
 import sys
 from typing import Any
@@ -48,6 +51,13 @@ GUARD_TABLES = ("bookings", "holds")
 KINDS = {"c": "check", "x": "exclusion"}
 PREFIX = {"check": "CHECK (", "exclusion": "EXCLUDE USING", "trigger": "CREATE "}
 SCHEMA_VERSION = 3
+#: The only fields that describe the server that ran the capture, not the schema it captured.
+#: Everything else is compared verbatim; a patch level is not schema drift, a predicate is.
+SERVER_KEYS = ("server_version", "server_version_num")
+#: Where the capture may run: the loopback interface of this machine (or its unix socket). A DSN
+#: is not trusted because of its own hostname alone — the disposable proof below still has to
+#: pass — but a remote host is refused outright.
+LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
 def _verbatim(text: str) -> str:
@@ -120,7 +130,113 @@ def _functions(cur: Any, names: list[str]) -> dict[str, str]:
     return {row[0]: str(row[1]) for row in rows}
 
 
-def capture(dsn: str) -> dict[str, Any]:
+def _guard_module() -> Any:
+    """The disposable-server guard that already governs the destructive tests, loaded by path.
+
+    Reusing it is the point: a second, friendlier copy of the same proof is how the capture would
+    drift from the thing it is supposed to obey. ``tests/`` is not a package, so the module is
+    loaded from its file rather than imported by name.
+    """
+    path = REPO_ROOT / "tests" / "test_pg_overlap_concurrency.py"
+    spec = importlib.util.spec_from_file_location("_villa_pg_guard", path)
+    if spec is None or spec.loader is None:
+        raise SystemExit(f"cannot load the disposable-server guard from {path}")
+    module = importlib.util.module_from_spec(spec)
+    # A module executed without being registered makes `dataclass` look up a missing
+    # `sys.modules` entry; register it under the private name first.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def prove_disposable_target(dsn: str, env: dict[str, str] | None = None) -> None:
+    """Refuse any target that is not this run's disposable service, before CREATE/DROP.
+
+    The hostname check is not the proof — it only rules out a remote server early, so a
+    copy-pasted production DSN cannot reach the CREATE DATABASE below even if the run token
+    happened to match. The proof itself is the tests' guard: GitHub-hosted runner, per-run token,
+    fresh server, no foreign database, non-superuser role.
+    """
+    from psycopg.conninfo import conninfo_to_dict
+
+    parsed = conninfo_to_dict(dsn)
+    host = parsed.get("host")
+    if host not in LOOPBACK_HOSTS and host is not None:
+        raise SystemExit(
+            f"refusing to capture against host {host!r}: the capture creates and drops a"
+            f" database and only runs against a loopback disposable service"
+        )
+    guard = _guard_module()
+    try:
+        guard.prove_disposable_server(dsn, env if env is not None else dict(os.environ))
+    except guard.DisposableRefused as refusal:
+        raise SystemExit(str(refusal)) from refusal
+
+
+def _major(version: str) -> int:
+    match = re.match(r"(\d+)", str(version))
+    if not match:
+        raise SystemExit(f"cannot read a PostgreSQL major version from {version!r}")
+    return int(match.group(1))
+
+
+def differences(approved: dict[str, Any], fresh: dict[str, Any]) -> list[str]:
+    """Every material difference between the approved fixture and a fresh capture.
+
+    The server version is metadata about *where* the capture ran, not about what it captured:
+    the approved fixture was recorded on 16.14 and CI verifies on 16.16, and refusing that would
+    forbid the only place the check can run. So the server fields are compared by major version
+    and then excluded — a different major is a refusal, a different patch level is reported and
+    tolerated. Nothing else is normalised: definitions, predicates, trigger text, casts, security
+    and search-path attributes and source checksums all compare byte for byte.
+    """
+    problems: list[str] = []
+    approved_major = _major(approved.get("server_version", ""))
+    fresh_major = _major(fresh.get("server_version", ""))
+    if approved_major != fresh_major:
+        problems.append(
+            f"server major version differs: fixture {approved.get('server_version')} was captured"
+            f" on PostgreSQL {approved_major}, verification ran on {fresh.get('server_version')}"
+            f" (major {fresh_major}); capture the fixture again on the same major"
+        )
+    approved_body = {k: v for k, v in approved.items() if k not in SERVER_KEYS}
+    fresh_body = {k: v for k, v in fresh.items() if k not in SERVER_KEYS}
+    problems.extend(_diff_paths(approved_body, fresh_body, ""))
+    return problems
+
+
+def _diff_paths(approved: Any, fresh: Any, prefix: str) -> list[str]:
+    """Dotted paths of every difference, so a refusal names what drifted."""
+    if type(approved) is not type(fresh):
+        return [f"{prefix or '<root>'}: {type(approved).__name__} in the fixture,"
+                f" {type(fresh).__name__} in the capture"]
+    if isinstance(approved, dict):
+        problems: list[str] = []
+        for key in sorted(set(approved) | set(fresh)):
+            path = f"{prefix}.{key}" if prefix else str(key)
+            if key not in approved:
+                problems.append(f"{path}: present in the capture, absent from the fixture")
+            elif key not in fresh:
+                problems.append(f"{path}: present in the fixture, absent from the capture")
+            else:
+                problems.extend(_diff_paths(approved[key], fresh[key], path))
+        return problems
+    if isinstance(approved, list):
+        problems = []
+        if len(approved) != len(fresh):
+            problems.append(f"{prefix}: fixture lists {len(approved)} entries, capture {len(fresh)}")
+        for index, (left, right) in enumerate(zip(approved, fresh)):
+            # Name the object, not just its position: a reordered list of constraints would
+            # otherwise blame the wrong row.
+            label = left.get("name") if isinstance(left, dict) else None
+            problems.extend(_diff_paths(left, right, f"{prefix}[{label or index}]"))
+        return problems
+    if approved != fresh:
+        return [f"{prefix}: fixture {approved!r} != capture {fresh!r}"]
+    return []
+
+
+def capture(dsn: str, expect_major: int | None = None) -> dict[str, Any]:
     import psycopg
     from psycopg import sql
     from psycopg.conninfo import make_conninfo
@@ -141,7 +257,19 @@ def capture(dsn: str) -> dict[str, Any]:
         raise SystemExit("the approved files declare no function; the fixture would certify none")
 
     scratch = f"villa_capture_{secrets.token_hex(4)}"
+    # Before any CREATE/DROP: the target must be this run's disposable service. The guard used
+    # by the destructive tests is reused, so the capture cannot be the one path that skips it.
+    prove_disposable_target(dsn)
     with psycopg.connect(dsn, autocommit=True) as admin:
+        # A wrong major is refused before the scratch database exists: recapturing on PostgreSQL
+        # 17 to discover that the fixture is 16 would be work done on a server it cannot describe.
+        if expect_major is not None:
+            version = admin.execute("SELECT current_setting('server_version')").fetchone()[0]
+            if _major(version) != expect_major:
+                raise SystemExit(
+                    f"refusing to verify a PostgreSQL {expect_major} fixture on server {version}:"
+                    f" the major version differs, so the captured definitions are not comparable"
+                )
         admin.execute(
             sql.SQL("CREATE DATABASE {} TEMPLATE template0").format(sql.Identifier(scratch))
         )
@@ -259,27 +387,82 @@ def capture(dsn: str) -> dict[str, Any]:
     return payload
 
 
+def _dsn_from_arguments(args: argparse.Namespace) -> str:
+    """The DSN, from the environment when asked — never from argv in CI.
+
+    ``--dsn`` stays for local maintenance, but a command line is world-readable in a runner's
+    process table, so the workflow uses ``--dsn-env VILLA_PG_DSN``. The value is never printed.
+    """
+    if args.dsn and args.dsn_env:
+        raise SystemExit("pass either --dsn or --dsn-env, not both")
+    if args.dsn_env:
+        value = os.environ.get(args.dsn_env)
+        if not value:
+            raise SystemExit(f"{args.dsn_env} is not set; refusing to capture without a target")
+        return value
+    if args.dsn:
+        return args.dsn
+    raise SystemExit("a target is required: --dsn <disposable DSN> or --dsn-env <VARIABLE>")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="capture canonical guard definitions")
-    parser.add_argument("--dsn", required=True, help="disposable PostgreSQL DSN")
-    parser.add_argument("--write", action="store_true", help="rewrite the committed fixture")
+    parser.add_argument("--dsn", help="disposable PostgreSQL DSN (local maintenance)")
+    parser.add_argument(
+        "--dsn-env", metavar="VARIABLE", help="read the DSN from this environment variable"
+    )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--check",
+        action="store_true",
+        help="verify the committed fixture matches the approved files (default)",
+    )
+    mode.add_argument(
+        "--write", action="store_true", help="rewrite the committed fixture (local maintenance)"
+    )
+    mode.add_argument(
+        "--prove-target",
+        action="store_true",
+        help="prove the target is this run's disposable server, then stop (no DDL)",
+    )
     args = parser.parse_args(argv)
-    payload = capture(args.dsn)
+    dsn = _dsn_from_arguments(args)
+    if args.prove_target:
+        prove_disposable_target(dsn)
+        print("the target is this run's disposable PostgreSQL server")
+        return 0
+    import psycopg  # noqa: PLC0415 - kept local: the script must run standalone
+    if not FIXTURE.exists() and not args.write:
+        print(f"{FIXTURE.relative_to(REPO_ROOT)} is missing", file=sys.stderr)
+        return 1
+    approved = None if args.write else json.loads(FIXTURE.read_text(encoding="utf-8"))
+    try:
+        payload = capture(dsn, None if approved is None else _major(approved["server_version"]))
+    except psycopg.OperationalError as failure:
+        # Never echo the driver's message: it quotes the connection string back.
+        print(f"cannot reach the target: {type(failure).__name__}", file=sys.stderr)
+        return 1
     rendered = json.dumps(payload, indent=2, sort_keys=True) + "\n"
     if args.write:
         FIXTURE.write_text(rendered, encoding="utf-8")
         print(f"wrote {FIXTURE.relative_to(REPO_ROOT)}")
         return 0
-    current = FIXTURE.read_text(encoding="utf-8") if FIXTURE.exists() else ""
-    if current != rendered:
-        print("fixture differs from what the approved files produce", file=sys.stderr)
-        return 1
     counts = {
         kind: sum(1 for item in payload["objects"] if item["kind"] == kind)
         for kind in ("exclusion", "check", "trigger")
     }
+    problems = differences(approved, payload)
+    if problems:
+        print("fixture differs from what the approved files produce:", file=sys.stderr)
+        for problem in problems[:20]:
+            print(f"  {problem}", file=sys.stderr)
+        if len(problems) > 20:
+            print(f"  ... and {len(problems) - 20} more difference(s)", file=sys.stderr)
+        return 1
     print(
-        f"fixture matches the approved files — postgresql {payload['server_version']}:"
+        f"fixture matches the approved files — approved server"
+        f" {approved.get('server_version')} (major {_major(approved.get('server_version', ''))}),"
+        f" verified on {payload['server_version']} (major {_major(payload['server_version'])}):"
         f" {counts['exclusion']} EXCLUDE, {counts['check']} CHECK, {counts['trigger']} trigger,"
         f" {len(payload['function'])} function"
     )

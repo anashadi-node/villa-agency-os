@@ -17,6 +17,7 @@ No test reads ``data/villa.db`` or any operational DSN: PGM-T17 asserts both.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import secrets
@@ -2019,6 +2020,148 @@ class TestFixtureCompleteness(MigrationCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module
+
+
+class TestCaptureCheckEnforcement(unittest.TestCase):
+    """PACK-003D: `--check` must be an explicit, fail-closed gate CI can run unattended.
+
+    Two defects made the previous capture unusable as a CI gate. It had no `--check` at all (a
+    bare `--dsn` implied comparison, so a workflow line using `--check` would have died on an
+    argparse error), and its comparison included the server patch level, so verifying a 16.14
+    fixture on the 16.16 service would have refused a schema that had not changed. The tests
+    below pin both: the CLI contract, and a comparison that ignores *where* the capture ran while
+    still comparing every byte of *what* it captured.
+    """
+
+    @staticmethod
+    def capture_script() -> Any:
+        import importlib.util
+
+        path = REPO_ROOT / "scripts" / "capture_guard_definitions.py"
+        spec = importlib.util.spec_from_file_location("capture_guard_definitions_003d", path)
+        if spec is None or spec.loader is None:  # pragma: no cover - the file is in the repo
+            raise AssertionError(f"cannot load {path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    @staticmethod
+    def approved() -> dict[str, Any]:
+        return json.loads(PGM.APPROVED_FIXTURE.read_text(encoding="utf-8"))
+
+    def captured_on(self, *parts: int) -> dict[str, Any]:
+        """The approved fixture as if it had been captured on another server."""
+        payload = self.approved()
+        version = ".".join(str(part) for part in parts)
+        payload["server_version"] = version
+        payload["server_version_num"] = "".join(str(part) for part in parts)
+        return payload
+
+    def run_main(self, module: Any, payload: dict[str, Any], *argv: str) -> int:
+        with mock.patch.dict(os.environ, {"VILLA_PG_DSN": "postgresql://x@localhost:1/postgres"}):
+            with mock.patch.object(module, "capture", return_value=payload):
+                return module.main(list(argv))
+
+    def test_TC_003D_01_an_explicit_check_run_is_accepted_and_reports_both_versions(self):
+        module = self.capture_script()
+        self.assertEqual(self.run_main(module, self.captured_on(16, 14), "--check",
+                                       "--dsn-env", "VILLA_PG_DSN"), 0)
+
+    def test_TC_003D_02_check_and_write_are_mutually_exclusive_and_write_nothing(self):
+        module = self.capture_script()
+        before = PGM.APPROVED_FIXTURE.read_bytes()
+        with mock.patch.object(module, "capture", side_effect=AssertionError("capture ran")):
+            with self.assertRaises(SystemExit) as refusal:
+                module.main(["--check", "--write", "--dsn-env", "VILLA_PG_DSN"])
+        self.assertNotEqual(refusal.exception.code, 0)
+        self.assertEqual(PGM.APPROVED_FIXTURE.read_bytes(), before)
+
+    def test_TC_003D_03_a_patch_level_difference_with_equal_definitions_passes(self):
+        module = self.capture_script()
+        approved = self.approved()
+        fresh = self.captured_on(16, 16)
+        self.assertEqual(module.differences(approved, fresh), [])
+        self.assertEqual(self.run_main(module, fresh, "--check", "--dsn-env", "VILLA_PG_DSN"), 0)
+        self.assertNotEqual(approved["server_version"], fresh["server_version"])
+
+    def test_TC_003D_04_a_major_version_difference_is_refused(self):
+        module = self.capture_script()
+        problems = module.differences(self.approved(), self.captured_on(17, 0))
+        self.assertTrue(problems, "a different PostgreSQL major must fail closed")
+        self.assertIn("major", " ".join(problems))
+        self.assertNotEqual(self.run_main(module, self.captured_on(17, 0), "--check",
+                                          "--dsn-env", "VILLA_PG_DSN"), 0)
+
+    def test_TC_003D_05_a_modified_function_body_is_refused(self):
+        module = self.capture_script()
+        payload = self.captured_on(16, 14)
+        payload["function"]["villa_iso_date"] = "SELECT 'not a date'::text"
+        problems = module.differences(self.approved(), payload)
+        self.assertTrue(any("function.villa_iso_date" in problem for problem in problems), problems)
+        self.assertNotEqual(self.run_main(module, payload, "--check", "--dsn-env", "VILLA_PG_DSN"), 0)
+
+    def test_TC_003D_06_a_modified_constraint_definition_is_refused(self):
+        module = self.capture_script()
+        payload = self.captured_on(16, 14)
+        index = next(i for i, item in enumerate(payload["objects"])
+                     if item["name"] == "bookings_adults_check")
+        payload["objects"][index]["definition"] = "CHECK ((adults >= 0))"
+        problems = module.differences(self.approved(), payload)
+        self.assertTrue(any("bookings_adults_check" in problem and "definition" in problem
+                            for problem in problems), problems)
+
+    def test_TC_003D_07_a_missing_function_is_refused(self):
+        module = self.capture_script()
+        payload = self.captured_on(16, 14)
+        del payload["function"]["villa_iso_date"]
+        problems = module.differences(self.approved(), payload)
+        self.assertTrue(any("function" in problem and "villa_iso_date" in problem
+                            for problem in problems), problems)
+
+    def test_TC_003D_08_a_modified_trigger_definition_is_refused(self):
+        module = self.capture_script()
+        payload = self.captured_on(16, 14)
+        index = next(i for i, item in enumerate(payload["objects"]) if item["kind"] == "trigger")
+        payload["objects"][index]["definition"] = payload["objects"][index]["definition"].replace(
+            "BEFORE INSERT OR UPDATE", "AFTER INSERT OR UPDATE")
+        problems = module.differences(self.approved(), payload)
+        self.assertTrue(any("trg_" in problem or "trigger" in problem for problem in problems),
+                        problems)
+
+    def test_TC_003D_09_source_checksum_drift_is_refused(self):
+        module = self.capture_script()
+        payload = self.captured_on(16, 14)
+        payload["sources"][0]["sha256"] = "0" * 64
+        problems = module.differences(self.approved(), payload)
+        self.assertTrue(any("sources[0].sha256" in problem for problem in problems), problems)
+
+    def test_TC_003D_10_a_remote_or_unproven_target_is_refused_before_any_create(self):
+        module = self.capture_script()
+        # No credentials in the literal: a user:password@host shape reads as an e-mail to the
+        # repository's own PII scan, and the hostname is all this case needs.
+        remote = "postgresql://db.example.com:5432/postgres"
+        with self.assertRaises(SystemExit) as refusal:
+            module.prove_disposable_target(remote, {})
+        self.assertIn("loopback", str(refusal.exception))
+        # Loopback alone is not the proof: the disposable-run evidence must still be present.
+        with self.assertRaises(SystemExit):
+            module.prove_disposable_target("postgresql://localhost:5432/postgres", {})
+
+    def test_TC_003D_11_a_failed_capture_exits_nonzero_and_never_rewrites_the_fixture(self):
+        module = self.capture_script()
+        before = PGM.APPROVED_FIXTURE.read_bytes()
+        self.assertNotEqual(self.run_main(module, self.captured_on(17, 1), "--check",
+                                          "--dsn-env", "VILLA_PG_DSN"), 0)
+        self.assertEqual(PGM.APPROVED_FIXTURE.read_bytes(), before,
+                         "the check path must never rewrite the approved fixture")
+
+    def test_TC_003D_16_the_approved_fixture_is_unchanged(self):
+        """The fixture the gate certifies is the one that was approved, byte for byte."""
+        self.assertEqual(
+            hashlib.sha256(PGM.APPROVED_FIXTURE.read_bytes()).hexdigest(),
+            "f6e12b6053921c6e3c86fa44a073a71705d84c8cdcf9bf019fca07e90a6c28f9",
+            "the approved fixture changed; that needs a separate authorization, not a test edit",
+        )
 
 
 class _RecordingCursor:

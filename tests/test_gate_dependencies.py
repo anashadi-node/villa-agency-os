@@ -283,3 +283,128 @@ def test_the_gate_fails_when_the_junit_evidence_is_disconnected():
     for label, doctored in mutations.items():
         assert doctored != job, f"mutation '{label}' did not apply — the guard's anchor drifted"
         assert not _evidence_is_published(doctored), f"'{label}' still looked like published evidence"
+
+
+#: PACK-003D: the approved fixture is what the runner certifies function bodies against, so it
+#: must be shown to be what the approved SQL still produces — on every run, on the same
+#: disposable server. These checks read the step block, never a comment: a filename or a command
+#: in prose is exactly the evidence-free coverage this file exists to catch.
+CAPTURE_SCRIPT = "scripts/capture_guard_definitions.py"
+CAPTURE_LOG = "pg-capture.log"
+CAPTURE_DSN_VARIABLE = "VILLA_PG_DSN"
+
+
+def _capture_step(job: str) -> str:
+    """The step that *checks* the fixture — not the proof step, which names the same script."""
+    return next((step for step in _steps(job) if CAPTURE_SCRIPT in step and "--check" in step), "")
+
+
+def _prove_step(job: str) -> str:
+    return next((s for s in _steps(job) if "--prove-target" in s), "")
+
+
+def _capture_is_enforced(job: str) -> bool:
+    """True only when ownership is proven and the fixture check runs, both mandatory, in order."""
+    step = _capture_step(job)
+    prove = _prove_step(job)
+    if not step or not prove:
+        return False
+    if "continue-on-error" in prove or "|| true" in prove:
+        return False
+    if "--check" not in step or f"--dsn-env {CAPTURE_DSN_VARIABLE}" not in step:
+        return False
+    if "--write" in step or "continue-on-error" in step or "|| true" in step:
+        return False
+    if "set -o pipefail" not in step or f"tee {CAPTURE_LOG}" not in step:
+        return False
+    steps = _steps(job)
+    pytest_steps = [i for i, block in enumerate(steps) if "python -m pytest" in block]
+    ordered = steps.index(prove) < steps.index(step)
+    return (
+        bool(pytest_steps)
+        and ordered
+        and steps.index(step) < min(pytest_steps)
+        and CAPTURE_LOG in _artifact_paths(job)
+    )
+
+
+def _script_guards_its_target(text: str) -> bool:
+    """The capture itself must refuse a non-disposable target before CREATE/DROP."""
+    return (
+        "def prove_disposable_target(" in text
+        and "prove_disposable_target(dsn)" in text
+        and "LOOPBACK_HOSTS" in text
+        and "prove_disposable_server" in text
+    )
+
+
+def test_parity_job_verifies_the_approved_fixture_before_the_parity_suite():
+    job = _parity_job(WORKFLOW.read_text(encoding="utf-8"))
+    assert _capture_is_enforced(job), (
+        "the parity job must run `capture_guard_definitions.py --check` with the DSN taken from"
+        " the environment, mandatory, before pytest: the fixture is what the runner certifies"
+        " against, and a capture that only ever runs by hand is not a gate"
+    )
+    assert "pg-parity.xml" in _artifact_paths(job) and PARITY_LOG in _artifact_paths(job), (
+        "the capture step must not disturb the existing JUnit and parity-log evidence"
+    )
+
+
+def test_the_capture_script_proves_its_target_is_disposable():
+    text = (REPO / CAPTURE_SCRIPT).read_text(encoding="utf-8")
+    assert _script_guards_its_target(text), (
+        "the capture creates and drops a database, so it must reuse the disposable-server proof"
+        " and refuse a remote host before any DDL"
+    )
+
+
+def test_the_gate_fails_when_the_capture_check_is_removed_made_optional_or_downgraded():
+    """Five ways to weaken the gate; each must turn the check red. A mutation that does not
+    apply proves the guard's anchor drifted, so that is a failure too."""
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    job = _parity_job(workflow)
+    step = _capture_step(job)
+    assert step, "no capture step to mutate"
+    mutations = {
+        "step removed": job.replace(step, ""),
+        "ownership proof removed": job.replace(_prove_step(job), ""),
+        "downgraded to --write": job.replace("--check --dsn-env", "--write --dsn-env"),
+        "made optional with continue-on-error": step.replace(
+            "name: Verify the approved fixture against the disposable server",
+            "name: Verify the approved fixture against the disposable server"
+            "\n        continue-on-error: true",
+        ),
+        "failure swallowed with || true": step.replace(
+            "2>&1 | tee pg-capture.log", "2>&1 | tee pg-capture.log || true"
+        ),
+        "proof dropped from the command": step.replace("set -o pipefail\n", ""),
+    }
+    for label, doctored in mutations.items():
+        assert doctored != step and doctored != job, f"mutation '{label}' did not apply"
+        assert not _capture_is_enforced(doctored), f"'{label}' still looked like enforcement"
+    # Disconnected: the same block, moved out of the parity job, is not enforcement.
+    others = [block for block in re.split(r"^  (?=[a-z0-9_-]+:\s*$)", workflow, flags=re.MULTILINE)
+              if block and block != job and "steps:" in block]
+    assert others, "no second job to move the step into"
+    moved = workflow.replace(step, "").replace(
+        others[0], others[0].replace("    steps:", "    steps:\n" + step, 1), 1
+    )
+    assert step not in _parity_job(moved), "the step was not moved"
+    assert not _capture_is_enforced(_parity_job(moved)), "a detached capture step still counted"
+
+
+def test_the_gate_fails_when_the_capture_stops_proving_a_disposable_target():
+    text = (REPO / CAPTURE_SCRIPT).read_text(encoding="utf-8")
+    assert _script_guards_its_target(text)
+    dropped = text.replace("    prove_disposable_target(dsn)\n", "")
+    assert dropped != text, "mutation did not apply — the guard's anchor drifted"
+    assert not _script_guards_its_target(dropped), "removing the proof still looked guarded"
+
+
+def test_TC_003D_15_the_capture_step_leaves_the_junit_evidence_and_modules_intact():
+    """TC-003D-15: adding a gate must not cost the evidence it sits next to."""
+    job = _parity_job(WORKFLOW.read_text(encoding="utf-8"))
+    assert _evidence_is_published(job)
+    assert set(REQUIRED_PARITY_MODULES) <= _pytest_arguments(job)
+    paths = _artifact_paths(job)
+    assert "pg-capture.log" in paths and JUNIT_EVIDENCE in paths and PARITY_LOG in paths

@@ -141,6 +141,27 @@ jobs:
           echo "VILLA_PG_DSN=postgresql://villa_ci:${ROLE_PASSWORD}@localhost:5432/postgres" >> "$GITHUB_ENV"
           echo "VILLA_PG_DISPOSABLE_RUN=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
 
+      # PACK-003D, stage 1 of 2: prove the server before anything is created. The proof is the
+      # same one the destructive tests use (GitHub-hosted runner, per-run token, fresh server, no
+      # foreign database, non-superuser role), reached through the capture script so there is one
+      # implementation, not two.
+      - name: Prove the service is this run's disposable server
+        run: |
+          python scripts/capture_guard_definitions.py --prove-target --dsn-env VILLA_PG_DSN
+
+      # PACK-003D, stage 2 of 2: fixture recapture is now a gate, not a habit. The approved
+      # fixture is what the runner certifies functions against, so it must be shown to be what
+      # the approved SQL still produces — on every push, on the same disposable server. The DSN
+      # is read from the environment that the provisioning step exported: a command line is
+      # world-readable in the runner's process table, and the script never prints it. The script
+      # creates one scratch database and drops it in a `finally` before this step exits, so the
+      # capture and the parity suite below never share a cluster state (the 003C contamination
+      # incident). Mandatory: the step is not allowed to fail softly. A refusal fails this job.
+      - name: Verify the approved fixture against the disposable server
+        run: |
+          set -o pipefail
+          python scripts/capture_guard_definitions.py --check --dsn-env VILLA_PG_DSN 2>&1 | tee pg-capture.log
+
       # Empat berkas di server sungguhan: paritas katalog (skema), gerbang G1 (kunci idempoten
       # + bukti append-only), bukti konkurensi constraint (FR-904, lapisan DB saja), dan bukti
       # kepemilikan slot lintas tabel (021: HOLD x BOOKING pada unit yang sama).
@@ -160,9 +181,11 @@ jobs:
             exit 1
           fi
 
-      # Artefak tetap bernama pg-parity-log supaya konsumen lama tidak putus; isinya kini dua
-      # berkas. `if-no-files-found: ignore` menjaga exit code: unggahan yang tidak menemukan
-      # berkas tidak boleh mengubah job gagal menjadi hijau, dan pytest tetap penentu hasil.
+      # Artefak tetap bernama pg-parity-log supaya konsumen lama tidak putus; isinya kini tiga
+      # berkas. `pg-capture.log` ikut terunggah meski langkah capture gagal, sehingga penolakan
+      # meninggalkan bukti alih-alih cuma job merah. `if-no-files-found: ignore` menjaga exit
+      # code: unggahan yang tidak menemukan berkas tidak boleh mengubah job gagal menjadi hijau,
+      # dan pytest tetap penentu hasil.
       - name: Upload parity log and JUnit evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -171,5 +194,6 @@ jobs:
           path: |
             pg-parity.log
             pg-parity.xml
+            pg-capture.log
           if-no-files-found: ignore
 
