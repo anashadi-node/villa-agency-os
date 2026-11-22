@@ -97,13 +97,27 @@ def _triggers(cur: Any) -> dict[str, tuple[str, str, str]]:
     return {row[1]: (row[0], str(row[2]), str(row[3])) for row in cur.fetchall()}
 
 
-def _functions(cur: Any) -> dict[str, str]:
+def _functions(cur: Any, names: list[str]) -> dict[str, str]:
+    """Every declaration, by name — not a name-shaped guess.
+
+    The inventory used to ask the catalogue for ``proname LIKE 'villa!_%'``. A function the
+    approved SQL declares under any other name then never entered the fixture, and a function
+    the fixture omits is never verified: missing, replaced or drifted, it verified clean. The
+    names come from the declarations themselves, so the two directions cannot disagree.
+    """
     cur.execute(
         "SELECT p.proname, pg_get_functiondef(p.oid)"
         " FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace"
-        " WHERE n.nspname = 'public' AND p.proname LIKE 'villa!_%' ESCAPE '!'"
+        " WHERE n.nspname = 'public' AND p.proname = ANY(%s)",
+        (list(names),),
     )
-    return {row[0]: str(row[1]) for row in cur.fetchall()}
+    rows = cur.fetchall()
+    names = [row[0] for row in rows]
+    duplicated = sorted({name for name in names if names.count(name) > 1})
+    if duplicated:
+        # A dict keyed by name would keep one body and silently drop the other overload.
+        raise SystemExit(f"the catalogue holds overloaded function(s) {duplicated}; a fixture keyed by name cannot describe both")
+    return {row[0]: str(row[1]) for row in rows}
 
 
 def capture(dsn: str) -> dict[str, Any]:
@@ -112,6 +126,7 @@ def capture(dsn: str) -> dict[str, Any]:
     from psycopg.conninfo import make_conninfo
 
     sys.path.insert(0, str(REPO_ROOT / "src"))
+    import pg_migrations as PGM  # noqa: PLC0415 - the declaration parser lives with the runner
     import schema_loader as SL  # noqa: PLC0415 - kept local: the script must run standalone
 
     for path in PG_ONLY_FILES:
@@ -120,6 +135,10 @@ def capture(dsn: str) -> dict[str, Any]:
     prepared = {path.name: _statements(path, SL) for path in PG_ONLY_FILES}
     if not prepared[PG_ONLY_FILES[0].name]:
         raise SystemExit(f"{PG_ONLY_FILES[0].name} contains no statements")
+    # One source of truth for names: the declarations, parsed exactly as the runner parses them.
+    declared = sorted(PGM.declared_functions())
+    if not declared:
+        raise SystemExit("the approved files declare no function; the fixture would certify none")
 
     scratch = f"villa_capture_{secrets.token_hex(4)}"
     with psycopg.connect(dsn, autocommit=True) as admin:
@@ -164,14 +183,14 @@ def capture(dsn: str) -> dict[str, Any]:
                 cur.execute("SET search_path = public, pg_catalog")
                 baseline_constraints = _constraints(cur)
                 recorded: set[tuple[str, str]] = set()
-                functions = _functions(cur)
+                functions = _functions(cur, declared)
                 for path in PG_ONLY_FILES:
                     credited = path.stem.split("_", 1)[0]
                     for statement in prepared[path.name]:
                         cur.execute(sql.SQL(statement))
                     after_constraints = _constraints(cur)
                     after_triggers = _triggers(cur)
-                    after_functions = _functions(cur)
+                    after_functions = _functions(cur, declared)
                     for name, (table, contype, definition) in after_constraints.items():
                         if ("constraint", name) in recorded:
                             continue
@@ -219,6 +238,15 @@ def capture(dsn: str) -> dict[str, Any]:
                 if not payload["objects"]:
                     raise SystemExit(
                         "the approved SQL created no verified object on holds/bookings"
+                    )
+                # Fail closed rather than publish a fixture with a hole in it: a declaration the
+                # catalogue does not hold is either a statement that never ran or a name the
+                # capture cannot see — both are a fixture that certifies less than it claims.
+                unbuilt = sorted(set(declared) - set(payload["function"]))
+                if unbuilt:
+                    raise SystemExit(
+                        "the approved files declare function(s) the catalogue does not hold:"
+                        f" {', '.join(unbuilt)}"
                     )
                 payload["objects"].sort(
                     key=lambda item: (item["table"], item["kind"], item["name"])

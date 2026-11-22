@@ -20,8 +20,10 @@ import contextlib
 import json
 import os
 import secrets
+import tempfile
 import threading
 import unittest
+from unittest import mock
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -269,6 +271,21 @@ class MigrationCase(unittest.TestCase):
         conn = connect(self.dsn)
         self.addCleanup(conn.close)
         return conn
+
+    def migrated(self) -> Any:
+        conn = self.fresh()
+        PGM.apply(conn)
+        return conn
+
+    def declared_credit(self, name: str) -> str:
+        """Independent oracle: which approved file contains the declaration."""
+        found = [
+            path.stem.split("_", 1)[0]
+            for path in PG_ONLY_FILES
+            if f"FUNCTION {name}(" in path.read_text(encoding="utf-8")
+        ]
+        self.assertEqual(len(found), 1, f"{name} must be declared by exactly one approved file")
+        return found[0]
 
 
 class TestFreshBaseline(MigrationCase):
@@ -1551,11 +1568,6 @@ class TestFunctionProvenance(MigrationCase):
     LOCK = "villa_lock_occupied_nights"
     ISO = "villa_iso_date"
 
-    def migrated(self) -> Any:
-        conn = self.fresh()
-        PGM.apply(conn)
-        return conn
-
     def signature(self, conn: Any, name: str) -> tuple[str, str]:
         with conn.cursor() as cur:
             cur.execute(
@@ -1594,16 +1606,6 @@ class TestFunctionProvenance(MigrationCase):
                 if f"FUNCTION {name}(" in statement:
                     return SL._strip_leading_comments(statement)
         raise AssertionError(f"{name} is not declared in the approved files")
-
-    def declared_credit(self, name: str) -> str:
-        """Independent oracle: which approved file contains the declaration."""
-        found = [
-            path.stem.split("_", 1)[0]
-            for path in PG_ONLY_FILES
-            if f"FUNCTION {name}(" in path.read_text(encoding="utf-8")
-        ]
-        self.assertEqual(len(found), 1, f"{name} must be declared by exactly one approved file")
-        return found[0]
 
     def test_T003B_01_correct_002_function_definitions_pass(self):
         conn = self.migrated()
@@ -1785,6 +1787,252 @@ class TestFunctionProvenance(MigrationCase):
                       " migration_id LIKE '021%' AND state='ALREADY_APPLIED'"),
             1,
         )
+
+
+class TestFixtureCompleteness(MigrationCase):
+    """The fixture and the approved SQL must name the same functions, in both directions.
+
+    003B made the credit derivable, so a *fixture* function could no longer be skipped. The
+    other direction stayed open: a function the SQL declares but the fixture omits was never in
+    the guard inventory at all, so a missing, replaced or drifted body verified clean and the
+    plan still said ALREADY_APPLIED. The capture query made that permanent for any function not
+    named ``villa_*``, because it selected by name shape instead of by declaration.
+    """
+
+    def captured_payload(self) -> dict:
+        return PGM.approved_guards()
+
+    def test_T003C_01_the_fixture_and_the_declarations_name_the_same_functions(self):
+        declared = PGM.declared_functions()
+        fixture = PGM.approved_guards()["function"]
+        self.assertEqual(set(declared), set(fixture))
+        self.assertEqual(len(declared), 7)
+        self.assertEqual(declared, PGM._function_credits())
+        for name, credit in sorted(declared.items()):
+            with self.subTest(function=name):
+                self.assertEqual(credit, self.declared_credit(name))
+
+    def test_T003C_02_a_declared_function_missing_from_the_fixture_is_refused(self):
+        payload = dict(self.captured_payload())
+        payload["function"] = {k: v for k, v in payload["function"].items() if k != "villa_iso_date"}
+        with mock.patch.object(PGM, "approved_guards", return_value=payload):
+            with self.assertRaises(PGM.MigrationRefused) as caught:
+                PGM._function_credits()
+        self.assertEqual(caught.exception.code, "APPROVED_FIXTURE_INCOMPLETE")
+        self.assertIn("villa_iso_date", caught.exception.message)
+
+    def test_T003C_03_a_declaration_the_fixture_cannot_see_is_refused_by_name(self):
+        declared = dict(PGM.declared_functions())
+        declared["villa_undeclared_helper"] = "021"
+        with mock.patch.object(PGM, "declared_functions", return_value=declared):
+            with self.assertRaises(PGM.MigrationRefused) as caught:
+                PGM._function_credits()
+        self.assertEqual(caught.exception.code, "APPROVED_FIXTURE_INCOMPLETE")
+        self.assertIn("villa_undeclared_helper", caught.exception.message)
+
+    def test_T003C_04_declaration_text_inside_comments_is_not_a_declaration(self):
+        self.assertEqual(self.declared_in(self.SYNTHETIC_WITH_PROSE), {"villa_real": "021"})
+
+    def test_T003C_05_declaration_text_inside_a_string_literal_is_not_a_declaration(self):
+        sql = "SELECT 'CREATE FUNCTION villa_ghost() RETURNS int';\n"
+        self.assertEqual(self.declared_in(sql), {})
+
+    def test_T003C_06_declaration_text_inside_a_dollar_quoted_body_is_not_a_declaration(self):
+        sql = (
+            "CREATE FUNCTION villa_real(x int) RETURNS int LANGUAGE sql AS $$\n"
+            "  -- CREATE FUNCTION villa_inner() RETURNS int\n"
+            "  SELECT 'CREATE OR REPLACE FUNCTION villa_inner() RETURNS int';\n"
+            "$$;\n"
+        )
+        self.assertEqual(self.declared_in(sql), {"villa_real": "021"})
+
+    def test_T003C_07_the_same_function_declared_by_two_files_is_refused(self):
+        directory = Path(self.tmpdir.name)
+        (directory / "002_first.pg.sql").write_text(
+            "CREATE FUNCTION villa_twice() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;", encoding="utf-8"
+        )
+        (directory / "021_second.pg.sql").write_text(
+            "CREATE OR REPLACE FUNCTION villa_twice() RETURNS int LANGUAGE sql AS $$ SELECT 2 $$;",
+            encoding="utf-8",
+        )
+        with mock.patch.object(PGM, "SCHEMA_DIR", directory), mock.patch.object(
+            PGM, "PG_ONLY_FILES", ("002_first.pg.sql", "021_second.pg.sql")
+        ):
+            with self.assertRaises(PGM.MigrationRefused) as caught:
+                PGM.declared_functions()
+        self.assertEqual(caught.exception.code, "APPROVED_FILE_UNPROVENANCED")
+        self.assertIn("villa_twice", caught.exception.message)
+
+    def test_T003C_08_a_declared_then_dropped_function_is_not_required(self):
+        sql = (
+            "CREATE FUNCTION villa_legacy() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;\n"
+            "DROP FUNCTION IF EXISTS villa_legacy();\n"
+            "CREATE OR REPLACE FUNCTION public.villa_kept(value text) RETURNS text"
+            " LANGUAGE sql AS $$ SELECT value $$;\n"
+            "DROP FUNCTION villa_kept;\n"
+            "CREATE FUNCTION villa_kept(value text) RETURNS text LANGUAGE sql AS $$ SELECT value $$;\n"
+        )
+        # villa_legacy: declared, then dropped, never recreated — not required.
+        # villa_kept: dropped *and then* declared again — required, so position matters.
+        self.assertEqual(self.declared_in(sql), {"villa_kept": "021"})
+
+    def test_T003C_09_capture_asks_the_catalogue_by_declaration_not_by_name_shape(self):
+        script = self.capture_script()
+        cur = _RecordingCursor(
+            rows=[("helper_not_villa", "CREATE FUNCTION helper_not_villa() RETURNS int")]
+        )
+        found = script._functions(cur, ["helper_not_villa", "villa_iso_date"])
+        query, params = cur.calls[0]
+        self.assertIn("proname = ANY(%s)", query)
+        self.assertNotIn("LIKE", query)
+        self.assertEqual(params, (["helper_not_villa", "villa_iso_date"],))
+        self.assertEqual(found, {"helper_not_villa": "CREATE FUNCTION helper_not_villa() RETURNS int"})
+
+    def test_T003C_10_an_incomplete_fixture_stops_verification_and_planning(self):
+        conn = self.migrated()
+        payload = dict(self.captured_payload())
+        payload["function"] = {k: v for k, v in payload["function"].items() if k != "villa_iso_date"}
+        with mock.patch.object(PGM, "approved_guards", return_value=payload):
+            with self.assertRaises(PGM.MigrationRefused) as caught:
+                PGM.verify_guards(conn)
+            self.assertEqual(caught.exception.code, "APPROVED_FIXTURE_INCOMPLETE")
+            with self.assertRaises(PGM.MigrationRefused) as planned:
+                PGM.plan(conn, PGM.discover())
+            self.assertEqual(planned.exception.code, "APPROVED_FIXTURE_INCOMPLETE")
+
+    def test_T003C_11_the_approved_fixture_still_verifies_clean(self):
+        conn = self.migrated()
+        self.assertEqual(PGM.verify_guards(conn), [])
+        self.assertEqual(PGM.database_state(conn, PGM.discover())["status"], PGM.READY)
+
+    def test_T003C_12_a_fixture_entry_no_file_declares_is_still_refused(self):
+        payload = dict(self.captured_payload())
+        payload["function"] = {**payload["function"], "villa_phantom": "CREATE FUNCTION ..."}
+        with mock.patch.object(PGM, "approved_guards", return_value=payload):
+            with self.assertRaises(PGM.MigrationRefused) as caught:
+                PGM._function_credits()
+        self.assertEqual(caught.exception.code, "APPROVED_FILE_UNPROVENANCED")
+        self.assertIn("villa_phantom", caught.exception.message)
+
+    def test_T003C_13_a_nested_block_comment_hides_its_declaration(self):
+        sql = (
+            "/* outer /* inner */ CREATE FUNCTION villa_ghost() RETURNS int; */\n"
+            "CREATE FUNCTION villa_real() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;\n"
+        )
+        self.assertEqual(self.declared_in(sql), {"villa_real": "021"})
+
+    def test_T003C_14_a_schema_qualifier_written_with_spaces_is_still_read(self):
+        sql = "create function public . villa_spaced() returns int language sql as $$ select 1 $$;\n"
+        self.assertEqual(self.declared_in(sql), {"villa_spaced": "021"})
+
+    def test_T003C_15_a_quoted_identifier_is_refused_not_skipped(self):
+        sql = 'CREATE FUNCTION "villa_quoted"() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;\n'
+        with self.assertRaises(PGM.MigrationRefused) as caught:
+            self.declared_in(sql)
+        self.assertEqual(caught.exception.code, "APPROVED_DECLARATION_UNSUPPORTED")
+
+    def test_T003C_16_an_unterminated_literal_is_refused_not_swallowed(self):
+        for body in (
+            "CREATE FUNCTION villa_x() RETURNS int LANGUAGE sql AS $$ SELECT 1;\n",
+            "SELECT 'unterminated;\nCREATE FUNCTION villa_y() RETURNS int;\n",
+            "/* unterminated\nCREATE FUNCTION villa_z() RETURNS int;\n",
+        ):
+            with self.subTest(body=body.split()[0]):
+                with self.assertRaises(PGM.MigrationRefused) as caught:
+                    self.declared_in(body)
+                self.assertEqual(caught.exception.code, "APPROVED_SQL_UNPARSEABLE")
+
+    def test_T003C_17_capture_refuses_overloads_it_cannot_describe(self):
+        script = self.capture_script()
+        cur = _RecordingCursor(
+            rows=[
+                ("villa_overloaded", "CREATE FUNCTION villa_overloaded(int) RETURNS int"),
+                ("villa_overloaded", "CREATE FUNCTION villa_overloaded(text) RETURNS text"),
+            ]
+        )
+        with self.assertRaises(SystemExit) as caught:
+            script._functions(cur, ["villa_overloaded"])
+        self.assertIn("villa_overloaded", str(caught.exception))
+
+    def test_T003C_18_schema_built_inside_a_do_block_is_refused(self):
+        sql = (
+            "DO $body$ BEGIN EXECUTE 'CREATE FUNCTION public.helper() RETURNS int'; END $body$;\n"
+        )
+        with self.assertRaises(PGM.MigrationRefused) as caught:
+            self.declared_in(sql)
+        self.assertEqual(caught.exception.code, "APPROVED_DECLARATION_UNSUPPORTED")
+
+    def test_T003C_19_a_do_block_that_only_asserts_still_parses(self):
+        # The approved 021 file installs its guard with two DO blocks that only raise; a refusal
+        # here would break the real migration, so the check must be narrow.
+        sql = (
+            "DO $$ DECLARE v integer; BEGIN SELECT count(*) INTO v FROM public.holds;"
+            " IF v > 0 THEN RAISE EXCEPTION 'refusing to install over % rows', v; END IF; END $$;\n"
+            "CREATE FUNCTION villa_real() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;\n"
+        )
+        self.assertEqual(self.declared_in(sql), {"villa_real": "021"})
+        self.assertEqual(len(PGM.declared_functions()), 7)
+
+    def test_T003C_20_schema_built_inside_a_function_body_is_refused(self):
+        # The declared function itself is honest; the DDL it would run is not attributable.
+        sql = (
+            "CREATE FUNCTION villa_make_table() RETURNS void LANGUAGE plpgsql AS $fn$\n"
+            "BEGIN\n"
+            "    EXECUTE 'CREATE TABLE public.hidden (id integer)';\n"
+            "END\n"
+            "$fn$;\n"
+            "DO $body$ BEGIN PERFORM villa_make_table(); END $body$;\n"
+        )
+        with self.assertRaises(PGM.MigrationRefused) as caught:
+            self.declared_in(sql)
+        self.assertEqual(caught.exception.code, "APPROVED_DECLARATION_UNSUPPORTED")
+
+    SYNTHETIC_WITH_PROSE = (
+        "-- CREATE FUNCTION villa_ghost() RETURNS int\n"
+        "/* CREATE OR REPLACE FUNCTION villa_block_ghost() RETURNS int */\n"
+        "CREATE FUNCTION villa_real() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;\n"
+        "COMMENT ON FUNCTION villa_real() IS 'mentions CREATE FUNCTION villa_in_comment()';\n"
+    )
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+
+    def declared_in(self, sql: str) -> dict[str, str]:
+        """Run the real parser over a synthetic file, via the module's own file loop."""
+        directory = Path(self.tmpdir.name)
+        (directory / "021_synthetic.pg.sql").write_text(sql, encoding="utf-8")
+        with mock.patch.object(PGM, "SCHEMA_DIR", directory), mock.patch.object(
+            PGM, "PG_ONLY_FILES", ("021_synthetic.pg.sql",)
+        ):
+            return PGM.declared_functions()
+
+    @staticmethod
+    def capture_script() -> Any:
+        import importlib.util
+
+        path = REPO_ROOT / "scripts" / "capture_guard_definitions.py"
+        spec = importlib.util.spec_from_file_location("capture_guard_definitions", path)
+        if spec is None or spec.loader is None:  # pragma: no cover - the file is in the repo
+            raise AssertionError(f"cannot load {path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+
+class _RecordingCursor:
+    """Enough of a cursor to see what the capture script asks PostgreSQL for."""
+
+    def __init__(self, rows: list[tuple[str, str]]) -> None:
+        self.rows = rows
+        self.calls: list[tuple[str, Any]] = []
+
+    def execute(self, query: str, params: Any = ()) -> None:
+        self.calls.append((query, params))
+
+    def fetchall(self) -> list[tuple[str, str]]:
+        return self.rows
 
 
 if __name__ == "__main__":  # pragma: no cover

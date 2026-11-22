@@ -76,6 +76,10 @@ def guard_objects() -> tuple[SchemaObject, ...]:
     the same way.
     """
     payload = approved_guards()
+    # A fixture with a hole in it describes a smaller guard than the SQL installs, so anyone
+    # building the inventory from it must refuse first: the full-inventory path enumerates the
+    # fixture, and a function missing from it is absent from every comparison that follows.
+    _function_credits()
     objects = [
         SchemaObject(str(item["kind"]), str(item["name"]), str(item["table"]))
         for item in payload["objects"]
@@ -424,27 +428,160 @@ def _guard_credits() -> set[str]:
     return {migration.migration_id.split("_", 1)[0] for migration in pg_only_migrations()}
 
 
-#: ``CREATE [OR REPLACE] FUNCTION <name>(`` as the approved files spell it. The declaration is
-#: the only place a migration states which function it owns, so it is read, not retyped.
-_FUNCTION_DECLARATION = re.compile(
-    r"CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?(?P<name>[A-Za-z_][\w]*)\s*\(",
+#: ``CREATE [OR REPLACE] FUNCTION <name>(`` — the declaration is the only place a migration says
+#: which function it owns, so it is read out of the file, never retyped. An optional ``public.``
+#: qualifier is accepted with or without spaces; a quoted or otherwise unusual identifier is
+#: refused by ``_unsupported_declarations`` rather than skipped.
+_DECLARATION = re.compile(
+    r"(?P<action>CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION|DROP\s+FUNCTION(?:\s+IF\s+EXISTS)?)"
+    r"\s+(?P<qualifier>public\s*\.\s*)?(?P<name>[A-Za-z_]\w*)\s*(?P<open>\()?",
     re.IGNORECASE,
 )
+#: Any ``CREATE … FUNCTION`` at all, matched loosely only to prove the strict parse saw them all.
+_ANY_CREATE = re.compile(r"CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\b", re.IGNORECASE)
+_DOLLAR_TAG = re.compile(r"\$(?P<tag>[A-Za-z_]\w*)?\$")
 
 
-def _function_credits() -> dict[str, str]:
-    """function name -> the approved PostgreSQL-only file that declares it.
+def _strip_not_sql(text: str, source: str) -> str:
+    """Blank everything the database would not parse, so only real SQL is searched.
 
-    The fixture records function *definitions* but no ``created_by``; without an attribution
-    every per-migration check (``verify_guards(conn, "002" | "021")``, and therefore the gate
-    inside ``apply()``) silently skipped all of them. A hand-kept map would drift from the SQL,
-    so the credit is parsed out of the approved files themselves — the same files whose
-    SHA-256 the fixture already pins.
-
-    Fail closed on anything the parser cannot attribute: a fixture function declared by no
-    file, or by two, is a fixture the runner cannot certify.
+    Comments (nesting, as PostgreSQL allows), string literals, ``E''`` escapes and dollar-quoted
+    bodies are replaced with spaces — the offsets stay put, and a ``CREATE FUNCTION`` written in
+    prose cannot be mistaken for a declaration. An unterminated construct is refused instead of
+    silently swallowing the rest of the file, which is exactly how a real declaration would go
+    missing.
     """
-    declarations: dict[str, set[str]] = {}
+    out: list[str] = []
+    index = 0
+    size = len(text)
+    while index < size:
+        char = text[index]
+        if text.startswith("--", index):
+            stop = text.find("\n", index)
+            stop = size if stop < 0 else stop
+        elif text.startswith("/*", index):
+            depth, stop = 0, index
+            while stop < size:
+                if text.startswith("/*", stop):
+                    depth, stop = depth + 1, stop + 2
+                elif text.startswith("*/", stop):
+                    depth, stop = depth - 1, stop + 2
+                    if depth == 0:
+                        break
+                else:
+                    stop += 1
+            if depth:
+                raise MigrationRefused(
+                    "APPROVED_SQL_UNPARSEABLE", f"unterminated block comment in {source}"
+                )
+        elif char == "'" or (
+            char in "Ee"
+            and index + 1 < size
+            and text[index + 1] == "'"
+            and (index == 0 or not (text[index - 1].isalnum() or text[index - 1] == "_"))
+        ):
+            escaped = char != "'"
+            stop = index + (2 if escaped else 1)
+            while stop < size:
+                if escaped and text[stop] == "\\":
+                    stop += 2
+                elif text[stop] == "'":
+                    if stop + 1 < size and text[stop + 1] == "'":
+                        stop += 2
+                    else:
+                        stop += 1
+                        break
+                else:
+                    stop += 1
+            else:
+                raise MigrationRefused(
+                    "APPROVED_SQL_UNPARSEABLE", f"unterminated string literal in {source}"
+                )
+        else:
+            tag = _DOLLAR_TAG.match(text, index) if char == "$" else None
+            if tag is None:
+                out.append(char)
+                index += 1
+                continue
+            marker = tag.group(0)
+            close = text.find(marker, tag.end())
+            if close < 0:
+                raise MigrationRefused(
+                    "APPROVED_SQL_UNPARSEABLE",
+                    f"unterminated dollar-quoted body {marker} in {source}",
+                )
+            stop = close + len(marker)
+        out.append(" " * (stop - index))
+        index = stop
+    return "".join(out)
+
+
+def _unsupported_declarations(stripped: str, source: str) -> None:
+    """Refuse a declaration this parser cannot read, instead of skipping it.
+
+    ``CREATE FUNCTION "quoted"()`` and friends are legal PostgreSQL. The parser only understands
+    an unquoted name, so a form it cannot read must stop the run: skipping it is how a declared
+    function would fall out of both the fixture and the guard inventory unnoticed.
+    """
+    readable = sum(
+        1
+        for match in _DECLARATION.finditer(stripped)
+        if match.group("open") and match.group("action").upper().startswith("CREATE")
+    )
+    if len(_ANY_CREATE.findall(stripped)) != readable:
+        raise MigrationRefused(
+            "APPROVED_DECLARATION_UNSUPPORTED",
+            f"{source} declares a function in a form this parser cannot read verbatim"
+            f" (quoted identifier or unexpected syntax); it will not guess",
+        )
+
+
+def _refuse_dynamic_schema(text: str, source: str) -> None:
+    """Refuse SQL that builds schema at run time, because what it creates cannot be attributed.
+
+    Dollar-quoted bodies are blanked before declarations are read — correctly, since most of what
+    they hold is code, not a declaration. That also hides the one case that matters: a body that
+    executes DDL, ``EXECUTE 'CREATE FUNCTION …'``, installs an object no declaration names, so it
+    would be missing from the fixture and from every comparison built on it.
+
+    Every dollar-quoted body in the approved files is checked, not only ``DO`` blocks: the
+    approved functions are bodies too, and one of them can be ``PERFORM``ed from a ``DO`` block.
+    Nothing in the approved files does this today; the check exists so that adding it fails loudly
+    instead of silently shrinking the guard inventory. Text assembled at run time from fragments
+    still cannot be read statically — that limit is recorded, not papered over.
+    """
+    index = 0
+    while True:
+        opening = _DOLLAR_TAG.search(text, index)
+        if opening is None:
+            return
+        tag = opening.group(0)
+        close = text.find(tag, opening.end())
+        if close < 0:
+            raise MigrationRefused(
+                "APPROVED_SQL_UNPARSEABLE", f"unterminated dollar-quoted body {tag} in {source}"
+            )
+        body = text[opening.end():close]
+        if re.search(r"\bEXECUTE\b", body, re.IGNORECASE) and re.search(
+            r"\b(CREATE|ALTER|DROP|TRUNCATE|GRANT|REVOKE)\b", body, re.IGNORECASE
+        ):
+            raise MigrationRefused(
+                "APPROVED_DECLARATION_UNSUPPORTED",
+                f"{source} executes schema changes from a dollar-quoted body; what it creates"
+                f" cannot be attributed to a declaration, so the fixture could not certify it",
+            )
+        index = close + len(tag)
+
+
+def declared_functions() -> dict[str, str]:
+    """function name -> credit, for every function the approved files actually declare.
+
+    Read in statement order from the SQL with comments, string literals and dollar-quoted bodies
+    blanked first: a ``CREATE FUNCTION`` written in prose is text, not a promise. A function
+    dropped and then declared again is required; declared and then dropped is not.
+    """
+    credits: dict[str, str] = {}
+    live: dict[str, bool] = {}
     for name in PG_ONLY_FILES:
         path = pathlib.Path(SCHEMA_DIR) / name
         try:
@@ -454,22 +591,53 @@ def _function_credits() -> dict[str, str]:
                 "APPROVED_FILE_UNREADABLE", f"cannot read {path.name}: {error}"
             ) from error
         credit = path.stem.split("_", 1)[0]
-        for match in _FUNCTION_DECLARATION.finditer(text):
-            declarations.setdefault(match.group("name").lower(), set()).add(credit)
-    contested = {name: sorted(credits) for name, credits in declarations.items() if len(credits) > 1}
-    if contested:
-        raise MigrationRefused(
-            "APPROVED_FILE_UNPROVENANCED",
-            "these functions are declared by more than one approved file, so no migration may"
-            f" be credited with them: {contested}",
-        )
-    credits = {name: next(iter(found)) for name, found in declarations.items()}
-    unattributed = sorted(set(approved_guards()["function"]) - set(credits))
+        _refuse_dynamic_schema(text, path.name)
+        stripped = _strip_not_sql(text, path.name)
+        _unsupported_declarations(stripped, path.name)
+        for match in _DECLARATION.finditer(stripped):
+            function = match.group("name").lower()
+            if match.group("action").upper().startswith("CREATE"):
+                if function in credits and credits[function] != credit:
+                    raise MigrationRefused(
+                        "APPROVED_FILE_UNPROVENANCED",
+                        f"{function} is declared by both the {credits[function]} and the {credit}"
+                        f" file, so no migration may be credited with it",
+                    )
+                credits[function] = credit
+                live[function] = True
+            elif function in credits:
+                live[function] = False
+    return {name: credit for name, credit in credits.items() if live[name]}
+
+
+def _function_credits() -> dict[str, str]:
+    """function name -> the approved PostgreSQL-only file that declares it, cross-checked.
+
+    The fixture records function *definitions* but no ``created_by``, so the credit is parsed out
+    of the approved files themselves — the same files whose SHA-256 the fixture already pins.
+
+    Both directions are checked, because a one-way check only guards the direction it looks at:
+    the fixture naming a function no file declares hides a fixture that was edited by hand, and a
+    file declaring a function the fixture omits leaves that function outside the guard inventory
+    altogether — absent, replaced, or drifted, it verified clean. The second direction is the
+    defect this check exists for.
+    """
+    credits = declared_functions()
+    fixture_functions = set(approved_guards()["function"])
+    unattributed = sorted(fixture_functions - set(credits))
     if unattributed:
         raise MigrationRefused(
             "APPROVED_FILE_UNPROVENANCED",
             f"{APPROVED_FIXTURE.name} lists function(s) no approved file declares:"
             f" {', '.join(unattributed)} — re-run scripts/capture_guard_definitions.py --write",
+        )
+    omitted = sorted(set(credits) - fixture_functions)
+    if omitted:
+        raise MigrationRefused(
+            "APPROVED_FIXTURE_INCOMPLETE",
+            f"the approved files declare function(s) {APPROVED_FIXTURE.name} does not list:"
+            f" {', '.join(omitted)} — those bodies were never verified; re-run"
+            f" scripts/capture_guard_definitions.py --write against a disposable server",
         )
     return credits
 
