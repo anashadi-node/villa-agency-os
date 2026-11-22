@@ -28,9 +28,11 @@ Safety model (this is the part that matters more than the tests)
 from __future__ import annotations
 
 import contextlib
+import inspect
 import os
 import re
 import secrets
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -46,6 +48,12 @@ PG_002 = SCHEMA_DIR / "002_pg_range_exclusions.pg.sql"
 PG_021 = SCHEMA_DIR / "021_pg_cross_table_occupancy.pg.sql"
 
 DB_PREFIX = "villa_t_"
+#: Teardown is allowed to retry only these two classes, and only this many times. Both mean
+#: "the database still has something attached"; anything else is a real error and is raised
+#: on the first attempt. Total added wait is bounded at 1 s.
+_TEARDOWN_ATTEMPTS = 3
+_TEARDOWN_BACKOFF = (0.0, 0.25, 0.75)
+
 MAX_SERVER_AGE_SECONDS = 3600  # the CI job has a 15 minute timeout; a service older than 1 h is not ours
 STATE_TS = "2026-09-21T00:00:00+00:00"
 EXPIRES_TS = "2026-09-22T00:00:00+00:00"
@@ -118,16 +126,76 @@ def prove_disposable_server(dsn: str, env: Optional[Mapping[str, str]] = None) -
     check_server_evidence(age, list(names or []), bool(superuser))
 
 
+def _sql_module() -> Any:
+    """psycopg.sql, behind a seam so the teardown logic can be exercised without a server."""
+    from psycopg import sql  # type: ignore
+    return sql
+
+
+#: Identity columns only. pg_stat_activity exposes these to every role; query text is hidden
+#: from non-owners anyway, and this code never asks for it — a diagnostic must not become a
+#: way to read another session's SQL, and it must not need pg_read_all_stats to be useful.
+_ACTIVITY_SQL = (
+    "SELECT datname, pid, coalesce(usename, 'UNKNOWN'), coalesce(backend_type, 'UNKNOWN'),"
+    " coalesce(state, 'UNKNOWN'), coalesce(wait_event_type, 'UNKNOWN')"
+    " FROM pg_stat_activity WHERE datname = %s ORDER BY pid"
+)
+
+
+def _attached_sessions(dsn: str, name: str) -> list[str]:
+    """Sanitized snapshot of the sessions attached to ``name``. Never raises.
+
+    Returns lines such as ``pid=42 user=villa_ci type=client backend state=idle``. No query
+    text, no DSN, no credential. If the snapshot itself cannot be taken, the caller gets
+    ``["UNKNOWN: privilege or connection prevented a pg_stat_activity snapshot"]`` — an
+    unknown diagnostic is reported as unknown, not guessed.
+    """
+    try:
+        psycopg = _driver()
+        with psycopg.connect(dsn, autocommit=True, connect_timeout=10) as conn:
+            rows = conn.execute(_ACTIVITY_SQL, (name,)).fetchall()
+    except Exception as exc:  # diagnostic path: it must never mask the teardown error
+        return [f"UNKNOWN: pg_stat_activity snapshot failed ({type(exc).__name__})"]
+    return [f"pid={row[1]} user={row[2]} type={row[3]} state={row[4]} wait={row[5]}" for row in rows]
+
+
 def _drop_owned(dsn: str, name: str) -> None:
-    """Drop ``name`` only if this process created it. Anything else is refused."""
+    """Drop ``name`` only if this process created it. Anything else is refused.
+
+    ``DROP DATABASE ... WITH (FORCE)`` already terminates the sessions that belong to the
+    connected role, so this function never signals a backend itself: the only processes it
+    cannot remove are the ones it has no right to touch, and killing those is exactly what a
+    test harness must not do. When such a process blocks the drop, the attempt is retried a
+    bounded number of times (transient occupants end on their own) and then reported with the
+    attached-session snapshot, while the name stays in ``_CREATED`` so nothing is silently
+    treated as cleaned up.
+    """
     if name not in _CREATED or not re.fullmatch(re.escape(DB_PREFIX) + r"[0-9a-f]{12}", name):
         raise DisposableRefused("refusing to drop a database this harness did not create")
     psycopg = _driver()
-    from psycopg import sql  # type: ignore
+    sql = _sql_module()
+    statement = sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name))
+    retryable = (psycopg.errors.InsufficientPrivilege, psycopg.errors.ObjectInUse)
+    last: Optional[BaseException] = None
+    attempts = 0
+    for attempt in range(_TEARDOWN_ATTEMPTS):
+        attempts = attempt + 1
+        try:
+            with psycopg.connect(dsn, autocommit=True, connect_timeout=10) as admin:
+                admin.execute(statement)
+        except retryable as exc:
+            last = exc
+            if attempts < _TEARDOWN_ATTEMPTS:
+                time.sleep(_TEARDOWN_BACKOFF[attempts])
+            continue
+        _CREATED.discard(name)
+        return
+    attached = "; ".join(_attached_sessions(dsn, name)) or "no session reported"
+    raise DisposableRefused(
+        f"could not drop harness database {name} after {attempts} attempt(s):"
+        f" {type(last).__name__}: {last}; still attached: {attached}"
+    ) from last
 
-    with psycopg.connect(dsn, autocommit=True, connect_timeout=10) as admin:
-        admin.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name)))
-    _CREATED.discard(name)
 
 
 @contextlib.contextmanager
@@ -472,6 +540,225 @@ class TestDisposableGuard:
         monkeypatch.delenv("VILLA_PG_REQUIRED")
         with pytest.raises(pytest.skip.Exception):
             _require_dsn()
+
+
+# ==================================================== tests: teardown recovery (no server) ==
+class _Statement:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def format(self, *args: Any) -> "_Statement":
+        out = self.text
+        for arg in args:
+            out = out.replace("{}", str(arg), 1)
+        return _Statement(out)
+
+    def __str__(self) -> str:
+        return self.text
+
+
+class _Sql:
+    @staticmethod
+    def SQL(text: str) -> _Statement:
+        return _Statement(text)
+
+    @staticmethod
+    def Identifier(name: str) -> str:
+        return f'"{name}"'
+
+
+class _Result:
+    def __init__(self, rows: list[tuple]) -> None:
+        self._rows = rows
+
+    def fetchall(self) -> list[tuple]:
+        return self._rows
+
+
+class _FakePostgres:
+    """Records what the teardown asked for and replays a scripted sequence of failures."""
+
+    def __init__(self, errors: Any, failures: list[BaseException], rows: list[tuple]) -> None:
+        self.errors = errors
+        self.failures = list(failures)
+        self.rows = rows
+        self.dropped: list[str] = []
+        self.connects = 0
+        self.snapshots = 0
+
+    def connect(self, dsn: str, **kwargs: Any) -> Any:
+        self.connects += 1
+        backend = self
+        failure = self.failures.pop(0) if self.failures else None
+
+        class _Connection:
+            def __enter__(self) -> "_Connection":
+                return self
+
+            def __exit__(self, *exc: Any) -> bool:
+                return False
+
+            def execute(self, statement: Any, params: Any = None) -> _Result:
+                if params is not None:
+                    backend.snapshots += 1
+                    return _Result(backend.rows)
+                if failure is not None:
+                    raise failure
+                backend.dropped.append(str(statement))
+                return _Result([])
+
+        return _Connection()
+
+
+class TestTeardownRecovery:
+    """The teardown must stay bounded, fail closed, and explain itself without leaking."""
+
+    @pytest.fixture()
+    def registry(self):
+        before = set(_CREATED)
+        yield _CREATED
+        _CREATED.clear()
+        _CREATED.update(before)
+
+    @pytest.fixture()
+    def sleeps(self, monkeypatch):
+        recorded: list[float] = []
+        monkeypatch.setattr(time, "sleep", lambda seconds: recorded.append(seconds))
+        return recorded
+
+    def _wire(self, monkeypatch, failures=(), rows=()) -> _FakePostgres:
+        import psycopg
+
+        fake = _FakePostgres(psycopg.errors, list(failures), list(rows))
+        monkeypatch.setattr(sys.modules[__name__], "_driver", lambda: fake)
+        monkeypatch.setattr(sys.modules[__name__], "_sql_module", lambda: _Sql)
+        return fake
+
+    def test_TD01_an_owned_database_is_dropped_and_forgotten(self, registry, sleeps, monkeypatch):
+        fake = self._wire(monkeypatch)
+        name = DB_PREFIX + "0" * 12
+        registry.add(name)
+        _drop_owned("host=unreachable.invalid", name)
+        assert fake.dropped == [f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)']
+        assert fake.connects == 1 and sleeps == []
+        assert name not in registry
+
+    def test_TD02_a_name_this_process_did_not_create_is_refused(self, registry, sleeps, monkeypatch):
+        fake = self._wire(monkeypatch)
+        with pytest.raises(DisposableRefused):
+            _drop_owned("host=unreachable.invalid", DB_PREFIX + "1" * 12)
+        assert fake.connects == 0
+
+    @pytest.mark.parametrize("name", ["postgres", "villa_t_XYZ", DB_PREFIX + "2" * 11])
+    def test_TD03_a_name_outside_the_scratch_namespace_is_refused(self, registry, sleeps, monkeypatch, name):
+        fake = self._wire(monkeypatch)
+        registry.add(name)  # registered but malformed: the shape check still refuses
+        with pytest.raises(DisposableRefused):
+            _drop_owned("host=unreachable.invalid", name)
+        assert fake.connects == 0
+        assert name in registry
+
+    def test_TD04_no_backend_is_ever_terminated(self, registry, sleeps, monkeypatch):
+        import psycopg
+
+        fake = self._wire(monkeypatch, failures=[psycopg.errors.InsufficientPrivilege("refused")] * 3)
+        name = DB_PREFIX + "3" * 12
+        registry.add(name)
+        with pytest.raises(DisposableRefused):
+            _drop_owned("host=unreachable.invalid", name)
+        assert fake.dropped == []
+        assert all("terminate" not in line for line in fake.dropped)
+        assert "pg_terminate_backend" not in inspect.getsource(_drop_owned), "teardown must not signal backends"
+
+    def test_TD05_a_transient_occupant_is_retried_within_the_limit(self, registry, sleeps, monkeypatch):
+        import psycopg
+
+        fake = self._wire(monkeypatch, failures=[psycopg.errors.InsufficientPrivilege("busy")])
+        name = DB_PREFIX + "4" * 12
+        registry.add(name)
+        _drop_owned("host=unreachable.invalid", name)
+        assert fake.connects == 2
+        assert len(fake.dropped) == 1
+        assert name not in registry
+        assert sum(sleeps) <= 1.0, "the retry budget must stay bounded"
+
+    def test_TD06_object_in_use_is_the_other_retryable_class(self, registry, sleeps, monkeypatch):
+        import psycopg
+
+        fake = self._wire(monkeypatch, failures=[psycopg.errors.ObjectInUse("in use")])
+        name = DB_PREFIX + "5" * 12
+        registry.add(name)
+        _drop_owned("host=unreachable.invalid", name)
+        assert fake.connects == 2 and name not in registry
+
+    def test_TD07_an_unrelated_error_is_raised_on_the_first_attempt(self, registry, sleeps, monkeypatch):
+        import psycopg
+
+        fake = self._wire(monkeypatch, failures=[psycopg.errors.SyntaxError("boom")])
+        name = DB_PREFIX + "6" * 12
+        registry.add(name)
+        with pytest.raises(psycopg.errors.SyntaxError):
+            _drop_owned("host=unreachable.invalid", name)
+        assert fake.connects == 1 and sleeps == []
+        assert name in registry
+
+    def test_TD08_persistent_refusal_is_explicit_and_keeps_the_registry(
+        self, registry, sleeps, monkeypatch
+    ):
+        import psycopg
+
+        error = psycopg.errors.InsufficientPrivilege("permission denied to terminate process")
+        fake = self._wire(monkeypatch, failures=[error] * _TEARDOWN_ATTEMPTS)
+        name = DB_PREFIX + "7" * 12
+        registry.add(name)
+        with pytest.raises(DisposableRefused) as caught:
+            _drop_owned("host=unreachable.invalid", name)
+        assert caught.value.__cause__ is error
+        assert "InsufficientPrivilege" in str(caught.value)
+        assert f"{_TEARDOWN_ATTEMPTS} attempt(s)" in str(caught.value)
+        assert name in registry, "a failed drop must never look cleaned up"
+        assert sum(sleeps) <= 1.0
+        assert fake.connects == _TEARDOWN_ATTEMPTS + 1, "three drop attempts, then one snapshot"
+        assert fake.snapshots == 1
+
+    def test_TD09_diagnostics_name_the_attached_sessions_without_secrets(
+        self, registry, sleeps, monkeypatch
+    ):
+        import psycopg
+
+        rows = [(DB_PREFIX + "8" * 12, 4242, "villa_ci", "autovacuum worker", "active", "IO")]
+        fake = self._wire(
+            monkeypatch,
+            failures=[psycopg.errors.InsufficientPrivilege("refused")] * _TEARDOWN_ATTEMPTS,
+            rows=rows,
+        )
+        name = DB_PREFIX + "8" * 12
+        registry.add(name)
+        with pytest.raises(DisposableRefused) as caught:
+            _drop_owned("postgresql://villa_ci:hunter2@127.0.0.1:5432/postgres", name)
+        message = str(caught.value)
+        assert "pid=4242" in message and "type=autovacuum worker" in message
+        assert "wait=IO" in message
+        for secret in ("hunter2", "127.0.0.1", "5432", "postgresql://", "SELECT"):
+            assert secret not in message, f"{secret} must not reach the diagnostic"
+        assert fake.snapshots == 1
+
+    def test_TD10_an_unreadable_snapshot_is_reported_as_unknown(self, registry, sleeps, monkeypatch):
+        import psycopg
+
+        class _Blind(_FakePostgres):
+            def connect(self, dsn: str, **kwargs: Any) -> Any:
+                raise psycopg.errors.InsufficientPrivilege("no rights at all")
+
+        fake = _Blind(psycopg.errors, [], [])
+        monkeypatch.setattr(sys.modules[__name__], "_driver", lambda: fake)
+        monkeypatch.setattr(sys.modules[__name__], "_sql_module", lambda: _Sql)
+        name = DB_PREFIX + "9" * 12
+        registry.add(name)
+        with pytest.raises(DisposableRefused) as caught:
+            _drop_owned("host=unreachable.invalid", name)
+        assert "UNKNOWN: pg_stat_activity snapshot failed (InsufficientPrivilege)" in str(caught.value)
+        assert name in registry
 
 
 # ============================================================ tests: live PostgreSQL ==
