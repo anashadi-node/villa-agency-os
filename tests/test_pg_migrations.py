@@ -1255,8 +1255,14 @@ class TestBlockerRecoveryR6(MigrationCase):
         params = conninfo_to_dict(disposable_dsn)
         keyword = " ".join(f"{key}={value}" for key, value in params.items() if value)
         resolved = resolve_target(keyword)
-        self.assertIn("host=127.0.0.1", resolved)
-        self.assertEqual(conninfo_to_dict(resolved)["dbname"], params["dbname"])
+        # resolve_target's contract is that the target it accepts is the target it names:
+        # the host it was handed must come back unchanged. Pinning "127.0.0.1" asserted the
+        # CI disposable DSN's spelling instead, so it failed the first time this test ran
+        # against a server addressed as "localhost" (run 44968069626).
+        resolved_params = conninfo_to_dict(resolved)
+        self.assertEqual(resolved_params["host"], params["host"])
+        self.assertEqual(resolved_params["port"], params["port"])
+        self.assertEqual(resolved_params["dbname"], params["dbname"])
         conn = self.fresh()
         PGM.apply(conn)
         cli = self._cli("--inspect", "--dsn", keyword)

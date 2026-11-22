@@ -662,3 +662,84 @@ class TestStatementsAndMigration(GuardCase):
             only_cross_table_guard(self.dsn)
         self.assertIn("existing overlap", str(caught.value).lower())
         self.assertEqual(self.occupying_count(unit), 2, "the contradictory rows should still be there")
+
+
+class TestNightScopedLocking(GuardCase):
+    """PACK VILLA-PG-CONCURRENCY-RECOVERY-002C: the lock is one per occupied night.
+
+    CI already holds the kernel-level proof
+    (tests/test_pg_overlap_concurrency.py::test_back_to_back_stays_do_not_overlap_and_do_not_wait),
+    but that module refuses to run outside GitHub, so the property had no test a developer
+    could run — which is how a unit-wide lock reached a green local suite. These two tests
+    pin both halves of the distinction here: adjacency proceeds, overlap queues.
+    """
+
+    def _open_transaction(self, unit: str, check_in: str, check_out: str):
+        psycopg = _driver()
+        conn = psycopg.connect(self.dsn, connect_timeout=10)
+        statement, params, _ = make_insert("hold", unit, check_in, check_out)
+        conn.execute(statement, params)
+        return conn
+
+    def test_T27_adjacent_stay_does_not_queue_behind_an_open_transaction(self) -> None:
+        """[06-01, 06-03) and [06-03, 06-05) share no night, so the second never waits."""
+        unit = new_unit(self.dsn)
+        holder = self._open_transaction(unit, "2027-06-01", "2027-06-03")
+        try:
+            psycopg = _driver()
+            with psycopg.connect(self.dsn, connect_timeout=10) as adjacent:
+                adjacent.execute("SET LOCAL lock_timeout = '2s'")
+                statement, params, _ = make_insert("hold", unit, "2027-06-03", "2027-06-05")
+                adjacent.execute(statement, params)  # must not wait on the open transaction
+                adjacent.commit()
+            holder.commit()  # the first stay is legitimate too, not a casualty of the test
+        finally:
+            holder.rollback()
+            holder.close()
+        self.assertEqual(self.occupying_count(unit), 2)
+
+    def test_T29_the_lock_key_does_not_depend_on_the_session_date_style(self) -> None:
+        """Two sessions, two DateStyle settings, one night — still one lock.
+
+        Rendering a date by string concatenation follows the session's DateStyle, so a writer
+        under 'SQL, DMY' and a writer under the default would mint different keys for the same
+        night, never queue, and both commit an overlap. The holder here deliberately runs under
+        the non-default style; the overlapping booking must still wait.
+        """
+        unit = new_unit(self.dsn)
+        psycopg = _driver()
+        holder = psycopg.connect(self.dsn, connect_timeout=10)
+        statement, params, _ = make_insert("hold", unit, "2027-07-01", "2027-07-03")
+        holder.execute("SET DateStyle = 'SQL, DMY'")
+        holder.execute(statement, params)
+        try:
+            with psycopg.connect(self.dsn, connect_timeout=10) as overlapping:
+                overlapping.execute("SET DateStyle = 'ISO, MDY'")
+                overlapping.execute("SET LOCAL lock_timeout = '1s'")
+                spec = make_insert("booking", unit, "2027-07-02", "2027-07-04")
+                with self.assertRaises(psycopg.Error) as caught:
+                    overlapping.execute(spec[0], spec[1])
+                self.assertEqual(caught.exception.sqlstate, "55P03")
+                overlapping.rollback()
+        finally:
+            holder.rollback()
+            holder.close()
+        self.assertEqual(self.occupying_count(unit), 0)
+
+    def test_T28_overlapping_booking_waits_for_the_open_hold(self) -> None:
+        """The converse: a shared night is a shared lock, so the booking queues."""
+        unit = new_unit(self.dsn)
+        holder = self._open_transaction(unit, "2027-06-01", "2027-06-03")
+        try:
+            psycopg = _driver()
+            with psycopg.connect(self.dsn, connect_timeout=10) as overlapping:
+                overlapping.execute("SET LOCAL lock_timeout = '1s'")
+                statement, params, _ = make_insert("booking", unit, "2027-06-02", "2027-06-04")
+                with self.assertRaises(psycopg.Error) as caught:
+                    overlapping.execute(statement, params)
+                self.assertEqual(caught.exception.sqlstate, "55P03")
+                overlapping.rollback()
+        finally:
+            holder.rollback()
+            holder.close()
+        self.assertEqual(self.occupying_count(unit), 0)
