@@ -174,3 +174,112 @@ def test_the_gate_fails_when_a_mandatory_module_is_dropped_from_the_job():
         doctored = job.replace(module, "")
         executed = _pytest_arguments(doctored)
         assert module not in executed, f"removing {module} still looked like coverage"
+
+
+#: PACK-003A: a green parity job used to be all an auditor got. `pytest -q -rs` prints the names
+#: of failing tests only, so "the back-to-back proofs passed" was an inference from an aggregate
+#: count. The job now writes JUnit XML from the very command that writes the log, and uploads
+#: both under the existing artifact name. These checks read the step blocks — never a comment,
+#: because a filename in prose is exactly the evidence-free coverage this file exists to catch.
+JUNIT_EVIDENCE = "pg-parity.xml"
+PARITY_LOG = "pg-parity.log"
+
+
+def _steps(job: str) -> list[str]:
+    """The job's step blocks, each beginning at its ``- name:`` line."""
+    return re.split(r"^      - ", job, flags=re.MULTILINE)[1:]
+
+
+def _junit_argument(job: str) -> str | None:
+    """The value a real ``python -m pytest`` command passes to ``--junitxml``, if any."""
+    for step in _steps(job):
+        for line in step.splitlines():
+            command = line.strip()
+            if not command.startswith("python -m pytest"):
+                continue
+            for token in command.split():
+                if token.startswith("--junitxml="):
+                    return token.split("=", 1)[1]
+    return None
+
+
+def _artifact_paths(job: str) -> list[str]:
+    """Paths named by the job's artifact-upload step."""
+    for step in _steps(job):
+        if "actions/upload-artifact" not in step:
+            continue
+        lines = step.splitlines()
+        for index, line in enumerate(lines):
+            if not line.strip().startswith("path:"):
+                continue
+            inline = line.split("path:", 1)[1].strip()
+            if inline and inline != "|":
+                return [inline]
+            indent = len(line) - len(line.lstrip())
+            collected = []
+            for follower in lines[index + 1 :]:
+                if not follower.strip():
+                    continue
+                if len(follower) - len(follower.lstrip()) <= indent:
+                    break
+                collected.append(follower.strip())
+            return collected
+    return []
+
+
+def _evidence_is_published(job: str) -> bool:
+    upload = next((step for step in _steps(job) if "actions/upload-artifact" in step), "")
+    paths = _artifact_paths(job)
+    return (
+        _junit_argument(job) == JUNIT_EVIDENCE
+        and JUNIT_EVIDENCE in paths
+        and PARITY_LOG in paths
+        and "if: always()" in upload
+        and "if-no-files-found: ignore" in upload
+    )
+
+
+def test_parity_job_publishes_per_test_junit_evidence_with_the_log():
+    """The XML must come from the SQL-backed run itself, not from a second, friendlier one."""
+    job = _parity_job(WORKFLOW.read_text(encoding="utf-8"))
+    assert _evidence_is_published(job), (
+        "the parity job must write pg-parity.xml with --junitxml and upload it beside pg-parity.log"
+    )
+    commands = [
+        line.strip()
+        for step in _steps(job)
+        for line in step.splitlines()
+        if line.strip().startswith("python -m pytest")
+    ]
+    assert len(commands) == 1, "one pytest run, so the XML cannot come from a different command"
+    assert f"--junitxml={JUNIT_EVIDENCE}" in commands[0]
+    assert f"tee {PARITY_LOG}" in commands[0]
+    assert "continue-on-error" not in job, "evidence must not be published by a job that may not fail"
+
+
+def test_parity_job_still_runs_every_mandatory_module_and_refuses_skips():
+    """Adding evidence must not cost a test module or the skip refusal."""
+    job = _parity_job(WORKFLOW.read_text(encoding="utf-8"))
+    executed = _pytest_arguments(job)
+    assert set(REQUIRED_PARITY_MODULES) <= executed
+    assert "tests/test_schema.py" in executed and "tests/test_workforce_gate_g1.py" in executed
+    assert "VILLA_PG_REQUIRED" in job
+    assert re.search(r"grep -Eq .*skipped.*pg-parity\.log", job), "the skip refusal must stay"
+
+
+def test_the_gate_fails_when_the_junit_evidence_is_disconnected():
+    """Four ways to lose the evidence; each must turn the check red."""
+    job = _parity_job(WORKFLOW.read_text(encoding="utf-8"))
+    mutations = {
+        "flag dropped": job.replace(f" --junitxml={JUNIT_EVIDENCE}", ""),
+        "flag renamed": job.replace(f"--junitxml={JUNIT_EVIDENCE}", "--junitxml=other.xml"),
+        "path dropped": job.replace(f"\n            {JUNIT_EVIDENCE}", ""),
+        "upload no longer always runs": job.replace(
+            "        if: always()\n        uses: actions/upload-artifact",
+            "        uses: actions/upload-artifact",
+        ),
+        "log no longer uploaded": job.replace(f"\n            {PARITY_LOG}", ""),
+    }
+    for label, doctored in mutations.items():
+        assert doctored != job, f"mutation '{label}' did not apply — the guard's anchor drifted"
+        assert not _evidence_is_published(doctored), f"'{label}' still looked like published evidence"

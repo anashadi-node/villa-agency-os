@@ -145,10 +145,12 @@ jobs:
       # + bukti append-only), bukti konkurensi constraint (FR-904, lapisan DB saja), dan bukti
       # kepemilikan slot lintas tabel (021: HOLD x BOOKING pada unit yang sama).
       # `-rs` mencetak setiap SKIP; langkah berikutnya menolak SKIP di berkas wajib.
+      # `--junitxml` menghasilkan bukti per-tes: log ringkas hanya menulis nama tes yang gagal,
+      # sehingga sebelumnya "semua lulus" hanya bisa disimpulkan dari angka agregat.
       - name: Apply the twin, compare catalogues, run gate G1 and the concurrency proof
         run: |
           set -o pipefail
-          python -m pytest tests/test_schema.py tests/test_workforce_gate_g1.py tests/test_pg_overlap_concurrency.py tests/test_pg_migrations.py tests/test_pg_cross_table_occupancy.py -rs 2>&1 | tee pg-parity.log
+          python -m pytest tests/test_schema.py tests/test_workforce_gate_g1.py tests/test_pg_overlap_concurrency.py tests/test_pg_migrations.py tests/test_pg_cross_table_occupancy.py -rs --junitxml=pg-parity.xml 2>&1 | tee pg-parity.log
 
       # Skip diam-diam = bukti palsu. Dengan VILLA_PG_REQUIRED=1 tidak satu tes PG pun boleh SKIP.
       - name: Refuse skipped PostgreSQL tests
@@ -158,11 +160,16 @@ jobs:
             exit 1
           fi
 
-      - name: Upload parity log
+      # Artefak tetap bernama pg-parity-log supaya konsumen lama tidak putus; isinya kini dua
+      # berkas. `if-no-files-found: ignore` menjaga exit code: unggahan yang tidak menemukan
+      # berkas tidak boleh mengubah job gagal menjadi hijau, dan pytest tetap penentu hasil.
+      - name: Upload parity log and JUnit evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: pg-parity-log
-          path: pg-parity.log
+          path: |
+            pg-parity.log
+            pg-parity.xml
           if-no-files-found: ignore
 
